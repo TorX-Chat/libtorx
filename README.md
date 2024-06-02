@@ -9,7 +9,7 @@ See the proof-of-concept UI clients or help improve our CMakeLists.txt to allow 
 #### Contribution Agreement:
 All ideas, suggestions, issues, pull requests, etc, are gifted to the primary developer for the purpose of improving the software, for the benefit of all users. Ownership of the contribution is not maintained by the contributor.
 
-#### TODO List
+#### Legacy TODO List (needs review / cleanup)
 2024/05/04 Need a red team building malicious or buggy client/library, which will send undersized/oversized messages, spam attacks, etc
 <br>2024/03/06 streaming a group message is going to be a message struct bloat issue because, unlike other stream messages, upon outbound send it is not deleted from group_ctrl (the group_ctrl n,i is not zero_i'd). The solution is to somehow track when all the attempts are done (perhaps in message_send) and then zero_i it.
 <br>2024/05/06 is --keygen/--key-expiration only for relays? OfflineMasterKey/SigningKeyLifetime
