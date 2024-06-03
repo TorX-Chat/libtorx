@@ -5,6 +5,7 @@ project(torx LANGUAGES C) # removed VERSION 2.0 # because we probably will forge
 include(FetchContent)
 include(ExternalProject)
 set(CMAKE_C_STANDARD 11)
+set(CMAKE_TLS_VERIFY TRUE)
 # set(CMAKE_BUILD_TYPE Release)
 ## Double setting because policy CMP0077
 option(EVENT__DISABLE_SAMPLES ON)
@@ -162,7 +163,6 @@ if(BUILD_TORX_DEPS)
 		sodium-download # ExternalProject(s) ignores the crosscompile request and ignores the NDK, so we let sodium handle the build, but then we have to link
 	##	PREFIX ${CMAKE_BINARY_DIR}/sodium
 		BUILD_IN_SOURCE TRUE
-		CMAKE_TLS_VERIFY TRUE # TODO enable if using remote git
 		GIT_REPOSITORY https://github.com/jedisct1/libsodium
 	#	GIT_REPOSITORY http://10.8.88.11/libsodium.git/
 		GIT_TAG stable 		# necessary to choose a release or it wont have ./configure (master has autogen instead)
@@ -179,7 +179,6 @@ if(BUILD_TORX_DEPS)
 	)
 	ExternalProject_Add(
 		openssl-download
-		CMAKE_TLS_VERIFY TRUE # enable if using remote git
 		GIT_REPOSITORY https://github.com/openssl/openssl 
 	#	GIT_REPOSITORY http://10.8.88.11/openssl.git
 		GIT_TAG OpenSSL_1_1_1-stable
@@ -193,7 +192,6 @@ if(BUILD_TORX_DEPS)
 	)
 	ExternalProject_Add(
 		zlib-download
-		CMAKE_TLS_VERIFY TRUE # enable if using remote git
 		GIT_REPOSITORY https://github.com/madler/zlib 
 	#	GIT_REPOSITORY http://10.8.88.11/zlib.git
 		GIT_TAG master
@@ -207,7 +205,6 @@ if(BUILD_TORX_DEPS)
 	set(SQLCIPHER_CFLAGS "-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL -I${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/include")
 	ExternalProject_Add(
 		sqlcipher-download
-		CMAKE_TLS_VERIFY TRUE # enable if using remote git
 		GIT_REPOSITORY https://github.com/sqlcipher/sqlcipher
 	#	GIT_REPOSITORY http://10.8.88.11/sqlcipher.git
 		GIT_TAG v4.5.6 # probably best to use a release. master could risk corruption.
@@ -221,7 +218,6 @@ if(BUILD_TORX_DEPS)
 	)
 	FetchContent_Declare( # TODO building unnecessary things here like _extra and they get linked
 		event
-		CMAKE_TLS_VERIFY TRUE # TODO enable if using remote git
 		GIT_REPOSITORY https://github.com/libevent/libevent.git
 	#	GIT_REPOSITORY http://10.8.88.11/libevent.git/
 		GIT_TAG master # release-2.2.1-alpha
@@ -230,7 +226,6 @@ if(BUILD_TORX_DEPS)
 	FetchContent_MakeAvailable(event)
 	FetchContent_Declare( # TODO set some env variable to define when this should build .a/.so. by default it seems to link .a at late stages and .so at early stages. Bad either way. MUST BE FIXED FOR GTK
 		png
-		CMAKE_TLS_VERIFY TRUE # TODO enable if using remote git
 		GIT_REPOSITORY https://github.com/glennrp/libpng
 	#	GIT_REPOSITORY http://10.8.88.11/libpng.git/
 		GIT_TAG c22ef3b2e342bdfe3140b7e94879996d0e18c95b # DO NOT GO TO MASTER. They broke android builds somewhere after this commit.

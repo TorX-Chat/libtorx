@@ -7,7 +7,7 @@ This page is for developers and contributors. If you are simply looking to downl
 See the proof-of-concept UI clients or help improve our CMakeLists.txt to allow independent building of the library's .so/.dll files.
 
 #### Contribution Agreement:
-All ideas, suggestions, issues, pull requests, etc, are gifted to the primary developer for the purpose of improving the software, for the benefit of all users. Ownership of the contribution is not maintained by the contributor.
+All ideas, suggestions, issues, pull requests, contributions of any kind, etc, are gifted to the original TorX developer without condition nor consideration, for the purpose of improving the software, for the benefit of all users, current and future.
 
 #### Legacy TODO List (needs review / cleanup)
 2024/05/04 Need a red team building malicious or buggy client/library, which will send undersized/oversized messages, spam attacks, etc
