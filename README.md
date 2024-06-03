@@ -1,7 +1,7 @@
 <img alt="Logo" width="256" height="256" src="https://raw.githubusercontent.com/TorX-Chat/torx-gtk4/main/other/scalable/apps/logo-torx-symbolic.svg" align="right" style="position: relative; top: 0; left: 0;">
 
 ### TorX Library (libtorx)
-This page is for developers and contributors. If you are simply looking to download and run TorX, go to [TorX.Chat](https://torx.chat)
+This page is for developers and contributors. If you are simply looking to download and run TorX, go to [TorX.Chat](https://torx.chat/#download)
 
 #### Build Instructions:
 See the proof-of-concept UI clients or help improve our CMakeLists.txt to allow independent building of the library's .so/.dll files.
