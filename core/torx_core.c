@@ -2453,12 +2453,14 @@ static inline void *start_tor_threaded(void *arg)
 		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 //		restart = 1;
 		close(pipe_tor1[0]);
+		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
 		kill(tor_pid,SIGTERM); // was 0
 	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
 		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
 			fprintf(stderr,"not ready yet\n");
 		} */ // Do not delete XXX
 		tor_pid = wait(NULL);
+		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 		pid_write(0); // TODO this assumes success... we should probably write tor_pid() instead
 //		sleep(1); // ok our wait is not enough because socket is still taken, TODO just choose a new ctrl+socks port? (what if our port was 9050?) 
 /*		while(randport(tor_ctrl_port) < 1)
@@ -4051,6 +4053,7 @@ void initial(void)
 	signal(SIGSEGV, cleanup_cb);
 	signal(SIGILL, cleanup_cb);
 	signal(SIGFPE, cleanup_cb);
+	signal(SIGCHLD, SIG_IGN); // XXX prevent zombies
 
 	pthread_attr_init(&ATTR_DETACHED); // must be triggered before any use
 	pthread_attr_setdetachstate(&ATTR_DETACHED, PTHREAD_CREATE_DETACHED); // must be triggered before any use
