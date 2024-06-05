@@ -438,7 +438,7 @@ void error_printf(const int debug_level,const char *format,...)
 }
 
 static inline int torx_pipe(int pipefd[2])
-{
+{ // If this is issues, windows offers CreatePipe
 	#ifdef WIN32
 	return _pipe(pipefd,4096,_O_TEXT); // alt: _O_BINARY // TODO possibly increase this cache?
 	#else
@@ -3673,6 +3673,8 @@ static inline void broadcast_remove(const int g)
 
 void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN])
 { // Add or discard a broadcast, depending on queue and whether it has already been added/sent
+// "Broadcast should be added to queue if checksum (single int) is not in broadcast_history array. Queue should store an integer hash of each sent broadcast to avoid repetition. It should also be rate limited (random rate, random delays) to avoid facilitating mapping of the network. Broadcast thread should run perpetually if there is anything in the queue, otherwise close. Broadcasts exceeding queue should be discarded? Undecided."
+// TODO (?) Queue should take note of how many broadcasts came from each user
 	if(!broadcast)
 	{
 		error_simple(0,"Sanity check fail in broadcast_add. Coding error. Report this.");
