@@ -31,6 +31,24 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
+if(LAN_REPO)
+	message(STATUS "Using LAN repository: ${LAN_REPO}")
+	set(REPO_SODIUM "${LAN_REPO}/libsodium.git")
+	set(REPO_SSL "${LAN_REPO}/openssl.git")
+	set(REPO_ZLIB "${LAN_REPO}/zlib.git")
+	set(REPO_SQLCIPHER "${LAN_REPO}/sqlcipher.git")
+	set(REPO_EVENT "${LAN_REPO}/libevent.git")
+	set(REPO_PNG "${LAN_REPO}/libpng.git")
+else()
+	message(STATUS "Using default remote repositories instead of LAN.")
+	set(REPO_SODIUM "https://github.com/jedisct1/libsodium")
+	set(REPO_SSL "https://github.com/openssl/openssl")
+	set(REPO_ZLIB "https://github.com/madler/zlib")
+	set(REPO_SQLCIPHER "https://github.com/sqlcipher/sqlcipher")
+	set(REPO_EVENT "https://github.com/libevent/libevent.git")
+	set(REPO_PNG "https://github.com/glennrp/libpng")
+endif()
+
 #set(ENV{QR_GENERATOR} 1)
 ## _ARGS taken from https://gitlab.torproject.org/tpo/core/tor/-/issues/33624 _ADDITIONAL are extras to remove bloat
 #set(SSL_CONFIG_ARGS shared enable-ec_nistp_64_gcc_128 no-ssl2 no-ssl3 no-dso no-weak-ssl-ciphers no-dtls)
@@ -163,8 +181,7 @@ if(BUILD_TORX_DEPS)
 		sodium-download # ExternalProject(s) ignores the crosscompile request and ignores the NDK, so we let sodium handle the build, but then we have to link
 	##	PREFIX ${CMAKE_BINARY_DIR}/sodium
 		BUILD_IN_SOURCE TRUE
-		GIT_REPOSITORY https://github.com/jedisct1/libsodium
-	#	GIT_REPOSITORY http://10.8.88.11/libsodium.git/
+		GIT_REPOSITORY ${REPO_SODIUM}
 		GIT_TAG stable 		# necessary to choose a release or it wont have ./configure (master has autogen instead)
 		UPDATE_COMMAND ""
 		PATCH_COMMAND ""
@@ -179,11 +196,10 @@ if(BUILD_TORX_DEPS)
 	)
 	ExternalProject_Add(
 		openssl-download
-		GIT_REPOSITORY https://github.com/openssl/openssl 
-	#	GIT_REPOSITORY http://10.8.88.11/openssl.git
+		GIT_REPOSITORY ${REPO_SSL}
 		GIT_TAG OpenSSL_1_1_1-stable
 		BUILD_IN_SOURCE TRUE
-		DOWNLOAD_COMMAND git clone ${GIT_REPOSITORY} --branch OpenSSL_1_1_1-stable openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
+		DOWNLOAD_COMMAND git clone ${REPO_SSL} --branch OpenSSL_1_1_1-stable openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
 		UPDATE_COMMAND ""
 		CONFIGURE_COMMAND ${SSL_CONFIG_CMD} ${SSL_CONFIG_TYPE}
 		BUILD_COMMAND make -j8 ${SSL_MAKE_ARGS}
@@ -192,8 +208,7 @@ if(BUILD_TORX_DEPS)
 	)
 	ExternalProject_Add(
 		zlib-download
-		GIT_REPOSITORY https://github.com/madler/zlib 
-	#	GIT_REPOSITORY http://10.8.88.11/zlib.git
+		GIT_REPOSITORY ${REPO_ZLIB}
 		GIT_TAG master
 		BUILD_IN_SOURCE 1
 		UPDATE_COMMAND ""
@@ -205,8 +220,7 @@ if(BUILD_TORX_DEPS)
 	set(SQLCIPHER_CFLAGS "-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL -I${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/include")
 	ExternalProject_Add(
 		sqlcipher-download
-		GIT_REPOSITORY https://github.com/sqlcipher/sqlcipher
-	#	GIT_REPOSITORY http://10.8.88.11/sqlcipher.git
+		GIT_REPOSITORY ${REPO_SQLCIPHER}
 		GIT_TAG v4.5.6 # probably best to use a release. master could risk corruption.
 		BUILD_IN_SOURCE TRUE
 		UPDATE_COMMAND mkdir -p include/sqlcipher
@@ -218,16 +232,14 @@ if(BUILD_TORX_DEPS)
 	)
 	FetchContent_Declare( # TODO building unnecessary things here like _extra and they get linked
 		event
-		GIT_REPOSITORY https://github.com/libevent/libevent.git
-	#	GIT_REPOSITORY http://10.8.88.11/libevent.git/
+		GIT_REPOSITORY ${REPO_EVENT}
 		GIT_TAG master # release-2.2.1-alpha
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(event)
 	FetchContent_Declare( # TODO set some env variable to define when this should build .a/.so. by default it seems to link .a at late stages and .so at early stages. Bad either way. MUST BE FIXED FOR GTK
 		png
-		GIT_REPOSITORY https://github.com/glennrp/libpng
-	#	GIT_REPOSITORY http://10.8.88.11/libpng.git/
+		GIT_REPOSITORY ${REPO_PNG}
 		GIT_TAG c22ef3b2e342bdfe3140b7e94879996d0e18c95b # DO NOT GO TO MASTER. They broke android builds somewhere after this commit.
 		OVERRIDE_FIND_PACKAGE
 	)
