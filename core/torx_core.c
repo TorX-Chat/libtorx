@@ -2822,6 +2822,8 @@ void initial_keyed(void)
 		sql_exec(&db_messages,table_message,NULL,0);
 	if(tor_location == NULL)
 		tor_location = which("tor");
+	if(tor_location == NULL)
+		error_simple(-1,"Tor could not be located. Please install Tor or report this bug.");
 	get_tor_version();
 	/* Generate Tor Control Password and Start Tor */
 	random_string(control_password_clear,sizeof(control_password_clear));
