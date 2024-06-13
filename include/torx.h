@@ -25,7 +25,7 @@
 #include <sqlcipher/sqlite3.h>
 
 #ifdef WIN32 // XXX
-
+#define pid_t int // currently used for run_binary
 typedef u_short in_port_t;
 //#include <windows.h>
 //#include <winsock.h> // for windows. should cover all network related stuff?
@@ -652,6 +652,7 @@ void torx_free(void **p);
 int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
+char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input);
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i);
 char *file_progress_string(const int n,const int f);

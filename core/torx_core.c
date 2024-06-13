@@ -118,8 +118,6 @@ char *file_tor_pid = {0}; // "tor.pid";
 char control_password_clear[32+1];
 char control_password_hash[61+1] = {0}; // does not need rwlock because only modified once // correct length
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
-int pipe_tor1[2]; // Tor Log file descriptors ( this is stdout from tor binary, non-blocking, for reading log )
-int pipe_tor2[2]; // Tor Log file descriptors ( this is stdin pipe to tor binary, for feeding torrc | tor -f )
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
 int tor_version[4] = {0}; // does not need rwlock because only modified once
@@ -135,6 +133,11 @@ uint8_t messages_loaded = 0; // easy way to check whether messages are already l
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
 int max_group = 0; // Should not be used except to constrain expand_messages_struc
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
+#ifdef WIN32
+HANDLE tor_fd_stdout = {0};
+#else
+int tor_fd_stdout = -1;
+#endif
 
 /* User configurable options that will automatically be checked by initial() */
 char *snowflake_location = {0}; // UI should set this
@@ -1171,6 +1174,216 @@ void message_sort(const int g)
 		}
 }
 
+char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)
+{ // Check return_pid > -1 to verify successful run of binary. Note: in Unix, fd_stdin/out is int, and in Windows it is HANDLE (void*). NOTE: The reason this returns char* and needs to be torx_free'd instead of returning pid is because double pointers are annoying in some languages and this is UI exposed.
+#ifdef WIN32
+	HANDLE g_hChildStd_IN_Rd = NULL;
+	HANDLE g_hChildStd_IN_Wr = NULL;
+	HANDLE g_hChildStd_OUT_Rd = NULL;
+	HANDLE g_hChildStd_OUT_Wr = NULL;
+	SECURITY_ATTRIBUTES saAttr;
+
+	saAttr.nLength = sizeof(SECURITY_ATTRIBUTES); 
+	saAttr.bInheritHandle = TRUE; 
+	saAttr.lpSecurityDescriptor = NULL; 
+
+	if (!CreatePipe(&g_hChildStd_IN_Rd, &g_hChildStd_IN_Wr, &saAttr, 0))
+		error_simple(-1,"CreatePipe failure");
+	if (!CreatePipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr, 0))
+		error_simple(-1,"CreatePipe failure");
+
+	if (!SetHandleInformation(g_hChildStd_IN_Wr, HANDLE_FLAG_INHERIT, 0))
+		error_simple(-1,"SetHandleInformation failure");
+	if (!SetHandleInformation(g_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0))
+		error_simple(-1,"SetHandleInformation failure");
+
+	PROCESS_INFORMATION piProcInfo;
+	STARTUPINFO siStartInfo;
+
+	ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
+	ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
+	siStartInfo.cb = sizeof(STARTUPINFO);
+//	siStartInfo.hStdError = g_hChildStd_OUT_Wr; // we don't want stderr
+	siStartInfo.hStdOutput = g_hChildStd_OUT_Wr;
+	siStartInfo.hStdInput = g_hChildStd_IN_Rd;
+	siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+/*	const char prefix[] = "cmd.exe /c ";
+	size_t len = sizeof(prefix)-1;
+	char *cmd = torx_malloc(sizeof(prefix));
+	memcpy(cmd,prefix,sizeof(prefix)); */
+	size_t len = 0;
+	char *cmd = {0};
+	size_t counter = 0;
+	for(char *arg; (arg = args[counter]) != NULL; counter++)
+	{
+		const size_t bytesRead = strlen(arg);
+		size_t excess = 1; // for space
+		if(counter)
+			excess += 2; // for ""
+		if(cmd)
+			cmd = torx_realloc(cmd, len + (size_t)bytesRead + excess + 1); // we +1 for the null pointer we'll add at the end
+		else
+			cmd = torx_secure_malloc(len + (size_t)bytesRead + excess + 1); // we +1 for the null pointer we'll add at the end
+		if(counter)
+		{
+			cmd[len] = '"';
+			memcpy(cmd + len + 1, arg, (size_t)bytesRead);
+		}
+		else
+			memcpy(cmd + len, arg, (size_t)bytesRead);
+		len += (size_t)bytesRead + excess;
+		if(counter)
+			cmd[len-2] = '"';
+		cmd[len-1] = ' ';
+	}
+	if(cmd)
+		cmd[len] = '\0';
+	if (!CreateProcess(NULL,cmd,NULL,NULL,TRUE,0,NULL,NULL,&siStartInfo,&piProcInfo)) // this is just a bool
+	{
+		if(return_pid)
+			*return_pid = -1;
+		if(fd_stdin)
+			fd_stdin = NULL;
+		if(fd_stdout)
+			fd_stdout = NULL;
+	}
+	else
+	{
+		if(return_pid)
+			*(DWORD*)return_pid = piProcInfo.dwProcessId; 
+		if(input)
+		{
+			DWORD written;
+			WriteFile(g_hChildStd_IN_Wr, input, (DWORD)strlen(input), &written, NULL);
+		}
+		if(fd_stdin)
+			fd_stdin = g_hChildStd_IN_Wr;
+		else
+			CloseHandle(g_hChildStd_IN_Wr);
+	//	WaitForSingleObject(piProcInfo.hProcess, INFINITE); // This would cause waiting for binary to exit, which we have no need for
+		CloseHandle(piProcInfo.hProcess);
+		CloseHandle(piProcInfo.hThread);
+	}
+	CloseHandle(g_hChildStd_IN_Rd);
+	CloseHandle(g_hChildStd_OUT_Wr);
+	torx_free((void*)&cmd);
+	char *output = {0};
+	if(fd_stdout)
+		fd_stdout = g_hChildStd_OUT_Rd;
+	else
+	{ // Handle stdout, if directed to
+		len = 0;
+		char buffer[4096];
+		DWORD bytesRead;
+		while(ReadFile(g_hChildStd_OUT_Rd, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead)
+		{
+			if(output)
+				output = torx_realloc(output, len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
+			else
+				output = torx_secure_malloc(len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
+			memcpy(output + len, buffer, (size_t)bytesRead);
+			len += (size_t)bytesRead;
+		}
+		CloseHandle(g_hChildStd_OUT_Rd);
+		if(len > sizeof(buffer))
+			sodium_memzero(buffer,sizeof(buffer));
+		else
+			sodium_memzero(buffer,len);
+		if(output)
+		{ // Strip trailing newline, if applicable, otherwise null terminate
+			if(output[len-1] == '\n')
+				output[len-1] = '\0';
+			else
+				output[len] = '\0';
+		}
+	}
+	return output;
+#else
+	#define FAILURE_STRING "zSHJNckXURsy82aYoX9KPNR18oGExraN" // can be anything not reasonably likely to be returned by a binary
+	int link1[2];
+	int link2[2];
+	if(torx_pipe(link1) == -1)
+		error_simple(-1,"Pipe failure 1 in run_binary");
+	if(torx_pipe(link2) == -1)
+		error_simple(-1,"Pipe failure 2 in run_binary");
+	pid_t pid;
+	if((pid = fork()) == -1)
+		error_simple(-1,"Fork failure in run_binary");
+	if(pid == 0)
+	{ // Child process
+		close(link1[0]); // read end
+		dup2(link1[1], STDOUT_FILENO); // Stdout for logging
+		close(link1[1]); // write end
+		close(link2[1]); // write end
+		dup2(link2[0], STDIN_FILENO); // Stdin for torrc feeding
+		close(link2[0]); // read end
+		if(execvp(args[0], (char *const *) args)) // Execute the binary
+			printf(FAILURE_STRING);
+		exit(0);
+	}
+	close(link1[1]);
+	close(link2[0]);
+	if(input)
+	{
+		FILE *pipewrite = fdopen(link2[1],"w");
+		fputs(input,pipewrite);
+		fclose(pipewrite);
+		pipewrite = NULL;
+	}
+	if(fd_stdin)
+		*(int*)fd_stdin = link2[1];
+	else
+		close(link2[1]);
+	char *output = {0};
+	if(fd_stdout)
+		*(int*)fd_stdout = link1[0];
+	else
+	{ // Handle stdout, if directed to
+		char buffer[4096];
+		size_t len = 0;
+		ssize_t bytesRead;
+		while((bytesRead = read(link1[0], buffer, sizeof(buffer) - 1)) > 0)
+		{
+			if(output)
+				output = torx_realloc(output, len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
+			else
+				output = torx_secure_malloc(len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
+			memcpy(output + len, buffer, (size_t)bytesRead);
+			len += (size_t)bytesRead;
+		}
+		close(link1[0]); // reading end
+		if(len > sizeof(buffer))
+			sodium_memzero(buffer,sizeof(buffer));
+		else
+			sodium_memzero(buffer,len);
+		if(bytesRead < 0 || (len == sizeof(FAILURE_STRING)-1 && !memcmp(output,FAILURE_STRING,sizeof(FAILURE_STRING)-1)))
+		{ // Pipe fail or (more likely) failed to execute the binary for some reason (such as wrong path)
+			if(bytesRead < 0)
+				error_simple(0,"Reading pipe fail in run_binary");
+			torx_free((void*)&output);
+			if(fd_stdin)
+				*(int*)fd_stdin = -1;
+			if(fd_stdout)
+				*(int*)fd_stdout = -1;
+			if(return_pid)
+				*return_pid = -1;
+			return NULL;
+		}
+		if(output)
+		{ // Strip trailing newline, if applicable, otherwise null terminate
+			if(output[len-1] == '\n')
+				output[len-1] = '\0';
+			else
+				output[len] = '\0';
+		}
+	}
+	if(return_pid)
+		*(pid_t*)return_pid = pid;
+	return output;
+#endif
+}
+
 void set_time(time_t *time,time_t *nstime)
 { // Sets .time and .nstime for a given message, to current time. Should be unique even when threaded.
 	if(!time || !nstime || *time != 0 || *nstime != 0)
@@ -1661,126 +1874,36 @@ void torrc_save(const char *torrc_content_local)
 char *torrc_verify(const char *torrc_content_local)
 { // Returns null if passed torrc_content_local has no errors. Otherwise returns errors. Remember to free if there are errors.
 // TODO 2024 WARNING: This function does not take into account our command line hard-coded options, which could conflict with something that passes this function.
-/*	if(strlen(torrc_content_local) > torrc_max_size)
+	char arg1[] = "--verify-config";
+	char arg2[] = "--hush";
+	char arg3[] = "-f";
+	char arg4[] = "-";
+	char arg5[] = "--DataDirectory"; // tor_data_directory
+	if(tor_data_directory)
 	{
-		char *too_long = torx_secure_malloc(512);
-		strcpy(too_long,"Torrc artificially limited to 40960 characters."); // TODO this problem should be possible to eliminate when we move to SQLCipher
-		return too_long;
-	} */
-	int link1[2];
-	int link2[2];
-	pid_t pid;
-	if(torx_pipe(link1) == -1)
-		error_simple(-1,"link1");
-	if(torx_pipe(link2) == -1)
-		error_simple(-1,"link2");
-	if((pid = fork()) == -1)
-		error_simple(-1,"fork");
-	if(pid == 0) // fork returns 0 to the child process, and the child's PID to the parent.
+		char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,arg5,tor_data_directory,NULL};
+		return run_binary(NULL,NULL,NULL,args_cmd,torrc_content_local);
+	}
+	else
 	{
-		/* Stdout for logging */
-		close(link1[0]); // read end
-		dup2(link1[1], STDOUT_FILENO);
-		close(link1[1]); // write end
-
-		/* Stdin for torrc feeding */
-		close(link2[1]); // write end
-		dup2(link2[0], STDIN_FILENO);
-		close(link2[0]); // read end
-		#ifdef WIN32
-		{
-			char *str0 = " --DataDirectory ";
-			char *str1 = " --verify-config --hush -f -";
-			char command[4096]; // safe arbitrary size
-			pthread_rwlock_rdlock(&mutex_global_variable);
-			if(tor_data_directory)
-				snprintf(command,sizeof(command),"%s%s%s%s",tor_location,str0,tor_data_directory,str1);
-			else
-				snprintf(command,sizeof(command),"%s%s",tor_location,str1);
-			pthread_rwlock_unlock(&mutex_global_variable);
-			system(command);
-		}
-		#else
-		{
-			char local_tor_location[1024];
-			pthread_rwlock_rdlock(&mutex_global_variable);
-			snprintf(local_tor_location,sizeof(local_tor_location),"%s",tor_location);
-			if(tor_data_directory)
-			{
-				char local_tor_data_directory[1024];
-				snprintf(local_tor_data_directory,sizeof(local_tor_data_directory),"%s",tor_data_directory);
-				pthread_rwlock_unlock(&mutex_global_variable);
-				execl(local_tor_location,"tor","--DataDirectory",local_tor_data_directory,"--verify-config","--hush","-f","-",NULL);
-			}
-			else
-			{
-				pthread_rwlock_unlock(&mutex_global_variable);
-				execl(local_tor_location,"tor","--verify-config","--hush","-f","-",NULL);
-			}
-		}
-		#endif
-		exit(0); // TODO wait() or waitpid() to clean up // TODO currently tor refuses to die upon errors, cant find a torrc or -- command line setting to fix this
+		char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,NULL};
+		return run_binary(NULL,NULL,NULL,args_cmd,torrc_content_local);
 	}
-	// else Write Torrc to pipe
-	close(link1[1]);
-	close(link2[0]);
-	FILE *pipewrite = fdopen(link2[1],"w");
-	fputs(torrc_content_local,pipewrite);
-	fclose(pipewrite);
-	pipewrite = NULL;
-	close(link2[1]);
-	char buffer[4096]; // zero'd
-	ssize_t len = read(link1[0],buffer,sizeof(buffer)-1);
-	close(link1[0]);
-	if(len > 0)
-	{ // Casting as size_t is safe because > 0
-		buffer[len] = '\0';
-		char *response = torx_secure_malloc((size_t)len+1);
-		snprintf(response,(size_t)len+1,"%s",buffer);
-		sodium_memzero(buffer,(size_t)len);
-		return response;
-	}
-	return NULL; // read error (len < 0) or result was fine (len == 0)
 }
 
 char *which(const char *binary) 
 { // Locates a binary from PATH and returns the path, or a NULL pointer if it does not exist in path. This could be converted into a function that can call any binary in $PATH with args and return the output. Therefore it could replace get_tor_version, etc
-	int link[2];
-	pid_t pid;
-	if(torx_pipe(link) == -1)
-		error_simple(-1,"pipe");
-	if((pid = fork()) == -1)
-		error_simple(-1,"fork");
-	if(pid == 0)
-	{
-		dup2(link[1], STDOUT_FILENO);
-		close(link[0]);
-		close(link[1]);
-		#ifdef WIN32
-		{
-			error_simple(-1,"Binary locations must be manually set in Windows");
-		}
-		#else
-		{
-			execlp("which", "which",binary,NULL); 
-		}
-		#endif
-		exit(0); // TODO wait() or waitpid() to clean up
-	}
-	close(link[1]);
-	char buffer[4096];
-	ssize_t len = read(link[0],buffer,sizeof(buffer)-1);
-	close(link[0]);
-	if(len > 0)
-	{ // Casting as size_t is safe because > 0
-		buffer[len] = '\0';
-		char *location = torx_secure_malloc((size_t)len+1); 
-		snprintf(location,(size_t)len+1,"%s",buffer);
-		if(location[len-1] == '\n')
-			location[len-1] = '\0'; // strip trailing newline, if applicable
-		return location;
-	}
-	return NULL;
+	if(!binary)
+		return NULL;
+	#ifdef WIN32
+	char searcher[] = "where";
+	#else
+	char searcher[] = "which";
+	#endif
+	char binary_array[1024];
+	snprintf(binary_array,sizeof(binary_array),"%s",binary);
+	char* const args_cmd[] = {searcher,binary_array,NULL};
+	return run_binary(NULL,NULL,NULL,args_cmd,NULL);
 }
 
 /*void error_ll(const int debug_level,...)
@@ -2140,98 +2263,62 @@ size_t stripbuffer(char *buffer)
 
 static inline void hash_password(const char *password) // XXX Does not need locks for the same reason intial_keyed doesn't.
 { // Hashes the Tor control port password by making a call to the Tor binary
-	if(tor_location == NULL)
+	if(!tor_location || !password)
 		return;
-	int link[2];
-	pid_t pid;
-	if(torx_pipe(link) == -1)
-		error_simple(-1,"pipe");
-	if((pid = fork()) == -1)
-		error_simple(-1,"fork");
-	if(pid == 0)
-	{
-		dup2(link[1], STDOUT_FILENO);
-		close(link[0]);
-		close(link[1]);
-		#ifdef WIN32
-		{
-			const char *str1 = " --quiet --hash-password ";
-			const char *str2 = " --DataDirectory FyRH0kIouynnDZmTDZpQ";
-			char command[1024]; // safe arbitrary size
-			snprintf(command,sizeof(command),"%s%s%s%s",tor_location,str1,password,str2);
-			system(command);
-		}
-		#else // XXX a fake data directory is used because otherwise --hash-password fails on Android, at least with Tor 4.6.8. I think it is not written to.
-		{
-			execl(tor_location,"tor","--quiet","--hash-password",password,"--DataDirectory","FyRH0kIouynnDZmTDZpQ",NULL);
-		}
-		#endif
-		exit(0); // TODO wait() or waitpid() to clean up
-	} 
-	close(link[1]);
-	ssize_t len = read(link[0],control_password_hash,sizeof(control_password_hash)-1);
-	close(link[0]);
+	char arg1[] = "--quiet";
+	char arg2[] = "--DataDirectory";
+	char arg3[] = "FyRH0kIouynnDZmTDZpQ"; // tor_data_directory
+	char arg4[] = "--hash-password";
+//	char arg5[] = "-"; // cannot, does not work TODO talk to #tor
+	const size_t password_len = strlen(password);
+	char *arg5 = torx_secure_malloc(password_len+1);
+	memcpy(arg5,password,password_len+1);
+	char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,arg5,NULL};
+	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
+	torx_free((void*)&arg5);
+	size_t len = 0;
+	if(ret)
+		len = strlen(ret);
 	if(len == 61)
 	{
-		control_password_hash[len] = '\0';
+		memcpy(control_password_hash,ret,sizeof(control_password_hash));
 		error_printf(3,"Actual Tor Control Password: %s",control_password_clear);
 		error_printf(3,"Hashed Tor Control Password: %s",control_password_hash);
 	}
 	else
 		error_simple(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect?");
+	torx_free((void*)&ret);
 }
 
 static inline void get_tor_version(void) // XXX Does not need locks for the same reason intial_keyed doesn't.
 { /* Sets the tor_version, decides v3auth_enabled */
-	if(tor_location == NULL)
+	if(!tor_location)
 		return;
-	int link[2];
-	pid_t pid;
-	if(torx_pipe(link) == -1)
-		error_simple(-1,"pipe");
-	if((pid = fork()) == -1)
-		error_simple(-1,"fork");
-	if(pid == 0)
-	{
-		dup2(link[1], STDOUT_FILENO);
-		close(link[0]);
-		close(link[1]);
-		#ifdef WIN32
-		{
-			char *str1 = "--quiet --version";
-			char command[strlen(tor_location)+strlen(str1)+1];
-			snprintf(command,sizeof(command),"%s%s",tor_location,str1);
-			system(command);
-		}
-		#else
-		{
-			execl(tor_location,"tor","--version","--quiet",NULL); // Quiet is a must, not --hush
-		}
-		#endif
-		exit(0); // TODO wait() or waitpid() to clean up
-	}
-	close(link[1]);
-	char buffer[256];
-	ssize_t len = read(link[0],buffer,sizeof(buffer)-1);
-	close(link[0]);
+	char arg1[] = "--quiet";
+	char arg2[] = "--version";
+	char* const args_cmd[] = {tor_location,arg1,arg2,NULL};
+	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
+	size_t len = 0;
+	if(ret)
+		len = strlen(ret);
 	if(len < 8)
-	{
 		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location);
-		return;
-	}
-	buffer[len] = '\0';
-	sscanf(buffer,"%*s %*s %d.%d.%d.%d",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
-	error_printf(0,"Tor Version: %d.%d.%d.%d",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
-	if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
-	{ // tor version >0.4.6.1
-		error_simple(0,"V3Auth is enabled by default.");
-		v3auth_enabled = 1;
-	}
-	else // Disable v3auth if tor version <0.4.6.1
+	else
 	{
-		error_simple(0,"V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
-		v3auth_enabled = 0;
+		sscanf(ret,"%*s %*s %d.%d.%d.%d",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
+		error_printf(0,"Tor Version: %d.%d.%d.%d",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
+		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
+		{ // tor version >0.4.6.1
+			error_simple(0,"V3Auth is enabled by default.");
+			v3auth_enabled = 1;
+		}
+		else // Disable v3auth if tor version <0.4.6.1
+		{
+			error_simple(0,"V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
+			v3auth_enabled = 0;
+		}
 	}
+	torx_free((void*)&ret);
 }
 
 void peer_offline(const int n,const int8_t fd_type)
@@ -2390,12 +2477,19 @@ static inline void remove_lines_with_suffix(char *input)
 
 static inline void *tor_log_reader(void *arg)
 {
-	const int pipe_fd = vptoi(arg);
 	pusher(zero_pthread,(void*)&thrd_tor_log_reader)
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
 	char data[40960]; // should be big
+	#ifdef WIN32
+	HANDLE fd_stdout = arg;
+	DWORD len;
+	#define handling_pipe ReadFile(fd_stdout, data, sizeof(data), &len, NULL) && len > 0
+	#else
+	const int fd_stdout = vptoi(arg);
 	ssize_t len;
-	while((len = read(pipe_fd,data,sizeof(data)-1)) > 0)
+	#define handling_pipe (len = read(fd_stdout,data,sizeof(data)-1)) > 0
+	#endif
+	while(handling_pipe)
 	{ // Casting as size_t is safe because > 0
 		data[len] = '\0';
 		char *msg = NULL;
@@ -2452,15 +2546,21 @@ static inline void *start_tor_threaded(void *arg)
 	{
 		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 //		restart = 1;
-		close(pipe_tor1[0]);
+		#ifdef WIN32
+		CloseHandle(tor_fd_stdout);
+		#else
+		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
+		#endif
 		kill(tor_pid,SIGTERM); // was 0
 	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
 		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
 			fprintf(stderr,"not ready yet\n");
 		} */ // Do not delete XXX
 		tor_pid = wait(NULL);
+		#ifndef WIN32
 		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
+		#endif
 		pid_write(0); // TODO this assumes success... we should probably write tor_pid() instead
 //		sleep(1); // ok our wait is not enough because socket is still taken, TODO just choose a new ctrl+socks port? (what if our port was 9050?) 
 /*		while(randport(tor_ctrl_port) < 1)
@@ -2491,108 +2591,96 @@ static inline void *start_tor_threaded(void *arg)
 			tor_socks_port = tor_socks_port_local;
 			pthread_rwlock_unlock(&mutex_global_variable);
 		}
-
 	}
-	if(torx_pipe(pipe_tor1) == -1 || torx_pipe(pipe_tor2) == -1)
-	{
-		pthread_mutex_unlock(&mutex_tor_pipe);
-		error_simple(-1,"pipe");
-	}
-	void *pipe_fd = itovp(pipe_tor1[0]);
-	if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,pipe_fd))
-		error_simple(-1,"Failed to create thread");
-//	fcntl(pipe_tor1[0], F_SETFL, O_NONBLOCK); // permit non-blocking read
-	if((tor_pid = fork()) == -1)
-	{
-		pthread_mutex_unlock(&mutex_tor_pipe);
-		error_simple(-1,"fork");
-	}
-	if(tor_pid == 0) // fork returns 0 to the child process, and the child's PID to the parent.
-	{
-		/* Stdout for logging */
-		close(pipe_tor1[0]); // read end
-		dup2(pipe_tor1[1], STDOUT_FILENO);
-		close(pipe_tor1[1]); // write end
-
-		/* Stdin for torrc feeding */
-		close(pipe_tor2[1]); // write end
-		dup2(pipe_tor2[0], STDIN_FILENO);
-		close(pipe_tor2[0]); // read end
-		#ifdef WIN32
-		{
-			char *str1 = " -f - --SocksPort ";
-			char *str2 = " --ControlPort ";
-			char *str3 = " --HashedControlPassword ";
-			char *str4 = " --DataDirectory ";
-			char command[4096]; // safe arbitrary size
-			if(ConstrainedSockSize)
-			{
-				if(tor_data_directory)
-					snprintf(command,sizeof(command),"%s%s%u%s%u%s%s --ConstrainedSockets 1 --FetchUselessDescriptors 1 --ConstrainedSockSize %d --LongLivedPorts \"%d, %d\" %s%s",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash,ConstrainedSockSize,INIT_VPORT,CTRL_VPORT,str4,tor_data_directory);
-				else
-					snprintf(command,sizeof(command),"%s%s%u%s%u%s%s --ConstrainedSockets 1 --FetchUselessDescriptors 1 --ConstrainedSockSize %d --LongLivedPorts \"%d, %d\"",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash,ConstrainedSockSize,INIT_VPORT,CTRL_VPORT);
-			}
-			else
-			{
-				if(tor_data_directory)
-					snprintf(command,sizeof(command),"%s%s%u%s%u%s%s --FetchUselessDescriptors 1 --LongLivedPorts \"%d, %d\" %s%s",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash,INIT_VPORT,CTRL_VPORT,str4,tor_data_directory);
-				else
-					snprintf(command,sizeof(command),"%s%s%u%s%u%s%s --FetchUselessDescriptors 1 --LongLivedPorts \"%d, %d\"",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash,INIT_VPORT,CTRL_VPORT);
-			}
-		/*	if(tor_data_directory)
-				snprintf(command,sizeof(command),"%s%s\"%u KeepAliveIsolateSOCKSAuth\"%s%u%s%s%s%s",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash,str4,tor_data_directory);
-			else
-				snprintf(command,sizeof(command),"%s%s\"%u KeepAliveIsolateSOCKSAuth\"%s%u%s%s",tor_location,str1,tor_socks_port,str2,tor_ctrl_port,str3,control_password_hash);
-		*/	system(command);
-		}
-		#else
-		{
-			char p1[21],p2[21],p3[21],p4[21];
-		//	snprintf(p1,sizeof(p1),"%u KeepAliveIsolateSOCKSAuth",tor_socks_port); // 2024/05/16 this seems not to have helped
-			snprintf(p1,sizeof(p1),"%u",tor_socks_port);
-			snprintf(p2,sizeof(p2),"%u",tor_ctrl_port);
-			snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
-			snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
-			if(ConstrainedSockSize)
-			{
-				if(tor_data_directory)
-					execl(tor_location,"tor","-f","-","--SocksPort",p1, "--ControlPort",p2, "--HashedControlPassword",control_password_hash,"--ConstrainedSockets","1","--ConstrainedSockSize",p3,"--LongLivedPorts",p4,"--FetchUselessDescriptors","1","--DataDirectory",tor_data_directory,NULL);
-				else
-					execl(tor_location,"tor","-f","-","--SocksPort",p1, "--ControlPort",p2, "--HashedControlPassword",control_password_hash,"--ConstrainedSockets","1","--ConstrainedSockSize",p3,"--LongLivedPorts",p4,"--FetchUselessDescriptors","1",NULL);
-			}
-			else
-			{
-				if(tor_data_directory)
-					execl(tor_location,"tor","-f","-","--SocksPort",p1, "--ControlPort",p2, "--HashedControlPassword",control_password_hash,"--LongLivedPorts",p4,"--FetchUselessDescriptors","1","--DataDirectory",tor_data_directory,NULL);
-				else
-					execl(tor_location,"tor","-f","-","--SocksPort",p1, "--ControlPort",p2, "--HashedControlPassword",control_password_hash,"--LongLivedPorts",p4,"--FetchUselessDescriptors","1",NULL);
-			}
-	//			error_printf(-1,"Error starting external Tor binary: %s",tor_location);  // pointless, seperate memory space
-			// Here will never be executed.
-		}
-		#endif
-	//	error_simple(-1,"Tor died. Check Tor logs."); // pointless, seperate memory space
-		exit(0); // TODO wait() or waitpid() to clean up // TODO currently tor refuses to die upon errors, cant find a torrc or -- command line setting to fix this
-	}
-	pid_write(tor_pid);
-	// else Write Torrc to pipe
-	close(pipe_tor1[1]);
-	close(pipe_tor2[0]);
-	FILE *pipewrite = fdopen(pipe_tor2[1],"w");
+	#ifdef WIN32
+	HANDLE fd_stdout;
+	#else
+	int fd_stdout;
+	#endif
+	pid_t pid;
+	char arg1[] = "-f";
+	char arg2[] = "-";
+	char arg3[] = "--SocksPort"; // p1
+	char arg4[] = "--ControlPort"; // p2
+	char arg5[] = "--HashedControlPassword"; // control_password_hash
+	char arg6[] = "--ConstrainedSockets";
+	char arg7[] = "1";
+	char arg8[] = "--ConstrainedSockSize"; // p3
+	char arg9[] = "--LongLivedPorts"; // p4
+	char arg10[] = "--FetchUselessDescriptors";
+	char arg11[] = "1";
+	char arg12[] = "--DataDirectory"; // tor_data_directory
 	pthread_rwlock_rdlock(&mutex_global_variable);
-	fputs(torrc_content,pipewrite);
-	pthread_rwlock_unlock(&mutex_global_variable);
-	fclose(pipewrite);
-	pipewrite = NULL;
-	close(pipe_tor2[1]);
-	pthread_mutex_unlock(&mutex_tor_pipe);
-/*	if(restart == 0)
+	char p1[21],p2[21],p3[21],p4[21];
+	snprintf(p1,sizeof(p1),"%u",tor_socks_port);
+	snprintf(p2,sizeof(p2),"%u",tor_ctrl_port);
+	snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
+	snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
+	char *ret;
+	if(ConstrainedSockSize)
 	{
-		error_simple(5,"Checkpoint Sleeping for 2 seconds before printing Tor PID and loading onions.");
-		sleep(3); // was 2, changed to 3 to accomodate our slow android emulator // TODO XXX this is REALLY bad (and not C99) but the issue is that Tor can take time to come up and load_onions will fail if Tor hasn't opened its' control port
+		if(tor_data_directory)
+		{
+			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			pthread_rwlock_unlock(&mutex_global_variable);
+			#ifdef WIN32
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			#else
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			#endif
+		}
+		else
+		{
+			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
+			pthread_rwlock_unlock(&mutex_global_variable);
+			#ifdef WIN32
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			#else
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			#endif
+		}
 	}
-	else // TODO on android it probably still needs a sleep, but sleep is just all-around bad
-		error_simple(0,"Tor has been restarted."); */
+	else
+	{
+		if(tor_data_directory)
+		{
+			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			pthread_rwlock_unlock(&mutex_global_variable);
+			#ifdef WIN32
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			#else
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			#endif
+		}
+		else
+		{
+			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
+			pthread_rwlock_unlock(&mutex_global_variable);
+			#ifdef WIN32
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			#else
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			#endif
+		}
+	}
+	torx_free((void*)&ret); // we don't use this and it should be null anyway
+	pthread_rwlock_wrlock(&mutex_global_variable);
+	#ifdef WIN32
+	tor_fd_stdout = fd_stdout;
+	#else
+	tor_fd_stdout = fd_stdout;
+	#endif
+	tor_pid = pid;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_mutex_unlock(&mutex_tor_pipe);
+	pid_write(pid);
+	#ifdef WIN32
+	if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,fd_stdout))
+		error_simple(-1,"Failed to create thread");
+	#else
+	if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,itovp(fd_stdout)))
+		error_simple(-1,"Failed to create thread");
+	#endif
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	error_printf(1,"Tor PID: %d",tor_pid);
 	error_printf(1,"Tor SOCKS Port: %u",tor_socks_port);
@@ -4050,6 +4138,7 @@ void initial(void)
 		signal(SIGHUP, cleanup_cb);
 		signal(SIGUSR1, cleanup_cb);
 		signal(SIGUSR2, cleanup_cb);
+		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies
 	#endif
 	signal(SIGINT, cleanup_cb);
 	signal(SIGABRT, cleanup_cb);
@@ -4057,7 +4146,6 @@ void initial(void)
 	signal(SIGSEGV, cleanup_cb);
 	signal(SIGILL, cleanup_cb);
 	signal(SIGFPE, cleanup_cb);
-	signal(SIGCHLD, SIG_IGN); // XXX prevent zombies
 
 	pthread_attr_init(&ATTR_DETACHED); // must be triggered before any use
 	pthread_attr_setdetachstate(&ATTR_DETACHED, PTHREAD_CREATE_DETACHED); // must be triggered before any use
