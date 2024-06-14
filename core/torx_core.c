@@ -98,7 +98,7 @@ XXX Notes XXX
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 1 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 uint8_t write_debug_to_file = 1;
@@ -142,6 +142,7 @@ int tor_fd_stdout = -1;
 /* User configurable options that will automatically be checked by initial() */
 char *snowflake_location = {0}; // UI should set this
 char *obfs4proxy_location = {0}; // UI should set this
+char *native_library_directory = {0}; // UI should set this (Android-only)
 char *tor_data_directory = {0}; // (currently unnused) TODO can set this as a fixed path (relative paths produce warnings) within working_dir. This will override any path set in torrc.
 char *tor_location = {0}; // $PATH will be used if this is not set. Must be set on android/windows.
 char *download_dir = {0}; // MUST end in forward or backslash (whichever, depending on OS). XXX Should be set otherwise will save in config directory set in initial().
@@ -2306,6 +2307,7 @@ static inline void get_tor_version(void) // XXX Does not need locks for the same
 	else
 	{
 		sscanf(ret,"%*s %*s %d.%d.%d.%d",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
+		error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 		error_printf(0,"Tor Version: %d.%d.%d.%d",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
 		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
 		{ // tor version >0.4.6.1
@@ -2528,6 +2530,25 @@ static inline void *tor_log_reader(void *arg)
 	return 0;
 }
 
+char *replace_substring(const char *source,const char *search,const char *replace)
+{ // Non-destructive, returns allocated string if it finds and replaces substring, otherwise returns NULL. Do not modify this function.
+	char *pos;
+	if (!source || !search || !replace || !(pos = strstr(source, search)))
+		return NULL;
+	const size_t source_len = strlen(source);
+	const size_t search_len = strlen(search);
+	const size_t replace_len = strlen(replace);
+	const size_t final_len = source_len - search_len + replace_len;
+	char *new = torx_secure_malloc(final_len + 1);
+	const size_t prefix_len = (size_t)(pos - source);
+	const size_t suffix_len = final_len - prefix_len - replace_len;
+	memcpy(new, source, prefix_len); // add prefix
+	memcpy(new + prefix_len, replace, replace_len); // add replace
+	memcpy(new + prefix_len + replace_len, pos + search_len, suffix_len); // add suffix
+	new[final_len] = '\0';
+	return new;
+}
+
 static inline void *start_tor_threaded(void *arg)
 { /* Start or Restart Tor and pipe stdout to pipe_tor */ // TODO have a tor_failed global variable that can be somehow set by errors here
 	(void) arg;
@@ -2625,6 +2646,9 @@ static inline void *start_tor_threaded(void *arg)
 	snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
 	snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
 	char *ret;
+	char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
+	if(!torrc_content_local)
+		torrc_content_local = torrc_content;
 	if(ConstrainedSockSize)
 	{
 		if(tor_data_directory)
@@ -2632,9 +2656,9 @@ static inline void *start_tor_threaded(void *arg)
 			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
 			#else
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			#endif
 		}
 		else
@@ -2642,9 +2666,9 @@ static inline void *start_tor_threaded(void *arg)
 			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
 			#else
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			#endif
 		}
 	}
@@ -2655,9 +2679,9 @@ static inline void *start_tor_threaded(void *arg)
 			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
 			#else
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			#endif
 		}
 		else
@@ -2665,13 +2689,15 @@ static inline void *start_tor_threaded(void *arg)
 			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
 			#else
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content);
+			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			#endif
 		}
 	}
 	torx_free((void*)&ret); // we don't use this and it should be null anyway
+	if(torrc_content_local != torrc_content)
+		torx_free((void*)&torrc_content_local);
 	pthread_rwlock_wrlock(&mutex_global_variable);
 	#ifdef WIN32
 	tor_fd_stdout = fd_stdout;

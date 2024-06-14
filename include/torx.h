@@ -685,6 +685,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 size_t stripbuffer(char *buffer);
 void peer_offline(const int n,const int8_t fd_type);
 uint16_t randport(const uint16_t arg);
+char *replace_substring(const char *source,const char *search,const char *replace);
 void start_tor(void);
 size_t b64_decoded_size(const char *in);
 size_t b64_decode(unsigned char *out,const size_t destination_size,const char *in); // caller must allocate space
