@@ -2547,20 +2547,28 @@ static inline void *start_tor_threaded(void *arg)
 		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 //		restart = 1;
 		#ifdef WIN32
-		CloseHandle(tor_fd_stdout);
+		if(TerminateProcess(tor_fd_stdout,0))
+		{
+			DWORD waitResult = WaitForSingleObject(tor_fd_stdout, 1000); // INFINITE
+			if (waitResult == WAIT_OBJECT_0)
+				error_simple(0,"Windows: Tor terminated before timeout successfully.\n");
+			else
+				error_simple(0,"Windows: Tor failed to terminate before timeout. Coding error. Report this.\n");
+			CloseHandle(tor_fd_stdout);
+		}
+		else
+			error_simple(0,"TerminateProcess failed. Coding error. Report this.");
 		#else
 		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
-		#endif
 		kill(tor_pid,SIGTERM); // was 0
+		tor_pid = wait(NULL);
+		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
+		#endif
 	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
 		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
 			fprintf(stderr,"not ready yet\n");
 		} */ // Do not delete XXX
-		tor_pid = wait(NULL);
-		#ifndef WIN32
-		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
-		#endif
 		pid_write(0); // TODO this assumes success... we should probably write tor_pid() instead
 //		sleep(1); // ok our wait is not enough because socket is still taken, TODO just choose a new ctrl+socks port? (what if our port was 9050?) 
 /*		while(randport(tor_ctrl_port) < 1)
@@ -4559,6 +4567,11 @@ void login_start(const char *arg)
 
 void cleanup_lib(const int sig_num)
 { // Cleanup process: cleanup_cb() saves UI settings, calls cleanup_lib() to save library settings and close databases, then UI exits
+	#ifdef WIN32
+	#define kill_tor_successfully TerminateProcess(tor_fd_stdout,0) != 0
+	#else
+	#define kill_tor_successfully kill(tor_pid,SIGTERM) == 0
+	#endif
 	if(sig_num)
 		breakpoint();
 	error_printf(0,"Cleanup reached. Signal number: %d",sig_num);
@@ -4585,11 +4598,13 @@ void cleanup_lib(const int sig_num)
 	pthread_rwlock_wrlock(&mutex_broadcast);
 	if(tor_pid < 1)
 		error_simple(0,"Exiting before Tor started. Goodbye.");
-	else if(kill(tor_pid,SIGTERM) == 0)
-	{
+	else if(kill_tor_successfully)
+	{ // we don't need to bother waiting for termination, just signal
 		pid_write(0);
 		error_simple(0,"Exiting normally after killing Tor. Goodbye.");
 	}
+	else
+		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?).");
 	if(highest_ever_o > 0) // this does not mean file transfers occured, i think
 		error_printf(0,"Highest O level from packet struct reached: %d",highest_ever_o);
 	// XXX Most activity should be brought to a halt by the above locks XXX
