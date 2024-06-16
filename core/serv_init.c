@@ -1,9 +1,12 @@
 
 int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send
-	uint16_t protocol_verify;
-	int f = -1; // DO NOT INITIALIZE, we want the warnings... but our compiler is not playing nice so we have to
-	int i = -1; // DO NOT INITIALIZE, we want the warnings... but our compiler is not playing nice so we have to
+	if(n < 0 || f_i < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
+	{
+		error_printf(0,"Sanity check failure in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
+		return -1;
+	}
+	int f,i; // DO NOT INITIALIZE, we want the warnings... but our compiler is not playing nice so we have to
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const char *name = protocols[p_iter].name;
@@ -11,10 +14,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	pthread_rwlock_unlock(&mutex_protocols);
 	uint64_t start = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-	{ // f is passed as f_i
-		f = f_i;
-		protocol_verify = ENUM_PROTOCOL_FILE_PIECE;
-	}
+		f = f_i; // f is passed as f_i
 	else
 	{ // i is passed as f_i
 		i = f_i;
@@ -24,45 +24,40 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 			if(true_p_iter < 0)
 			{
 				error_printf(0,"Message deleted: %s. Cannot send_prep. Coding error. Report this.",name);
-				goto failure;
+				return -1;
 			}
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const char *true_name = protocols[true_p_iter].name;
 			pthread_rwlock_unlock(&mutex_protocols);
 			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name);
 		}
-		protocol_verify = protocol;
 		start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos));
-		if(socket_swappable && fd_type > -1 && start == 0)
+		if(start == 0)
 		{
 			torx_read(n) // XXX
-			const int socket_utilized = peer[n].socket_utilized[fd_type];
+			const int utilized_recv = peer[n].socket_utilized[0];
+			const int utilized_send = peer[n].socket_utilized[1];
 			torx_unlock(n) // XXX
-			if(socket_utilized > -1 && socket_utilized != i)
-			{ // TODO this ignores the fact that the prior_i message could be going out on another fd_type (we could track that and potentially even switch this message to another fd)
-			// TODO this is probably going to cause any further messages to not go until connection breaks and is re-established
-				torx_read(n) // XXX
-				const int utilized_recv = peer[n].socket_utilized[0];
-				const int utilized_send = peer[n].socket_utilized[1];
-				torx_unlock(n) // XXX
-				if(utilized_send == -1 && fd_type == 0)
+			if(utilized_recv > -1 && utilized_send > -1)
+			{
+				error_printf(0,"Refusing to send_prep because sockets all utilized: %s",name);
+				return -1;
+			}
+			else if(fd_type == 0 && utilized_recv > -1)
+			{
+				if(socket_swappable)
 					return send_prep(n,f_i,p_iter,1);
-				else if(utilized_recv == -1 && fd_type == 1)
+				error_printf(0,"Refusing to send_prep on %d because not swappable: %s",fd_type,name);
+				return -1;
+			}
+			else if(fd_type == 1 && utilized_send > -1)
+			{
+				if(socket_swappable)
 					return send_prep(n,f_i,p_iter,0);
-				else
-				{
-					error_printf(0,"Refusing to send_prep because sockets all utilized: %s",name);
-					printf("Checkpoint send_prep refusal on n==%d\n",n);
-					goto failure;
-				}
+				error_printf(0,"Refusing to send_prep on %d because not swappable: %s",fd_type,name);
+				return -1;
 			}
 		}
-	}
-	if(protocol != ENUM_PROTOCOL_FILE_PIECE && protocol != protocol_verify && (protocol != ENUM_PROTOCOL_GROUP_OFFER || protocol_verify != ENUM_PROTOCOL_GROUP_OFFER_FIRST))
-	{ // this is a sanity check for i iter messages stored in messages struct. does NOT apply to f/ENUM_PROTOCOL_FILE_PIECE messages.
-		error_printf(0,"Inconsistency between passed protocol and protocol in struct. %u vs %u. Not sending. Report this.",protocol,protocol_verify);
-		breakpoint();
-		goto failure;
 	}
 	uint8_t connected;
 	FILE **fd_active = {0};
@@ -84,22 +79,16 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	else
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
 		torx_unlock(n) // XXX
-		error_printf(3,"Checkpoint Cannot send_prep yet. Invalid fd_type or (more likely) .bev_send or .bev_recv does not exist yet. Protocol==%u fd_type==%d status==%u",protocol,fd_type,status);
-		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-			error_printf(0,"Checkpoint ENUM_PROTOCOL_FILE_PIECE send_prep fail: owner==%u n==%d f_i==%d fd_type==%d",owner,n,f_i,fd_type);
-		if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
-			error_printf(0,"Checkpoint ENUM_PROTOCOL_PIPE_AUTH send_prep fail (too early) fd_type=%d",fd_type);
-		else
-			error_printf(0,"Checkpoint send_prep %s too early, fd_type=%d will be ignored. Owner: %u",name,fd_type,owner);
-		goto failure;
+		error_printf(0,"Checkpoint send_prep %s too early, fd_type=%d owner=%u",name,fd_type,owner);
+		return -1;
 	}
 	torx_unlock(n) // XXX
 	char send_buffer[PACKET_SIZE_MAX]; // zero'd // NOTE: no need to {0} this, so don't.
-	if(connected && status == ENUM_STATUS_FRIEND) // It is not necessary to check recvfd, but it is not a bad idea to ensure that both sides are up before sending
+	if(connected && status == ENUM_STATUS_FRIEND)
 	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage. should re-fetch it
 		uint16_t packet_len = 0;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-		{ // XXX (only f is initialized)
+		{ // only f is initialized
 			torx_read(n) // XXX
 			if(!*fd_active || (start = (uint64_t)ftell(*fd_active)) == (uint64_t)-1)
 			{
@@ -107,30 +96,23 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 				error_simple(1,"Null filepointer in send_prep, possibly caused by file being completed.");
 				return -1;
 			}
-			if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start) // THIS IS NOT AN ERROR.
-			{ // TODO 2024/03/20 Moved from jwofe9j20w to reduce corruption. Might increase corruption! Needs testing. Comment out and uncomment jwofe9j20w if corruption.
-				printf("Checkpoint fail: %lu + %lu != %lu\n",peer[n].file[f].outbound_start[fd_type],peer[n].file[f].outbound_transferred[fd_type],start);
+			if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start)
+			{ // This is apparently not an error and must exist to prevent corruption
+				error_printf(0,"Shifting filepointer: %lu + %lu != %lu\n",peer[n].file[f].outbound_start[fd_type],peer[n].file[f].outbound_transferred[fd_type],start);
 				torx_unlock(n) // XXX
 				torx_fd_lock(n,f) // XXX
 				fseek(*fd_active,(long int)start,SEEK_SET);
 				torx_fd_unlock(n,f) // XXX
 				torx_read(n) // XXX
 			} // Appears NOT to be our (main?) cause of corruption. Best guess is failing to properly close file descriptors on shutdown.
-		//	printf("Checkpoint send_prep type=%d start=%lu\n",fd_type,start); // XXX highly useful for debugging
 			const uint64_t endian_corrected_start = htobe64(start);
 			uint16_t data_size = PACKET_SIZE_MAX-16;
 			if(start + data_size > peer[n].file[f].outbound_end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[n].file[f].outbound_end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
 			torx_unlock(n) // XXX
-			if(data_size == 0)
-			{ // TODO 2023/11/10 this should NOT trigger (except if peer requests 0 bytes) during transfer because file should already be marked ENUM_FILE_OUTBOUND_COMPLETED by output_cb_v1/output_cb_v2 TODO
-				error_simple(0,"Appears we completed a section? Or peer requested 0 bytes.");
-				return -1;
-			}
 			torx_fd_lock(n,f) // XXX // TODO TODO TODO XXX 2024/02/04 this blocks (bad), need to have an local file descriptor that has the proper location, then after fread, write the new location to the proper file pointer (avoids lockup if/while read hangs)
 			const size_t bytes = fread(&send_buffer[16],1,data_size,*fd_active);
 			torx_fd_unlock(n,f) // XXX should probably enable? but this could block...
-		//	printf("Checkpoint send_prep %lu from %lu on %d\n",data_size,start,fd_type);
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -141,7 +123,6 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 				torx_read(n) // XXX
 				memcpy(&send_buffer[4],peer[n].file[f].checksum,4);
 				torx_unlock(n) // XXX
-				//printf("Checkpoint read start: %ld\nContents of packet:\n%s\n",be64toh(endian_corrected_start),&send_buffer[18]);
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
@@ -156,22 +137,20 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 			}
 		}
 		else
-		{ // Anything except ENUM_PROTOCOL_FILE_PIECE XXX (only i is initialized)
+		{ // only i is initialized
 			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(p_iter < 0 || (owner != ENUM_OWNER_GROUP_PEER && group_mechanics))
-			{
-				error_simple(0,"Illegal request or unrecognized protocol in send_prep. Coding error. Report this.");
-				goto illegal; // these messages can only go out to ENUM_OWNER_GROUP_PEER
+			if(owner != ENUM_OWNER_GROUP_PEER && group_mechanics)
+			{ // these messages can only go out to ENUM_OWNER_GROUP_PEER
+				error_simple(0,"owner != ENUM_OWNER_GROUP_PEER && group_mechanics. Coding error. Report this.");
+				return -1;
 			}
-			if(protocol == ENUM_PROTOCOL_KILL_CODE && stat == ENUM_MESSAGE_SENT)
-				goto failure; // Kill code already sent on other peer associated socket
 			else if(stat == ENUM_MESSAGE_FAIL)
 			{ // All protocols that contain a message size on the first packet of a message // Attempt send of messages marked :fail: or resend
 				const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
-				uint32_t prefix_len = 2+2;
+				uint32_t prefix_len = 2+2; // packet_len + protocol
 				if(start == 0)
 				{ // Only place length at the beginning of message, not on every message
 					torx_write(n) // XXX
@@ -190,27 +169,24 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 					packet_len = PACKET_SIZE_MAX;
 				uint16_t trash = htobe16(packet_len);
 				memcpy(&send_buffer[0],&trash,sizeof(uint16_t)); // packet length
-				trash = htobe16(protocol_verify);
+				trash = htobe16(protocol);
 				memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
-				/* XXX Unnecessary sanity check start */
+				/* XXX sanity check start */
 				const size_t allocated = torx_allocation_len(peer[n].message[i].message);
 				const size_t reading = start + (size_t)packet_len - prefix_len;
-				const size_t writing = prefix_len + (size_t)packet_len - prefix_len;
-				if(sizeof(send_buffer) < writing)
-					error_printf(-1,"Critical error will result in illegal write: %lu < (%u + %lu - %u)",sizeof(send_buffer),prefix_len,packet_len,prefix_len);
-				else if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
-					error_printf(-1,"Critical error will result in illegal read: %lu < (%lu + %lu - %u)",allocated,start,packet_len,prefix_len);
-				/* Unnecessary sanity check end XXX */
+				if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
+					error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
+				/* sanity check end XXX */
 				torx_read(n) // XXX
 				memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
 				torx_unlock(n) // XXX
 			}
+			else if(protocol == ENUM_PROTOCOL_KILL_CODE && stat == ENUM_MESSAGE_SENT)
+				return -1; // Kill code already sent on other peer associated socket
 			else
 			{ // XXX XXX XXX NOTICE: This CANNOT catch ALL _SENT messages because send_prep can be called twice before output_cb. Therefore, the solution is to PREVENT SEND_PREP from being called twice on the same message, as we do for queue skipping protocols in torx_events.
-				illegal: {}
-				error_printf(0,"Issue in send_prep: %u or unexpected stat: %u from owner: %u. Not sending. Report this.",protocol,stat,owner);
-				breakpoint();
-				goto failure;
+				error_printf(0,"Issue in send_prep: %u or unexpected stat: %u from owner: %u. Not sending. Coding error. Report this.",protocol,stat,owner);
+				return -1;
 			}
 		}
 		struct evbuffer *output = NULL; // XXX If getting issues at bufferevent_get_output in valgrind, it means .bev_recv or .bev_send is not being NULL'd properly in libevent after closing
@@ -224,7 +200,6 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 			output = bufferevent_get_output(bev_send); // 2023/10/19 TODO invalid read here
 		if(output)
 		{
-		//	printf("Checkpoint evbuffer_add %s %u <= %d\n",name,packet_len,PACKET_SIZE_MAX);
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
 			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where output_cb can (and will on some devices) trigger before we register packet
@@ -259,11 +234,12 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	}
 	else
 		error_simple(0,"Send prep failed for reasons.");
-	failure: {}
-	torx_write(n) // XXX
+	torx_read(n) // XXX
 	if(protocol != ENUM_PROTOCOL_FILE_PIECE && peer[n].socket_utilized[fd_type] == i)
 	{
+		torx_unlock(n) // XXX
 		error_printf(0,WHITE"Checkpoint send_prep6 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+		torx_write(n) // XXX
 		peer[n].socket_utilized[fd_type] = -1;
 
 	}

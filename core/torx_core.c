@@ -2865,7 +2865,7 @@ static inline void *broadcast_threaded(void *arg)
 				random_broadcast -= BROADCAST_QUEUE_SIZE;
 			if(broadcasts_queued[random_broadcast].hash)
 			{ // found one
-				error_simple(0,"Checkpoint threaded 1: chose random broadcast");
+			//	error_simple(0,"Checkpoint threaded 1: chose random broadcast");
 				int random_start_2 = rand() % BROADCAST_MAX_PEERS; // Call rand() once as the starting position then iterate.
 				for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS ; iter2++,random_start_2++)
 				{ // choose a random peer to send it to
