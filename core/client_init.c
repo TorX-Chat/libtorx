@@ -212,7 +212,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		torx_unlock(n) // XXX
 		if(current_n != -1)
 		{ // very necessary check
-			error_simple(0,"No free sections to request from message_send. Bailing. (not necessarily error)"); // error message not required
+			error_simple(1,"No free sections to request from message_send. Bailing. (not necessarily error)"); // error message not required
 			goto error;
 		}
 		const uint64_t start = calculate_section_start(file_size,splits,section) + current;
@@ -420,7 +420,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		fd_type = 1; // put on sendfd for safety (safer when not using v3auth, unless using authorized pipe)
 	// XXX Step 5: Build base message
 	char *message;
-	uint32_t message_len; // this is UNSIGNED length
+	uint32_t message_len;
 	int requested_section = -1; // must initialize. Will only be > -1 if ENUM_PROTOCOL_FILE_REQUEST
 	if(skip_prep)
 	{ // For re-send only. Warning: Highly experimental.
@@ -432,14 +432,15 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		message = message_prep(&message_len,&requested_section,target_n,fd_type,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	else
 		message = message_prep(&message_len,NULL,target_n,fd_type,n,f,g,p_iter,time,nstime,arg,base_message_len);
-	if(message_len < 1) // spagetti duckfeet
+	if(message_len < 1)
 	{ // (could just be cycle 2 of a file resumption of a file thats half-done)
 		if(cycle == 0 && send_both)
-		{ // must send start point on each respective fd.
+		{ // Only triggers on FILE_REQUEST, where message_prep decided to not to send anything (probably because this fd is utilized already for a section)
 			cycle++;
 			goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
 		}
-		error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u send_both=%u",fd_type,protocol,send_both);
+		if(protocol != ENUM_PROTOCOL_FILE_REQUEST)
+			error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u send_both=%u",fd_type,protocol,send_both);
 		goto error;
 	}
 	// XXX Step 6: Iterate message
@@ -511,13 +512,12 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(cycle == 0)
 			{
 				if(target_g > -1 || (owner == ENUM_OWNER_GROUP_PEER && group_pm))
-				{
+				{ // Complicated logic, be careful here. Group messages or PM.
 					int local_g = g; // NOTE: maybe we can just use g but we can't use target_g because its used for conditions elsewhere
 					if(local_g < 0 && target_g < 0) // PM of some type
 						local_g = set_g(target_n,NULL);
 					else if(local_g < 0)
 						local_g = target_g;
-					error_printf(0,YELLOW"Checkpoint message_insert target_g=%d g=%d using local_g=%d"RESET,target_g,g,local_g); // spagetti duckfeet
 					repeated = message_insert(local_g,target_n,i); // repeated likely means resent message. No print, no insert.
 				}
 				if(!repeated)
@@ -643,14 +643,14 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	else if(file_offer)
 		f = vptoi(arg);
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
-		g = vptoi(arg); // spagetti duckfeet
+		g = vptoi(arg);
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
 	{ // Note: The rest of the passed struct is accessed in message_distribute --> message_prep
 		const struct int_char *int_char = (const struct int_char*) arg; // Casting passed struct
-		g = int_char->i; // spagetti duckfeet
+		g = int_char->i;
 	}
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
-		g = set_g(n,NULL); // spagetti duckfeet
+		g = set_g(n,NULL);
 	// XXX Step 3:
 	if(message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0) == -1)
 		return -1;

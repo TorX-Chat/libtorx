@@ -98,7 +98,7 @@ XXX Notes XXX
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 1 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 2 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 uint8_t write_debug_to_file = 1;
@@ -1586,7 +1586,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 		memcpy(&message_prepared[base_message_len + null_terminated_len + sizeof(trash)],&trash,sizeof(trash));
 	}
 	long long unsigned int sig_len = 0; // discard
-	const uint32_t total_unsigned_len = allocation - crypto_sign_BYTES;
+	const uint32_t total_unsigned_len = allocation - signature_len;
 	if(signature_len)
 	{ // affix protocol, if this is a 'message' and not just 'other stuff'... for other stuff, don't use this function. use crypto_sign*
 		char *prefixed_message = affix_protocol_len(protocol,message_prepared,total_unsigned_len);
@@ -2865,7 +2865,7 @@ static inline void *broadcast_threaded(void *arg)
 				random_broadcast -= BROADCAST_QUEUE_SIZE;
 			if(broadcasts_queued[random_broadcast].hash)
 			{ // found one
-			//	error_simple(0,"Checkpoint threaded 1: chose random broadcast");
+			//	error_simple(0,"Checkpoint 1: chose random broadcast");
 				int random_start_2 = rand() % BROADCAST_MAX_PEERS; // Call rand() once as the starting position then iterate.
 				for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS ; iter2++,random_start_2++)
 				{ // choose a random peer to send it to
@@ -2881,7 +2881,7 @@ static inline void *broadcast_threaded(void *arg)
 					const uint8_t online = sendfd_connected + recvfd_connected;
 					if(online || owner == ENUM_OWNER_GROUP_CTRL)
 					{ // chose one and send to it, then delist if applicable
-						error_printf(0,"Checkpoint threaded 2: chose ONLINE victim owner=%u",owner); // TODO this must trigger if 1 triggers TODO
+						error_printf(0,"Checkpoint 2: chose ONLINE victim owner=%u",owner); // TODO this must trigger if 1 triggers TODO
 						message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,broadcasts_queued[random_broadcast].broadcast,GROUP_BROADCAST_LEN);
 						pthread_rwlock_unlock(&mutex_broadcast);
 						pthread_rwlock_wrlock(&mutex_broadcast);
@@ -2890,7 +2890,7 @@ static inline void *broadcast_threaded(void *arg)
 						for(int iter3 = 0; iter3 < BROADCAST_MAX_PEERS ; iter3++)
 							if((more_peers = broadcasts_queued[random_broadcast].peers[iter3]) > -1)
 							{
-								error_simple(0,"Checkpoint still peers to send to");
+								error_simple(1,"Checkpoint still peers to send to");
 								break;
 							}
 						if(more_peers > -1)
@@ -2901,7 +2901,7 @@ static inline void *broadcast_threaded(void *arg)
 						broadcast_delay_local = BROADCAST_DELAY; // sent something, so set the lower delay
 						break;
 					}
-//printf("Checkpoint threaded 2: chose OFFLINE victim owner=%u\n",owner); // TODO this must trigger if 1 triggers TODO
+//printf("Checkpoint 2: chose OFFLINE victim owner=%u\n",owner); // TODO this must trigger if 1 triggers TODO
 				}
 				break;
 			}
@@ -3809,12 +3809,10 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 	}
 	const uint32_t hash = fnv1a_32_salted(broadcast,GROUP_BROADCAST_LEN);
 	pthread_rwlock_rdlock(&mutex_broadcast);
-printf(WHITE"Checkpoint broadcast_add 1\n"RESET);
 	for(int iter1 = 0; iter1 < BROADCAST_HISTORY_SIZE; iter1++)
 	{
 		if(broadcast_history[iter1] == 0)
 		{ // Not in queued/sent list, add it
-printf(WHITE"Checkpoint broadcast_add 2: adding\n"RESET);
 			int iter2 = 0;
 			for(; iter2 < BROADCAST_QUEUE_SIZE; iter2++)
 				if(broadcasts_queued[iter2].hash == 0)
@@ -3849,7 +3847,7 @@ printf(WHITE"Checkpoint broadcast_add 2: adding\n"RESET);
 						iter3--;
 					}
 					torx_unlock(n) // XXX
-printf(WHITE"Checkpoint broadcast_add 3: got slot, peers=%d\n"RESET,BROADCAST_MAX_PEERS-iter3);
+					error_printf(0,"Broadcast added and slotted, peers=%d",BROADCAST_MAX_PEERS-iter3);
 					break;
 				}
 			if(iter2 == BROADCAST_QUEUE_SIZE)
@@ -3857,7 +3855,6 @@ printf(WHITE"Checkpoint broadcast_add 3: got slot, peers=%d\n"RESET,BROADCAST_MA
 				error_simple(0,"Queue is full. Broadcast will be discarded.");
 				break; // queue is full, bail out. broadcast will be discarded.
 			}
-printf(WHITE"Checkpoint broadcast_add 4: queued!\n"RESET);
 			broadcast_history[iter1] = hash; // NOTE: this is sent OR queued
 			break;
 		}

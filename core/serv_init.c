@@ -40,21 +40,21 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 			torx_unlock(n) // XXX
 			if(utilized_recv > -1 && utilized_send > -1)
 			{
-				error_printf(0,"Refusing to send_prep because sockets all utilized: %s",name);
+				error_printf(0,"Refusing to send_prep because sockets all utilized n=%d: %s",n,name);
 				return -1;
 			}
 			else if(fd_type == 0 && utilized_recv > -1)
 			{
 				if(socket_swappable)
 					return send_prep(n,f_i,p_iter,1);
-				error_printf(0,"Refusing to send_prep on %d because not swappable: %s",fd_type,name);
+				error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
 				return -1;
 			}
 			else if(fd_type == 1 && utilized_send > -1)
 			{
 				if(socket_swappable)
 					return send_prep(n,f_i,p_iter,0);
-				error_printf(0,"Refusing to send_prep on %d because not swappable: %s",fd_type,name);
+				error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
 				return -1;
 			}
 		}
@@ -79,7 +79,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	else
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
 		torx_unlock(n) // XXX
-		error_printf(0,"Checkpoint send_prep %s too early, fd_type=%d owner=%u",name,fd_type,owner);
+		error_printf(0,"Send_prep too early: %s",name);
 		return -1;
 	}
 	torx_unlock(n) // XXX
@@ -156,7 +156,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 					torx_write(n) // XXX
 					peer[n].socket_utilized[fd_type] = i;
 					torx_unlock(n) // XXX
-					error_printf(0,WHITE"Checkpoint send_prep1 peer[%d].socket_utilized[%d] = %d"RESET,n,fd_type,i);
+					error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d"RESET,n,fd_type,i);
 					const uint32_t trash = htobe32(message_len);
 					memcpy(&send_buffer[prefix_len],&trash,sizeof(uint32_t));
 					prefix_len += 4;
@@ -238,7 +238,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	if(protocol != ENUM_PROTOCOL_FILE_PIECE && peer[n].socket_utilized[fd_type] == i)
 	{
 		torx_unlock(n) // XXX
-		error_printf(0,WHITE"Checkpoint send_prep6 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+		error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 		torx_write(n) // XXX
 		peer[n].socket_utilized[fd_type] = -1;
 

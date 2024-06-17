@@ -228,7 +228,7 @@ static inline void output_cb(void *ctx)
 					torx_write(n) // XXX
 					peer[n].socket_utilized[fd_type] = -1;
 					torx_unlock(n) // XXX
-					error_printf(0,WHITE"Checkpoint output_cb9 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+					error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 					error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
 					if(protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 					{ // prevent cascading effect from triggering after these because they are queue skipping
@@ -374,7 +374,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	if(peer[n].socket_utilized[fd_type] > -1)
 	{
 		peer[n].socket_utilized[fd_type] = -1;
-		error_printf(0,WHITE"Checkpoint close_conn peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 	}
 	torx_unlock(n) // XXX
 	bufferevent_free(bev); // relevant to CTRL and SING, which are the only ones that will hit this. Especially important for CTRL.
@@ -732,14 +732,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 									if(peer_g_peercount < g_peercount)
 									{ // Peer has less in their list than us, lets give them our list
-										printf("Checkpoint sending peerlist because %u < %u\n",peer_g_peercount,g_peercount);
+										error_printf(0,"Sending peerlist because %u < %u\n",peer_g_peercount,g_peercount);
 										if(g_invite_required)
 											message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PRIVATE_LEN);
 										else
 											message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PUBLIC_LEN);
 									}
 									else
-										printf("Checkpoint NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
+										error_printf(0,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
 								}
 								else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
 								{ // Audited 2024/02/16 // Format: g_peercount + onions + ed25519 keys + invitation sigs
@@ -1147,8 +1147,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							time_t nstime = 0;
 							if(signature_len && date_len)
 							{ // handle messages that come with date (typically any group messages)
-								time = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (2*sizeof(uint32_t) + sizeof(int16_t) + crypto_sign_BYTES)]));
-								nstime = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (sizeof(uint32_t) + sizeof(int16_t) + crypto_sign_BYTES)]));
+								time = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (2*sizeof(uint32_t) + crypto_sign_BYTES)]));
+								nstime = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (sizeof(uint32_t) + crypto_sign_BYTES)]));
 							}
 							else
 								set_time(&time,&nstime);
