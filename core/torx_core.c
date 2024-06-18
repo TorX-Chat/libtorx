@@ -1,108 +1,24 @@
 /*	This file will contain most core functions. There will be no "main" because core is a library.	*/
 
 /*
-TODO FIXME XXX
-
-TODO setup e-begging , example : https://github.com/tonyp7/esp32-wifi-manager/commit/5bddfbaf55a83a0411a17ea8654efc776dbb2529
-
-TODO Windows TODO
-	* some places use exec without having a system() alternative for windows
-	* if pipe() cannot be used on windows, we have problems.
-	* our send() might be a problem
-
-TODO Android TODO
-	* sleep() should be used carefully because sleep() on android is not accurately one second. Commonly speed up by several times for unknown reasons.
-
-TODO Before Release TODO
-	* make a list of functions running in UI thread and anything they call, to make sure there is no sleep(). Currently we have some... tor_call() has a sleep, which is an issue when called by start_tor() in UI thread.
-	* rip out libsodium, replace with openssl or libressl XXX be sure that we can do everything in onion_gen.c (ex: crypto_sign_ed25519_pk_to_curve25519)
-	* implement sqlcipher to eliminate log correlation potential and space wasted by random_string_max_len
-	* wrap all references to log pointers in mutex because we rather commonly overwrite our salt
-	* multiple offers of same file to different peers (or same?) is undefined behavior
-	* delete relevant .key file setting entries when deleting via takedown_onion() or killing
-	* XXX putting no incoming auth doesn't prevent connections. Test this, but based on logs from invalid auth, it seems auth is optional. XXX
-	* put a mutex around all reads and writes to keypointer and configpointer
-		better than passing around copies because there could be a race on newlines
-	* variable length struct + initializer
-		stuck, see scratchpad
-	* if(value != 0) ---> if(value), otherwise we look amateur. if() only skips if if FALSE or 0
-		if(buf == NULL) ---> if(!buf)
-	* update .config to reflect
-	* implement torx_secure_malloc() and torx_free((void*)&) where suitable, and sodium_memzero() or randombytes_buf() for arrays
-	* Consider putting a mutex around any global file pointer
-	* eliminate all or most use of strcmp in favor of strncmp
-
-TODO Yellow Orange TODO
-	* When orange, messages can be sent.
-	* When yellow, any messages should request a ACK (file offer, accept(?), utf-8, etc. Not file parts.)
-
-TODO Full Duplex TODO 
-	* have a single pipe offer (existing)
-	* have a single pipe accept (existing)
-	* if either peer says single pipe, single pipe. (such as if they have PRIORITIZE_MESSAGES == 1)
-	* otherwise, double pipe. As of current, FULL DUPLEX transfers will CORRUPT ON RESUME.
-		option 1: .aria2 style file (bad)
-		option 2: fallocate(linux)/lseek(linux) or pre-allocate files in some sort of null state (so we can see what parts we need/are unwritten
-			would have to do this in OS specific manners https://devblogs.microsoft.com/oldnewthing/20160714-00/?p=93875
-			TODO i think aria2 has a --file-allocation=falloc, should see what the other options are (maybe lseek)
-		option 3: prevent resume on full duplex files by hard coding certain file sizes as full-duplex (say, <10mb)
-		option 4: create two seperate files, treat them as two seperate files, and merge/concat them after completion (viable 2nd option after falloc)
-
-TODO BUGS TODO
-	* 2022/07/27 occassional double send (different timestamps) occurs in GTK3+4. low priority, will catch in audit.
-	* accessing .key .config need mutex because we might be able to crash/corrupt if we click settings too fast
-	* restarting tor via start_tor() causes segfault due to lack of testing. Exact location identified via backtrace to socks.c 
-	* file transfers probably won't get resumed if the SENDER goes offline and comes online again without the receiver going offline.
-		receiver should re-send any /accept messages (as we do on startup) when a peer comes online
-	* careful with pointer = pointer, especially regarding our structs; freeing any will destroy the other.
-	* MUST delete chat history if deleting a peer (because password might be shit and will not be un-shit when change_password()'d
-		- after that is implemented, can permit null passwords (just set "0" or salt as password, anything) for people who want auto-start
-		- should change salt when changing password ( then if chat history is not securely deleted or fails to delete when deleting peer, it is ok)
-	* getline_c89() has line limits (unsigned int instead of ssize_t)
-	* -Wall says we need to convert all strings to unsigned char and cast what cannot be converted via (unsigned char *)
-	* Custom fputs() function that will zero the existing line and write to a fresh line if there is a newline in the planned write() space.
-		- will make forward compatibility easier and prevent damage if a user makes manual edits and removes spaces in the process
-			this could occur as easily as hand-modifying the saved screen resolution
-		- shouldn't be too much performance hit if we read the whole line, check in memory, then decide whether to write or move to end first
-
-XXX Theory XXX
-	* could require a message confirmation from peer, but this would make traffic analysis easier, so no.
-	* SECURITY: Spoofing peers possible on non-v3auth peers if we send messages on .recvfd instead of .sendfd. Sending on Sendfd is FAR SAFER for non-v3auth peers.
-	* Tor binary location: Custom setting > Path > Current Dir (tor or tor.exe)
-	* 56 character name length is a problem because not all characters are 1 byte. Example: emojis, chinese characters, etc
-	* there is lots of opportunity to audit the code and \0 private keys from memory when not absolutely necessary to hold. the 88 char base64 would be really identifiable in a memory dump or core dump.
-		might actually be safer to pass around pointers more than we already do? ask #security or #cryptography
-	* MUST make a random length string at the end of each logged message. This will be VERY critical for security. Do not ignore this. 2022/06/27.
-	* Library lib*.so https://www.youtube.com/watch?app=desktop&v=Slfwk28vhws
-	* For KILL CODE, have an "Advanced setting" on whether it should result in BLOCK or DELETE (default: ???)
-		killed peers should take down their onions. should be outbound ONLY and require acknowledgment.
-	* we probably need to have peer acknowledge receipt of messages by sending a checksum back. At the same time, we *do* need to prevent out-of-order messages.
-		using a checksum is more CPU intensive than ideal but ensures the completeness of the message *and* does not require both sides to keep a shared index number of any type.
 	Regarding the MitM potential:
 	* we could concat the onion & peeronion, make a hash, and then people should compare the hash outside? The value of this is low however and it is stupidly complex for normies to understand.
 		- (strings would have to be a particular order(abc..129?).... otherwise the hash would be different)
-	*  AUTOMATICALLY_LOAD_CTRL = 0 is not viable because adversaries can monitor disconnection times
-	* having connections break after every message (preventing online status checks) is not really viable because an adversary can still do a HSDir lookup to find you status, without ever making a TCP connection to you
-	* https://doc.libsodium.org/memory_management should implement this,
-		also avoid having the keys and privkeys passed between functions. better to pass N. Would make it easier to wipe stuff on shutdown.
-	* It is possible to send an accept_ on a file from long ago that the sender still has in their log history, which may have since changed. Could present security issue.
-	* could have a toggleable option about whether to run as a tor binary as a middle node (this would hella support the network, but be bandwidth eating)
-	* pluggable contracts https://gitweb.torproject.org/tor-browser.git/tree/tor-config/
-	* after p = torx_secure_malloc(), could we just p[0]= '\0'?
 
-XXX Notes XXX
-	* Do not use: strcpy,strncpy, strcat,strncat, strcmp, scanf, itoa (strncmp is ok)
-	* Our base32 function doesn't use sodium malloc, since it presumably would reduce speed. Ensure to clear its output.
+TODO FIXME XXX Notes:
+	* Do not use: strcpy, strncpy, strcat, strncat, strcmp, scanf, itoa (strncmp is ok)
 	* %m (allocation related) must be avoided because it is normal malloc and therefore incompatible with torx_free((void*)&)
+	* sleep() should be used carefully because sleep() on android is not accurately one second. Commonly speed up by several times for unknown reasons.
+	* AUTOMATICALLY_LOAD_CTRL = 0 is not viable because adversaries can monitor disconnection times
+	* having connections break after every message (preventing online status checks) is not really viable because an adversary can still do a HSDir lookup to find you status, without ever making a TCP connection to you
 */
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 2 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 4 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
-uint8_t write_debug_to_file = 1;
-const char *debug_file = "debug.log"; // see write_debug_to_file. This is ONLY FOR DEVELOPMENT USE.
+char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
 uint8_t v3auth_enabled = 1; // global default // 0 (off), 1 (BEST: derived from onion). Should NOT make this user toggleable. For discussion on the safety of using onion derived ed25519 keys and converting to x25519: https://crypto.stackexchange.com/questions/3260/using-same-keypair-for-diffie-hellman-and-signing/3311#3311 
 uint8_t reduced_memory = 0; // NOTE: increasing decreases RAM requirements *and* CPU cycles. 0 = 1024mb, 1 = 256mb, 2 = 64mb. More ram allocated will make startup ever-so-slightly slower, but significantly increase security against bruteforcing. Recommended to leave as default (0, 1024mb), but could crash some devices.
 int8_t debug = 0; //"0-5" default verbosity. Ensure that privacy related info is not printed before level 3.
@@ -229,10 +145,10 @@ UseBridges 1\n\
 UpdateBridgesFromAuthority 1\n\
 ClientTransportPlugin snowflake exec ";
 const char *torrc_content_default_censored_region_part2 = "\n\
-Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
-Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ front=cdn.sstatic.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
+Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://1098762253.rsc.cdn77.org/ fronts=www.cdn77.com,www.phpmyadmin.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
+Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org/ fronts=www.cdn77.com,www.phpmyadmin.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
 ";
-
+// For updated bridges: https://gitlab.torproject.org/tpo/applications/tor-browser/-/blob/tor-browser-115.12.0esr-13.5-1/toolkit/content/pt_config.json
 const char *table_peer = \
 	"CREATE TABLE IF NOT EXISTS peer (\
 		peer_index	INTEGER	PRIMARY KEY AUTOINCREMENT,\
@@ -375,7 +291,7 @@ static inline void write_debug_file(const char *message)
 
 static inline void error_allocated_already(const int debug_level,char *do_not_free_message)
 { // INTERNAL FUNCTION ONLY. No sanity checks, do_not_free_message must be already allocated by torx_secure_malloc.
-	if(write_debug_to_file)
+	if(debug_file)
 		write_debug_file(do_not_free_message);
 	if(debug_level < 0)
 	{
@@ -3860,7 +3776,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 		}
 		else if(broadcast_history[iter1] == hash)
 		{
-			error_simple(0,"Broadcast already queued. Broadcast will be discarded.");
+			error_simple(0,"Broadcast already queued. Will be discarded.");
 			break; // Already in queued/sent list, bail
 		}
 	}
@@ -3978,7 +3894,7 @@ void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST
 					{ // Check if this is our own broadcast being returned to us (which is fine and normal)
 						sodium_memzero(onion,sizeof(onion));
 						sodium_memzero(decrypted,sizeof(decrypted));
-						error_simple(0,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
+						error_simple(1,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
 						return;
 					}
 					else

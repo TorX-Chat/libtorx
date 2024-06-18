@@ -72,7 +72,7 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 }*/
 
 static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
-{ // Note: A *lot* of redundancy with output_cb()
+{
 	size_t drained = 0;
 	int o = 0;
 	uint8_t removed_something = 0; // removed one or more packets
@@ -80,6 +80,11 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 	{
 		pthread_rwlock_rdlock(&mutex_packet);
 		const int p_iter = packet[o].p_iter;
+		const int packet_n = packet[o].n;
+		const int packet_f_i = packet[o].f_i;
+		const int8_t packet_fd_type = packet[o].fd_type;
+		const uint16_t packet_len = packet[o].packet_len;
+		const uint64_t packet_start = packet[o].start;
 		pthread_rwlock_unlock(&mutex_packet);
 		if(p_iter == -1)
 		{
@@ -87,73 +92,19 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 				error_simple(0,"packet_removal p_iter == -1. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
 			break; // high packets, never used, have p_iter == -1, do not modify
 		}
-		pthread_rwlock_rdlock(&mutex_packet);
-		const int packet_n = packet[o].n;
-	//	const int packet_f_i = packet[o].f_i;
-		const uint16_t packet_len = packet[o].packet_len;
-		const int8_t packet_fd_type = packet[o].fd_type;
-	//	const uint64_t packet_start = packet[o].start;
-		pthread_rwlock_unlock(&mutex_packet);
-		pthread_rwlock_rdlock(&mutex_protocols);
-		const char *name = protocols[p_iter].name;
-		pthread_rwlock_unlock(&mutex_protocols);
-		if(packet_n == n && packet_fd_type == fd_type)
-		{ // Found the packet info, now we handle
-			drained += packet_len;
-			error_printf(0,"Checkpoint packet_removed of protocol=%s len=%u of %lu",name,packet_len,drain_len);
-			pthread_rwlock_wrlock(&mutex_packet);
-			packet[o].n = -1; // release it for re-use.
-			packet[o].f_i = -1; // release it for re-use.
-			packet[o].packet_len = 0; // release it for re-use.
-		//	packet[o].p_iter = -1; // DO NOT reset this, unless all sendbuffers are clear.
-			packet[o].fd_type = -1; // release it for re-use.
-			packet[o].start = 0; // release it for re-use.
-			pthread_rwlock_unlock(&mutex_packet);
-			removed_something = 1;
-		} // END PACKET HANDLING SECTION
-	}
-	if(o >= SIZE_PACKET_STRC) // Overrun safety
-	{
-		error_simple(0,"packet_removal Hit SIZE_PACKET_STRC. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
-		breakpoint();
-	}
-	return drained;
-}
-
-static inline void output_cb(void *ctx)
-{ // Note: A *lot* of redundancy with packet_removal()
-	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	const int n = event_strc->n;
-	const int8_t fd_type = event_strc->fd_type;
-	int o = 0;
-//	char p1[21],p2[21],p3[21];
-//	uint8_t removed_something = 0; // removed one or more packets
-	for( ; o < SIZE_PACKET_STRC ; o++)
-	{
-		pthread_rwlock_rdlock(&mutex_packet);
-		const int p_iter = packet[o].p_iter;
-		pthread_rwlock_unlock(&mutex_packet);
-		if(p_iter == -1)
-		{
-		//	if(!removed_something)
-		//		error_simple(0,"output_cb p_iter == -1. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
-			break; // high packets, never used, have p_iter == -1, do not modify
-		}
 		pthread_rwlock_rdlock(&mutex_protocols);
 		const uint16_t protocol = protocols[p_iter].protocol;
 		const uint8_t stream = protocols[p_iter].stream;
 		const char *name = protocols[p_iter].name;
 		pthread_rwlock_unlock(&mutex_protocols);
-		pthread_rwlock_rdlock(&mutex_packet);
-		const int packet_n = packet[o].n;
-		const int packet_f_i = packet[o].f_i;
-		const uint16_t packet_len = packet[o].packet_len;
-		const int8_t packet_fd_type = packet[o].fd_type;
-		const uint64_t packet_start = packet[o].start;
-		pthread_rwlock_unlock(&mutex_packet);
 		if(packet_n == n && packet_fd_type == fd_type)
-		{ // Found the packet info, now we handle according to .protocol and .sent
-			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+		{ // Found the packet info, now we handle
+			if(drain_len)
+			{
+				drained += packet_len;
+				error_printf(0,"Checkpoint packet_removed of protocol=%s len=%u of %lu",name,packet_len,drain_len);
+			}
+			else if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{
 				const int f = packet_f_i;
 				torx_write(n) // XXX
@@ -167,8 +118,7 @@ static inline void output_cb(void *ctx)
 				torx_unlock(n) // XXX
 				if(current_pos == current_end)
 				{
-					error_simple(2,"Checkpoint Outbound File Section Completed."); // was Checkpoint Outbound File Segment Completed.
-					error_printf(0,"Checkpoint Outbound Section Complete fd_type==%d",fd_type);
+					error_printf(0,"Outbound File Section Completed on fd_type=%d",fd_type);
 					if(fd_type == 0)
 						close_sockets(n,f,peer[n].file[f].fd_out_recvfd)
 					else /* fd_type == 1 */
@@ -264,14 +214,21 @@ static inline void output_cb(void *ctx)
 			packet[o].fd_type = -1; // release it for re-use.
 			packet[o].start = 0; // release it for re-use.
 			pthread_rwlock_unlock(&mutex_packet);
-		//	removed_something = 1;
+			removed_something = 1;
 		} // END PACKET HANDLING SECTION
 	}
 	if(o >= SIZE_PACKET_STRC) // Overrun safety
 	{
-		error_simple(0,"output_cb Hit SIZE_PACKET_STRC. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
+		error_simple(0,"packet_removal Hit SIZE_PACKET_STRC. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
 		breakpoint();
 	}
+	return drained;
+}
+
+static inline void output_cb(void *ctx)
+{ // Note: A *lot* of redundancy with packet_removal()
+	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
+	packet_removal(event_strc->n,event_strc->fd_type,0);
 }
 
 static void write_finished(struct bufferevent *bev, void *ctx)
@@ -330,7 +287,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	const int8_t fd_type = event_strc->fd_type;
 	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 	const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
-	printf(YELLOW"Checkpoint close_conn: n==%d fd_type==%d owner==%u status==%u\n"RESET,n,fd_type,owner,status);
+	error_printf(0,YELLOW"Close_conn: n=%d fd_type=%d owner=%u status=%u"RESET,n,fd_type,owner,status);
 	if(events & BEV_EVENT_ERROR)
 	{ // 2024/02/20 happened during outbound file transfer when peer (or we) went offline
 		error_simple(0,"Error from bufferevent caused connection closure."); // 2023/10/30 occurs when a peer went offline during file transfer
@@ -1436,13 +1393,13 @@ void *torx_events(void *arg)
 					const int p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter));
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
-					const char *name = protocols[p_iter].name;
+				//	const char *name = protocols[p_iter].name;
 					pthread_rwlock_unlock(&mutex_protocols);
-					printf(WHITE"Checkpoint message 0\n"RESET);
+				//	printf(WHITE"Checkpoint message 0\n"RESET);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
 						send_prep(n,0,p_iter,1);
-					else
-						printf(WHITE"Checkpoint message 0 is: %s\n"RESET,name); // TODO see what snuck in. i bet its broadcast?
+				//	else
+				//		printf(WHITE"Checkpoint message 0 is: %s\n"RESET,name); // TODO see what snuck in. i bet its broadcast?
 				}
 			//	else
 			//		printf(WHITE"Checkpoint message zerp\n"RESET);

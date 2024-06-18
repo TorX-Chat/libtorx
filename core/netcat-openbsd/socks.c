@@ -243,17 +243,11 @@ int socks_connect(const char *host, const char *port)
 		return -1;
 	}
 	cnt = atomicio(read, proxyfd, buf, 4);
-	if(cnt != 4) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed
+	if(cnt != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed
 	{ // All good, we hit this all the time on shutdown
-		error_simple(0,"Read failed, probably due to tor being killed, or we are starting too fast.");
-		if(evutil_closesocket(proxyfd) == -1)
+	//	error_simple(0,"Read failed, probably due to tor being killed, or we are starting too fast.");
+		if(proxyfd > 0 && evutil_closesocket(proxyfd) == -1)
 			error_simple(0,"Failed to close socket. 142535");
-		return -1;
-	}
-	if(buf[1] != 0)
-	{
-		if(evutil_closesocket(proxyfd) == -1) // hella important
-			error_simple(0,"Failed to close socket. 9521123");
 		return -1;
 	}
 	switch (buf[3]) 

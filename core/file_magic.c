@@ -1097,13 +1097,15 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		tor_call(NULL,-1,apibuffer);
 		sodium_memzero(apibuffer,sizeof(apibuffer));
 		torx_write(n) // XXX
-		if(evutil_closesocket(peer[n].sendfd) == -1 || evutil_closesocket(peer[n].recvfd) == -1)// TODO note: 2024 added recvfd, but it seems to do nothing
-		{
-			torx_unlock(n) // XXX
-			error_printf(0,"Failed to close socket in takedown_onion. Owner: %u",owner); // TODO 2023/11/21 hit this with CTRL
-		}
-		else
-			torx_unlock(n) // XXX
+		int ret_send = 0;
+		int ret_recv = 0;
+		if(peer[n].sendfd > 0)
+			ret_send = evutil_closesocket(peer[n].sendfd);
+		if(peer[n].recvfd > 0)
+			ret_recv = evutil_closesocket(peer[n].recvfd);
+		torx_unlock(n) // XXX
+		if(ret_send == -1 || ret_recv == -1)
+			error_printf(0,"Failed to close a socket in takedown_onion. Owner: %u",owner);
 	} // From control-spec:   It is the Onion Service server application's responsibility to close existing client connections if desired after the Onion Service has been removed via "DEL_ONION".
 	if(delete == 1 || delete == 3)
 	{

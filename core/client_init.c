@@ -597,7 +597,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	uint8_t owner;
 	if(target_n < 0 || protocol < 1 || (owner = getter_uint8(target_n,-1,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = protocol_lookup(protocol)) < 0)
 	{
-		error_simple(0,"message_send failed sanity check. Coding error. Report this.");	
+		error_printf(0,"message_send failed sanity check: %d %u %u %d. Coding error. Report this.",target_n,protocol,owner,p_iter);
 		breakpoint();
 		return -1;
 	}
