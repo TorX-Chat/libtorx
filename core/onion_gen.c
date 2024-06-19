@@ -9,8 +9,8 @@
 
 struct thread_data { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	size_t suffix_length_local;
-	int thrd_num;
-	int *winner;
+	uint32_t thrd_num;
+	uint8_t *winner;
 	unsigned char *ed25519_pk;
 	unsigned char *ed25519_sk;
 	unsigned char *expanded_sk;
@@ -114,7 +114,7 @@ static void *onion_gen(void *arg)
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	size_t suffix_length_local = (size_t)suffix_length;
 	const uint8_t local_shorten_torxids = shorten_torxids;
-	const int local_global_threads = global_threads;
+	const uint32_t local_global_threads = global_threads;
 	pthread_rwlock_unlock(&mutex_global_variable);
 	if(serv_strc->owner == ENUM_OWNER_CTRL || serv_strc->owner == ENUM_OWNER_GROUP_CTRL || local_shorten_torxids == 0) // TODO consider utilizing in_pthread
 		suffix_length_local = 0; // this should cause quick returns for CTRL, which we require
@@ -122,7 +122,7 @@ static void *onion_gen(void *arg)
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES] = {0}; // zero'd
 	unsigned char ed25519_sk[crypto_sign_SECRETKEYBYTES] = {0}; // zero'd
 	unsigned char expanded_sk[crypto_hash_sha512_BYTES] = {0}; // zero'd
-	int threads_local = 0;
+	uint32_t threads_local = 0;
 	int8_t generating = 0;
 	int8_t return_privkey = 0;
 	int8_t regenerate = 0;
@@ -133,7 +133,7 @@ static void *onion_gen(void *arg)
 			if(!regenerate) // TODO 2023/07/17 this if might not be necessary, but to comply with the existing logic (since we don't want to do testing right now) we put it for safety
 				generating = 1;
 	//		regenerate: {}
-			int winner = 0;
+			uint8_t winner = 0;
 			if(serv_strc->owner == ENUM_OWNER_CTRL || serv_strc->owner == ENUM_OWNER_GROUP_CTRL || serv_strc->owner == ENUM_OWNER_GROUP_PEER || local_global_threads < 2 || local_shorten_torxids == 0) // TODO consider utilizing in_pthread
 			{
 				threads_local = 1;
@@ -149,11 +149,11 @@ static void *onion_gen(void *arg)
 			else
 			{
 				threads_local = local_global_threads;
-				int running_threads = 0;
+				uint32_t running_threads = 0;
 				while(running_threads < threads_local)
 				{ // We probably need a mutex or something to prevent a race condition where something could return at same time? if that happens, it will fail and regen though
 					running_threads++;
-					error_printf(4,"Creating thread: %d",running_threads);
+					error_printf(4,"Creating thread: %u",running_threads);
 					struct thread_data *thread_data = torx_insecure_malloc(sizeof(struct thread_data));
 					thread_data->suffix_length_local = suffix_length_local;
 					thread_data->thrd_num = running_threads;

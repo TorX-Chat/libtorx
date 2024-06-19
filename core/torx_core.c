@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 3 , 4 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 3 , 5 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
@@ -65,14 +65,14 @@ char *download_dir = {0}; // MUST end in forward or backslash (whichever, depend
 char *split_folder = {0}; // MUST end in forward or backslash (whichever, depending on OS). For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-int show_log_days = 365; // default value. modify in main.c
+uint32_t show_log_days = 365; // default value. modify in main.c
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
 uint8_t shorten_torxids = 1; // 1 is on, 0 is off. Cuts off the version byte, the checksum, and a prefix
 uint8_t suffix_length = 4; // 4 is a reasonable default for suffix at this time (or 3 for prefix). Up to 7 has been confirmed possible (45 length torxid).
-int global_threads = 1; // for onion_gen(), cpu threads.
-int threads_max = 0; // max as detected by cpu_count()
+uint32_t global_threads = 1; // for onion_gen(), cpu threads.
+uint32_t threads_max = 0; // max as detected by cpu_count()
 uint8_t auto_resume_inbound = 1; // automatically request resumption of inbound file transfers NOTE: only works on full_duplex transfers (relies on .split) TODO disabling this might be untested
 uint8_t full_duplex_requests = 1; // Requested files should utlize full duplex (split == 1), assuminng v3auth. Can interfere with receiving messages due to messages being added to end of buffer. // If 0, allowed for individual transfers to override this (from 0 to 1) for example if they are small and quick.
 uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if zero, just block and keep history)
@@ -4243,7 +4243,7 @@ void initial(void)
 			packet[o].start = 0;
 			pthread_rwlock_unlock(&mutex_packet);
 		}
-		const int count = cpucount();
+		const uint32_t count = (uint32_t)cpucount();
 		pthread_rwlock_wrlock(&mutex_global_variable);
 		threads_max = count;
 		if(threads_max > 256 || threads_max < 1) // Triggered if cpucount() returns an obviously bad value, which could occur on mobile or obscure platforms

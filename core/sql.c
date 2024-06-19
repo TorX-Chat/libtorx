@@ -972,7 +972,7 @@ int sql_update_peer(const int n)
 	return val;
 }
 
-static void sql_populate_message(const int peer_index,const int days)
+static void sql_populate_message(const int peer_index,const uint32_t days)
 { // formerly print_log() --> print_log_cb()
 	if(peer_index < 0)
 	{
@@ -1127,7 +1127,7 @@ int sql_populate_peer(void)
 		const unsigned char *invitation = sqlite3_column_blob(stmt, 9); // TODO should probably check length to prevent potential overflow read in case of error
 		const int expiration = sqlite3_column_int(stmt, 10);
 		int n = -1;
-		const int local_show_log_days = threadsafe_read_int32(&mutex_global_variable,&show_log_days);
+		const uint32_t local_show_log_days = threadsafe_read_uint32(&mutex_global_variable,&show_log_days);
 		if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		{
 			if((owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT) && expiration > 0 && time(NULL) > expiration)
@@ -1426,11 +1426,11 @@ void sql_populate_setting(const int force_plaintext)
 				else if(!strncmp(setting_name,"suffix_length",13))
 					suffix_length = (uint8_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"global_threads",14))
-					global_threads = atoi(setting_value);
+					global_threads = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"global_log_messages",19))
 					global_log_messages = (uint8_t)atoi(setting_value); // SIGNED
 				else if(!strncmp(setting_name,"show_log_days",13))
-					show_log_days = atoi(setting_value);
+					show_log_days = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"sing_expiration_days",20))
 					sing_expiration_days = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"mult_expiration_days",20))
