@@ -1977,8 +1977,8 @@ void zero_g(const int g)
 		else
 			torx_free((void*)&page); // TODO 2024/06/19 Bug on shutdownafter deleting group. Unknown origin.
 	}
-//	torx_free((void*)&group[g].msg_first); // redundant
-//	torx_free((void*)&group[g].msg_last); // redundant
+	group[g].msg_first = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
+	group[g].msg_last = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
 	pthread_rwlock_unlock(&mutex_expand_group);
 // TODO probably need a callback to UI ( for what ? )
 }

@@ -764,7 +764,7 @@ static int sql_update_blob(sqlite3** db,const char* table_name,const char* colum
 }
 
 static int sql_exec_msg(const int n,const int i,const char *command)
-{ // Prefix len is passed from sql_insert_message && sql_update_message
+{
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
@@ -773,11 +773,11 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		return -1; // message is deleted or buggy
 	}
 	pthread_rwlock_rdlock(&mutex_protocols);
+	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	const uint8_t logged = protocols[p_iter].logged;
 	pthread_rwlock_unlock(&mutex_protocols);
 	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
@@ -790,14 +790,16 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	torx_unlock(n) // XXX
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 		val = sql_exec(&db_messages,command,NULL,0); // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
-	else if(null_terminated_len == 0 && logged)
+	else if(null_terminated_len == 0 && tmp_message)
 	{ // Prevent update_blob from triggering on outbound group_public messages, even if binary only
 		val = sql_exec(&db_messages,command,NULL,0);
 		const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,tmp_message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
 	}
-	else
+	else if(null_terminated_len && tmp_message)
 		val = sql_exec(&db_messages,command,tmp_message,strlen(tmp_message));
+	else
+		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,tmp_message ? 1 : 0);
 	return val;
 }
 
