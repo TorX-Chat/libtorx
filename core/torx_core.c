@@ -36,7 +36,7 @@ char control_password_hash[61+1] = {0}; // does not need rwlock because only mod
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
-int tor_version[4] = {0}; // does not need rwlock because only modified once
+uint32_t tor_version[4] = {0}; // does not need rwlock because only modified once
 uint8_t currently_changing_pass = 0; // TODO consider using mutex_sql_encrypted instead
 uint8_t first_run = 0; // TODO use for setting default torrc (ie, ask user). do not manually change this. This works and can be used as the basis for stuff (ex: an introduction or opening help in a GUI client)
 uint8_t destroy_input = 0; // 0 no, 1 yes. Destroy custom input file.
@@ -2221,9 +2221,9 @@ static inline void get_tor_version(void) // XXX Does not need locks for the same
 		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location);
 	else
 	{
-		sscanf(ret,"%*s %*s %d.%d.%d.%d",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
+		sscanf(ret,"%*s %*s %u.%u.%u.%u",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
 		error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
-		error_printf(0,"Tor Version: %d.%d.%d.%d",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
+		error_printf(0,"Tor Version: %u.%u.%u.%u",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
 		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
 		{ // tor version >0.4.6.1
 			error_simple(0,"V3Auth is enabled by default.");
