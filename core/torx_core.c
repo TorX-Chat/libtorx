@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const unsigned int torx_library_version[4] = { protocol_version , 0 , 3 , 4 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 3 , 4 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
@@ -1972,10 +1972,10 @@ void zero_g(const int g)
 		if(page->message_next)
 		{
 			page = page->message_next;
-			torx_free((void*)&page->message_prior); // TODO 2024/06/19 Bug on shutdown. Unknown origin.
+			torx_free((void*)&page->message_prior); // TODO 2024/06/19 Bug on shutdown after deleting group. Unknown origin.
 		}
 		else
-			torx_free((void*)&page);
+			torx_free((void*)&page); // TODO 2024/06/19 Bug on shutdownafter deleting group. Unknown origin.
 	}
 //	torx_free((void*)&group[g].msg_first); // redundant
 //	torx_free((void*)&group[g].msg_last); // redundant

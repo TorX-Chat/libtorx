@@ -180,7 +180,19 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					torx_unlock(n) // XXX
 					error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 					error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
-					if(protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+					{
+						char peeronion[56+1];
+						getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+						message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
+						sodium_memzero(peeronion,sizeof(peeronion));
+						const int g = set_g(n,NULL);
+						const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+					//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
+						const uint32_t trash = htobe32(peercount);
+						message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
+					}
+					else
 					{ // prevent cascading effect from triggering after these because they are queue skipping
 						const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
 						for(int next_i = i+1; next_i < message_n ; next_i++)
@@ -195,7 +207,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 				}
 				else if(pos > message_len)
 				{ // 2024/05/04 This is happening when massive amounts of sticker requests come in on same peer. Unknown reason. Possibly caused by race on deleted (stream) i.
-					error_printf(0,"output_cb reported message pos > message_len: %u > %u. Likely will corrupt message. Coding error. Report this.",pos,message_len);
+					error_printf(0,"output_cb reported message pos > message_len: %u > %u. Likely will corrupt message. Packet len was %u. Coding error. Report this.",pos,message_len,packet_len);
 					breakpoint();
 					goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
 				}
@@ -1379,33 +1391,39 @@ void *torx_events(void *arg)
 			const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			if(owner == ENUM_OWNER_CTRL && threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1 && peerversion == 0)
-				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,(void*)(intptr_t)htobe16(protocol_version),sizeof(uint16_t)); // DO NOT FREE
+				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,(void*)(intptr_t)htobe16(protocol_version),sizeof(protocol_version)); // DO NOT FREE
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
+				uint8_t send_pipe_auth = 1;
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
 				if(stat == ENUM_MESSAGE_FAIL)
 				{ // Put ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST first, if unsent, before pipe auth
 					const int p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter));
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
-				//	const char *name = protocols[p_iter].name;
 					pthread_rwlock_unlock(&mutex_protocols);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
+					{
 						send_prep(n,0,p_iter,1);
+						send_pipe_auth = 0;
+					}
 				//	else
 				//		error_printf(WHITE"Checkpoint message 0 is: %s"RESET,name); // TODO see what snuck in. i bet its broadcast?
 				}
-				char peeronion[56+1];
-				getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
-				message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
-				sodium_memzero(peeronion,sizeof(peeronion));
-				const int g = set_g(n,NULL);
-				const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-			//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
-				uint32_t trash = htobe32(peercount);
-				message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
-			//	else
-			//		printf("Checkpoint NOT REQUESTING peerlist. Perhaps we should request peercount and then request peercount if inconsistent due to handshake races.\n");
+				if(send_pipe_auth)
+				{
+					char peeronion[56+1];
+					getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+					message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
+					sodium_memzero(peeronion,sizeof(peeronion));
+					const int g = set_g(n,NULL);
+					const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+				//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
+					const uint32_t trash = htobe32(peercount);
+					message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
+				//	else
+				//		printf("Checkpoint NOT REQUESTING peerlist. Perhaps we should request peercount and then request peercount if inconsistent due to handshake races.\n");
+				}
 			}
 			if(!v3auth || owner == ENUM_OWNER_GROUP_PEER)
 			{

@@ -79,7 +79,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	else
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
 		torx_unlock(n) // XXX
-		error_printf(0,"Send_prep too early: %s",name);
+		error_printf(0,"Send_prep too early on%d: %s",fd_type,name);
 		return -1;
 	}
 	torx_unlock(n) // XXX
