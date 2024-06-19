@@ -326,7 +326,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 				char peernick[56+1];
 				getter_array(&peernick,sizeof(peernick),target_n,-1,-1,-1,offsetof(struct peer_list,peernick));
 				if(group_add_peer(g,int_char->p,peernick,int_char->up,invitation) > -1) // we are working with two invitations... this is the correct one
-					error_printf(0,RED"Checkpoint New group peer! (message_prep)"RESET);
+					error_simple(0,RED"Checkpoint New group peer! (message_prep)"RESET);
 				sodium_memzero(peernick,sizeof(peernick));
 			}
 			sodium_memzero(invitation,sizeof(invitation));
@@ -708,7 +708,6 @@ static inline int select_peer(const int group_n,const int f)
 		//	printf("Checkpoint o=%d already utilized or blacklisted (%u). %u >= %u\n",o,blacklisted,utilized,online);
 			continue;
 		}
-	//	printf(RED"Checkpoint o=%d utilized=%u or %u online=%u\n"RESET,o,utilized,peer[n].file[f].offer[o].utilized,online);
 		int utilized = 0;
 		for(uint8_t section = 0; section <= splits; section++)
 		{ // Loop through all peers looking for the largest (most complete) section... literally any section.
@@ -724,7 +723,6 @@ static inline int select_peer(const int group_n,const int f)
 				break;
 			if(peer[group_n].file[f].split_status[section] != -1)
 				continue;
-		//	printf(YELLOW"Checkpoint split_status peer[%d].file[%d].split_status[%d] == %d\n"RESET,group_n,f,section,-1);
 			if(peer[group_n].file[f].split_info[section] >= offerer_progress)
 				continue;
 			// TODO TODO TODO TODO

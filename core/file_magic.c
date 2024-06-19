@@ -235,7 +235,6 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			torx_write(group_n) // XXX
 			peer[group_n].file[f].splits = splits; // verified via hash of hashes
 			peer[group_n].file[f].split_hashes = torx_secure_malloc(split_hashes_len+sizeof(uint64_t)); // verified via hash of hashes
-		//	printf(RED"Checkpoint allocating split_hashes n=%d f=%d splits=%u allocation=%lu\n"RESET,group_n,f,splits,split_hashes_len+sizeof(uint64_t));
 			memcpy(peer[group_n].file[f].split_hashes,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],split_hashes_len+sizeof(uint64_t));
 			peer[group_n].file[f].size = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len])); // verified via hash of hashes
 			if(protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
@@ -704,7 +703,6 @@ static inline int split_read(const int n,const int f)
 			error_simple(0,"Failed to read number of splits from split file. Invalid split file exists."); // read splits
 		else
 		{ // this is correct, the previous else if modified splits
-		//	printf(RED"Checkpoint split_read setting n=%d f=%d splits=%u\n"RESET,n,f,splits);
 			setter(n,-1,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
 			sodium_memzero(checksum,sizeof(checksum));
 		}
@@ -780,7 +778,6 @@ int initialize_split_info(const int n,const int f)
 		torx_unlock(n) // XXX
 		const uint8_t local_full_duplex_requests = threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests);
 		const uint8_t splits = getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits));
-	//	printf(RED"Checkpoint initialize_split_info n=%d f=%d splits=%u\n"RESET,n,f,splits);
 		if(local_full_duplex_requests && stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
 			printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
@@ -922,7 +919,6 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			torx_read(n) // XXX
 			unsigned char *split_hashes = peer[n].file[f].split_hashes;
 			torx_unlock(n) // XXX
-		//	printf(RED"Checkpoint section_update n=%d f=%d splits=%u\n"RESET,n,f,splits);
 			uint64_t ret1 = 0;
 			int ret2 = 0;
 			if((ret1 = b3sum_bin(checksum,file_path,NULL,start,len)) == 0 || (ret2 = memcmp(checksum,&split_hashes[CHECKSUM_BIN_LEN*section],CHECKSUM_BIN_LEN)))
@@ -1105,7 +1101,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 			ret_recv = evutil_closesocket(peer[n].recvfd);
 		torx_unlock(n) // XXX
 		if(ret_send == -1 || ret_recv == -1)
-			error_printf(0,"Failed to close a socket in takedown_onion. Owner: %u",owner);
+			error_printf(0,"Failed to close a socket in takedown_onion. Owner=%u send=%d recv=%d",owner,ret_send,ret_recv);
 	} // From control-spec:   It is the Onion Service server application's responsibility to close existing client connections if desired after the Onion Service has been removed via "DEL_ONION".
 	if(delete == 1 || delete == 3)
 	{

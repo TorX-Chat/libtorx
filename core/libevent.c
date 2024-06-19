@@ -50,7 +50,7 @@ static void peer_online(const int n)
 
 static void disconnect_forever(struct bufferevent *bev, void *ctx)
 { // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
-	error_simple(0,YELLOW"Checkpoint disconnect_forever\n"RESET);
+	error_simple(0,YELLOW"Checkpoint disconnect_forever"RESET);
 	if(ctx)
 	{
 		struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
@@ -64,7 +64,7 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 
 /*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *arg)
 {
-	printf(YELLOW"Checkpoint enter_thread_to_disconnect_forever\n"RESET);
+	error_printf(YELLOW"Checkpoint enter_thread_to_disconnect_forever"RESET);
 	(void) fd;
 	(void) event;
 	struct bufferevent *bev_recv = (struct bufferevent*)arg;
@@ -346,7 +346,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	if(status != ENUM_STATUS_FRIEND)
 	{ // ENUM_STATUS_FRIEND seems to include active SING/MULT
 		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // 2024/05/06 Happens on deleted CTRL, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
-		breakpoint();
 		disconnect_forever(bev,ctx); // Run last, will exit event base
 		return; // 2024/03/11 hit this after deleting a group. probably didn't takedown the event properly after group delete
 	}
@@ -515,8 +514,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				else if(packet_start != section_start + section_info_current)
 				{
-					error_simple(0,"Peer asked us to write non-sequentially. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.");
-					printf(WHITE"Checkpoint %lu != %lu + %lu\n"RESET,packet_start,section_start,section_info_current);
+					error_printf(0,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
 					sodium_memzero(read_buffer,sizeof(read_buffer));
 					continue;
 				}
@@ -529,9 +527,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				//	printf("Checkpoint section: %u start==%lu end==%lu\n",section,calculate_section_start(size,splits_nn,section),section_end);
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
 					if(split_status && split_status_fd)
-						printf("Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status ? 1 : 0,split_status_fd ? 1 : 0,n,f,section,split_status[section],n,split_status_fd[section],fd_type,packet_start);
+						error_printf(0,"Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status ? 1 : 0,split_status_fd ? 1 : 0,n,f,section,split_status[section],n,split_status_fd[section],fd_type,packet_start);
 					else
-						printf("Checkpoint improper split_status and/or split_status_fd null\n");
+						error_printf(0,"Checkpoint improper split_status and/or split_status_fd null\n");
 				//	breakpoint();
 					sodium_memzero(read_buffer,sizeof(read_buffer));
 				/*	if(!sent_pause++)
@@ -632,10 +630,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							printf("Checkpoint short message: %u owner: %u size: %u of reported: %u\n",protocol,owner,event_strc->buffer_len,event_strc->untrusted_message_len);
 							continue;
 						}
-					//	pthread_rwlock_rdlock(&mutex_protocols); // TODO testing, remove
-						error_printf(0,CYAN"<--IN%d %s %u"RESET,fd_type,protocols[p_iter].name,event_strc->untrusted_message_len);
-					//	printf(CYAN"Checkpoint <--IN%d %s %u\n"RESET,fd_type,protocols[p_iter].name,event_strc->untrusted_message_len); // TODO testing, remove
-					//	pthread_rwlock_unlock(&mutex_protocols); // TODO testing, remove
+						error_printf(0,CYAN"<--IN%d %s %u"RESET,fd_type,name,event_strc->untrusted_message_len);
 						if(signature_len)
 						{ // XXX Signed and Signed Date messages only
 							if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER) // XXX adding GROUP_PEER without testing for full duplex
@@ -742,7 +737,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 											else if(ret != -2)
 											{
 												added_one++;
-												printf(RED"Checkpoint New group peer! (read_conn 1)\n"RESET);
+												error_simple(0,RED"Checkpoint New group peer! (read_conn 1)"RESET);
 												if(g_invite_required && getter_group_uint32(g,offsetof(struct group_list,peercount)) > 1)
 													message_send(ret,ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,itovp(g),GROUP_PRIVATE_ENTRY_REQUEST_LEN);
 											}
@@ -1027,7 +1022,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									const int peer_n = group_add_peer(g,&event_strc->buffer[GROUP_ID_SIZE],peernick,group_peer_ed25519_pk,invitor_invitation);
 									if(peer_n > -1)
 									{
-										printf(RED"Checkpoint New group peer!(read_conn 2)\n"RESET);
+										error_simple(0,RED"Checkpoint New group peer!(read_conn 2)"RESET);
 									//	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 									//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
 									//		message_send(peer_n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,NULL,0);
@@ -1071,7 +1066,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							}
 							else if(new_peer != -2)
 							{ // Approved a new peer
-								printf(RED"Checkpoint New group peer! (read_conn 3)\n"RESET);
+								error_simple(0,RED"Checkpoint New group peer! (read_conn 3)"RESET);
 						//		error_simple(3,"Received ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST. Responding with peerlist.");
 						//		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 						//		message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PRIVATE_LEN); // (3) respond with peerlist
@@ -1395,14 +1390,11 @@ void *torx_events(void *arg)
 					const uint16_t protocol = protocols[p_iter].protocol;
 				//	const char *name = protocols[p_iter].name;
 					pthread_rwlock_unlock(&mutex_protocols);
-				//	printf(WHITE"Checkpoint message 0\n"RESET);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
 						send_prep(n,0,p_iter,1);
 				//	else
-				//		printf(WHITE"Checkpoint message 0 is: %s\n"RESET,name); // TODO see what snuck in. i bet its broadcast?
+				//		error_printf(WHITE"Checkpoint message 0 is: %s"RESET,name); // TODO see what snuck in. i bet its broadcast?
 				}
-			//	else
-			//		printf(WHITE"Checkpoint message zerp\n"RESET);
 				char peeronion[56+1];
 				getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
 				message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);

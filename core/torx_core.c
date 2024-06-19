@@ -1972,7 +1972,7 @@ void zero_g(const int g)
 		if(page->message_next)
 		{
 			page = page->message_next;
-			torx_free((void*)&page->message_prior);
+			torx_free((void*)&page->message_prior); // TODO 2024/06/19 Bug on shutdown. Unknown origin.
 		}
 		else
 			torx_free((void*)&page);
@@ -2022,7 +2022,6 @@ static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
 		{
 			if(last_time[j] >= highest_time)
 			{
-//printf(WHITE"Checkpoint yellow: %ld >= %ld\n"RESET,last_time[j],highest_time);
 				highest_time = last_time[j];
 				highest_n = sorted_n[j];
 				highIndex = j;
@@ -3520,13 +3519,10 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 			{
 				sodium_memzero(peeronion,sizeof(peeronion));
 				sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-			//	printf("Checkpoint SUCCESS of GROUP peer-sign: %u\n",untrusted_protocol);
 				error_simple(4,"Success of group_check_sig: Signed by a peer.");
 				torx_free((void*)&prefixed_message);
 				return peer_n;
 			}
-		//	else // Failure here isn't really failure. It just means we check the next one.
-		//		printf(YELLOW"Checkpoint signing pk key: %s\n"RESET,b64_encode(peer_sign_pk,sizeof(peer_sign_pk)));
 			sodium_memzero(peeronion,sizeof(peeronion));
 			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 		}
@@ -3707,7 +3703,7 @@ static inline void broadcast_remove(const int g)
 			sodium_memzero(broadcasts_queued[iter1].broadcast,GROUP_BROADCAST_LEN);
 			for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS; iter2++)
 				broadcasts_queued[iter1].peers[iter2] = -1;
-			error_simple(0,WHITE"Checkpoint removed a hash successfully\n"RESET); // great!
+			error_simple(0,WHITE"Checkpoint removed a hash successfully"RESET); // great!
 			break;
 		}
 	pthread_rwlock_unlock(&mutex_broadcast);
@@ -3904,7 +3900,7 @@ void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST
 						sodium_memzero(decrypted,sizeof(decrypted));
 						if(new_peer > -1)
 						{ // Send them a peerlist
-							error_simple(0,RED"Checkpoint New group peer!(broadcast)\n"RESET);
+							error_simple(0,RED"Checkpoint New group peer!(broadcast)"RESET);
 							broadcast_remove(g);
 						//	error_simple(1,"Sending a peerlist to our brand new peer in public group");
 						//	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
