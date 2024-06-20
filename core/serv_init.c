@@ -1,5 +1,5 @@
 
-int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
+int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send
 	if(n < 0 || f_i < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
 	{
@@ -46,16 +46,22 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 			else if(fd_type == 0 && utilized_recv > -1)
 			{
 				if(socket_swappable)
-					return send_prep(n,f_i,p_iter,1);
-				error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
-				return -1;
+					fd_type = 1;
+				else
+				{
+					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
+					return -1;
+				}
 			}
 			else if(fd_type == 1 && utilized_send > -1)
 			{
 				if(socket_swappable)
-					return send_prep(n,f_i,p_iter,0);
-				error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
-				return -1;
+					fd_type = 0;
+				else
+				{
+					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
+					return -1;
+				}
 			}
 		}
 	}
@@ -79,7 +85,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 	else
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
 		torx_unlock(n) // XXX
-		error_printf(0,"Send_prep too early on%d: %s",fd_type,name);
+		error_printf(0,"Send_prep too early%d: %s",fd_type,name);
 		return -1;
 	}
 	torx_unlock(n) // XXX
@@ -185,7 +191,7 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 				return -1; // Kill code already sent on other peer associated socket
 			else
 			{ // XXX XXX XXX NOTICE: This CANNOT catch ALL _SENT messages because send_prep can be called twice before output_cb. Therefore, the solution is to PREVENT SEND_PREP from being called twice on the same message, as we do for queue skipping protocols in torx_events.
-				error_printf(0,"Issue in send_prep: %u or unexpected stat: %u from owner: %u. Not sending. Coding error. Report this.",protocol,stat,owner);
+				error_printf(0,"Issue in send_prep protocol=%u or unexpected stat: %u from owner: %u. Not sending. Coding error. Report this.",protocol,stat,owner);
 				return -1;
 			}
 		}
@@ -241,7 +247,6 @@ int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type)
 		error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 		torx_write(n) // XXX
 		peer[n].socket_utilized[fd_type] = -1;
-
 	}
 	torx_unlock(n) // XXX
 	return -1;

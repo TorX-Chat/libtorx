@@ -80,6 +80,7 @@ typedef u_short in_port_t;
 #define MAGENTA "\x1b[35m"
 #define CYAN    "\x1b[36m"
 #define WHITE	"\x1b[97m"
+#define PINK	"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
 #define RESET   "\x1b[0m"
 
 #define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
@@ -379,7 +380,6 @@ enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed up
 	ENUM_PROTOCOL_UTF8_TEXT_PRIVATE = 24326, // Private messages cannot be signed or they could be arbitrarily forwarded to non-recipients without any evidence of manupulated destination
 
 	ENUM_PROTOCOL_GROUP_BROADCAST = 13854, // Our onion + PK signed encrypted by GroupID // TODO consider date signing this in groups to prevent spam? or ignoring altogether in groups to prevent DOS attacks by anonymous spammers (could break connections in case of repeated spam of the same message? or ignore for problematic groups)
-//	ENUM_PROTOCOL_GROUP_BROADCAST_DATE_SIGNED = 7132, // so far only for private groups. Could just label this group mechanics?
 
 	/* XXX Out-of-group invitation and handshake XXX */
 	ENUM_PROTOCOL_GROUP_OFFER_FIRST = 11919, // (Only used on brand-new invite-only group) includes group_ctrl onion which we need our first oining peer to sign
@@ -766,7 +766,7 @@ void file_cancel(const int n,const int f);
 int file_send(const int n,const char *path);
 
 /* serv_init.c */
-int send_prep(const int n,const int f_i,const int p_iter,const int8_t fd_type);
+int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type);
 
 /* libevent.c */
 void *torx_events(void *arg);

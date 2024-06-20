@@ -3847,18 +3847,6 @@ void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST
 				const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
 				if(n != origin_group_n && status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL))
 					message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,ciphertext,GROUP_BROADCAST_LEN);
-			/*	{
-					if(owner == ENUM_OWNER_GROUP_CTRL)
-					{
-						const int g = set_g(n,NULL);
-						if(getter_group_uint8(g,offsetof(struct group_list,invite_required))) // date sign
-							message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST_DATE_SIGNED,ciphertext,GROUP_BROADCAST_LEN);
-						else // send normally
-							message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,ciphertext,GROUP_BROADCAST_LEN);
-					}	
-					else // send normally
-						message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,ciphertext,GROUP_BROADCAST_LEN);
-				} */
 			}
 		}
 	}
@@ -4111,7 +4099,7 @@ void initial(void)
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER,"File Offer","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PRIVATE,"File Offer Private","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,0); // must NOT be stream (because must save)
+	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,0); // must NOT be stream (because must save). Must NOT be swappable.
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,1);
@@ -4121,7 +4109,6 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,"UTF8 Text Private","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST,"Group Broadcast","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
-//	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST_DATE_SIGNED,"Group Broadcast Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,x,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_FIRST,"Group Offer First","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER,"Group Offer","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST,"Group Offer Accept First","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
@@ -4129,7 +4116,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,"Group Offer Accept Reply","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,"Group Public Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
 	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
-	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
+	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
 	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
 	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,1);
 
@@ -4541,7 +4528,7 @@ void cleanup_lib(const int sig_num)
 	else
 		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?).");
 	if(highest_ever_o > 0) // this does not mean file transfers occured, i think
-		error_printf(0,"Highest O level from packet struct reached: %d",highest_ever_o);
+		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o);
 	// XXX Most activity should be brought to a halt by the above locks XXX
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int g = 0 ; !is_null(group[g].id,GROUP_ID_SIZE) || group[g].n > -1 ;  g++)

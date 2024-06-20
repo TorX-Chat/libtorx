@@ -76,22 +76,33 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 	size_t drained = 0;
 	int o = 0;
 	uint8_t removed_something = 0; // removed one or more packets
-	for( ; o < SIZE_PACKET_STRC ; o++)
+	pthread_rwlock_rdlock(&mutex_packet);
+	const int highest_ever_o_local = highest_ever_o;
+	pthread_rwlock_unlock(&mutex_packet);
+	for( ; o <= highest_ever_o_local ; o++)
 	{
-		pthread_rwlock_rdlock(&mutex_packet);
+		pthread_rwlock_wrlock(&mutex_packet);
 		const int p_iter = packet[o].p_iter;
+		if(p_iter == -1)
+		{
+			pthread_rwlock_unlock(&mutex_packet);
+			if(!removed_something)
+				continue;
+			//	error_printf(0,"packet_removal o=%d p_iter == -1. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.",o);
+			break; // high packets, never used, have p_iter == -1, do not modify
+		}
 		const int packet_n = packet[o].n;
 		const int packet_f_i = packet[o].f_i;
 		const int8_t packet_fd_type = packet[o].fd_type;
 		const uint16_t packet_len = packet[o].packet_len;
 		const uint64_t packet_start = packet[o].start;
+		packet[o].n = -1; // release it for re-use.
+		packet[o].f_i = -1; // release it for re-use.
+		packet[o].packet_len = 0; // release it for re-use.
+	//	packet[o].p_iter = -1; // DO NOT reset this, unless all sendbuffers are clear.
+		packet[o].fd_type = -1; // release it for re-use.
+		packet[o].start = 0; // release it for re-use.
 		pthread_rwlock_unlock(&mutex_packet);
-		if(p_iter == -1)
-		{
-			if(!removed_something)
-				error_simple(0,"packet_removal p_iter == -1. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
-			break; // high packets, never used, have p_iter == -1, do not modify
-		}
 		pthread_rwlock_rdlock(&mutex_protocols);
 		const uint16_t protocol = protocols[p_iter].protocol;
 		const uint8_t stream = protocols[p_iter].stream;
@@ -180,19 +191,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					torx_unlock(n) // XXX
 					error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 					error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
-					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-					{
-						char peeronion[56+1];
-						getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
-						message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
-						sodium_memzero(peeronion,sizeof(peeronion));
-						const int g = set_g(n,NULL);
-						const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-					//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
-						const uint32_t trash = htobe32(peercount);
-						message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
-					}
-					else
+					if(protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 					{ // prevent cascading effect from triggering after these because they are queue skipping
 						const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
 						for(int next_i = i+1; next_i < message_n ; next_i++)
@@ -218,14 +217,6 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					send_prep(n,i,p_iter,fd_type); // send next packet on same fd
 				}
 			}
-			pthread_rwlock_wrlock(&mutex_packet);
-			packet[o].n = -1; // release it for re-use.
-			packet[o].f_i = -1; // release it for re-use.
-			packet[o].packet_len = 0; // release it for re-use.
-		//	packet[o].p_iter = -1; // DO NOT reset this, unless all sendbuffers are clear.
-			packet[o].fd_type = -1; // release it for re-use.
-			packet[o].start = 0; // release it for re-use.
-			pthread_rwlock_unlock(&mutex_packet);
 			removed_something = 1;
 		} // END PACKET HANDLING SECTION
 	}
@@ -604,7 +595,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					if(event_strc->buffer_len + (packet_len - cur) == event_strc->untrusted_message_len) // 2024/02/16 can be == , >= is to catch excessive, just in case
 						complete = 1;
 					else if(event_strc->buffer_len > 0 && event_strc->buffer_len + (packet_len - cur) > event_strc->untrusted_message_len)
-					{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above
+					{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
 						error_printf(0,"Disgarding a corrupted message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,event_strc->buffer_len,packet_len,cur,event_strc->untrusted_message_len);
 						event_strc->buffer_len = 0;
 						breakpoint();
@@ -614,7 +605,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
 					if(event_strc->buffer)
 					{
-						error_printf(0,"Checkpoint realloc called in libevent: %s %u + (%u - %u)",name,event_strc->buffer_len,packet_len,cur);
+					//	error_printf(0,"Checkpoint realloc called in libevent: %s %u + (%u - %u)",name,event_strc->buffer_len,packet_len,cur);
 						event_strc->buffer = torx_realloc(event_strc->buffer,event_strc->buffer_len + (packet_len - cur));
 					}
 					else
@@ -1084,9 +1075,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						//		message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PRIVATE_LEN); // (3) respond with peerlist
 							}
 						}
-						else if(protocol == ENUM_PROTOCOL_GROUP_BROADCAST/* || protocol == ENUM_PROTOCOL_GROUP_BROADCAST_DATE_SIGNED*/ || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+						else if(protocol == ENUM_PROTOCOL_GROUP_BROADCAST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
 						{
-							if((protocol == ENUM_PROTOCOL_GROUP_BROADCAST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST) && event_strc->buffer_len == GROUP_BROADCAST_LEN) /*|| (protocol == ENUM_PROTOCOL_GROUP_BROADCAST_DATE_SIGNED && event_strc->buffer_len == GROUP_BROADCAST_LEN + DATE_SIGN_LEN)*/
+							if(event_strc->buffer_len == GROUP_BROADCAST_LEN)
 								broadcast(n,(unsigned char *)event_strc->buffer); // this can rebroadcast or handle
 							else
 							{
@@ -1102,7 +1093,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						if(stream)
 						{ // certain protocols discarded after processing, others stream_cb to UI
-							if(protocol != ENUM_PROTOCOL_PIPE_AUTH /*&& protocol != ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST*/ && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
+							if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
 								stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len);
 						}
 						else
@@ -1314,6 +1305,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 			{ // important check, to snuff out deleted messages
 				pthread_rwlock_rdlock(&mutex_protocols);
 				const uint8_t stream = protocols[p_iter].stream;
+				const uint16_t protocol = protocols[p_iter].protocol;
 				pthread_rwlock_unlock(&mutex_protocols);
 				if(stat == ENUM_MESSAGE_FAIL && stream == 0)
 					if(!send_prep(n,i,p_iter,fd_type)) // Will do nothing if there are no messages to send
@@ -1394,39 +1386,27 @@ void *torx_events(void *arg)
 				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,(void*)(intptr_t)htobe16(protocol_version),sizeof(protocol_version)); // DO NOT FREE
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
-				uint8_t send_pipe_auth = 1;
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
 				if(stat == ENUM_MESSAGE_FAIL)
-				{ // Put ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST first, if unsent, before pipe auth
+				{ // Put queue skipping protocols first, if unsent, before pipe auth
 					const int p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter));
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
 					pthread_rwlock_unlock(&mutex_protocols);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
-					{
 						send_prep(n,0,p_iter,1);
-						send_pipe_auth = 0;
-					}
-				//	else
-				//		error_printf(WHITE"Checkpoint message 0 is: %s"RESET,name); // TODO see what snuck in. i bet its broadcast?
 				}
-				if(send_pipe_auth)
-				{
-					char peeronion[56+1];
-					getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
-					message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
-					sodium_memzero(peeronion,sizeof(peeronion));
-					const int g = set_g(n,NULL);
-					const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-				//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
-					const uint32_t trash = htobe32(peercount);
-					message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
-				//	else
-				//		printf("Checkpoint NOT REQUESTING peerlist. Perhaps we should request peercount and then request peercount if inconsistent due to handshake races.\n");
-				}
+				char peeronion[56+1];
+				getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+				message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
+				sodium_memzero(peeronion,sizeof(peeronion));
+				const int g = set_g(n,NULL);
+				const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+				const uint32_t trash = htobe32(peercount);
+				message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
 			}
-			if(!v3auth || owner == ENUM_OWNER_GROUP_PEER)
-			{
+			if(!v3auth/* || owner == ENUM_OWNER_GROUP_PEER*/)
+			{ // No longer necessary on GROUP_PEER because we have calls when we pipe auth and request peerlist
 				const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
 				for(int i = 0; i < message_n; i++)
 				{
@@ -1438,7 +1418,7 @@ void *torx_events(void *arg)
 						const uint8_t stream = protocols[p_iter].stream;
 						const uint16_t protocol = protocols[p_iter].protocol;
 						pthread_rwlock_unlock(&mutex_protocols);
-						if(stat == ENUM_MESSAGE_FAIL && stream == 0 && (protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)) // DO NOT send_prep twice (causes issues, race conditoin)
+						if(stat == ENUM_MESSAGE_FAIL && stream == 0)
 							if(!send_prep(n,i,p_iter,1)) // Will do nothing if there are no messages to send
 								break; // cascading effect
 					}
