@@ -327,7 +327,7 @@ struct protocol_info {
 struct broadcasts_list {
 	uint32_t hash;
 	unsigned char broadcast[GROUP_BROADCAST_LEN];
-	int peers[BROADCAST_MAX_PEERS];
+	int peers[BROADCAST_MAX_PEERS]; // initialized as -1
 } broadcasts_queued[BROADCAST_QUEUE_SIZE]; // this is queue
 
 enum exclusive_types {
@@ -681,9 +681,6 @@ int set_last_message(int *nn,const int n,const int count_back);
 int group_online(const int g);
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix);
 int group_add_peer(const int g,const char *group_peeronion,const char *group_peernick,const unsigned char *group_peer_ed25519_pk,const unsigned char *inviter_signature);
-void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN]);
-void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g);
-void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
 int group_join(const int inviter_n,const unsigned char *group_id,const char *group_name,const char *creator_onion,const unsigned char *creator_ed25519_pk);
 int group_join_from_i(const int n,const int i);
 int group_generate(const uint8_t invite_required,const char *name);
@@ -699,6 +696,12 @@ char *onion_from_privkey(const char *privkey);
 char *torxid_from_onion(const char *onion);
 char *onion_from_torxid(const char *torxid);
 int custom_input(const uint8_t owner,const char *identifier,const char *privkey);
+
+/* broadcast.c */
+void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN]);
+void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g);
+void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
+void broadcast_start(void);
 
 /* sql.c */
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint8_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
@@ -819,7 +822,8 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 #include "../core/thread_safety.c"
 #include "../core/libbaseencode/base32.c"	// from libbaseencode. Issue: it sometimes outputs short output due to requiring null input.
 #include "../core/netcat-openbsd/socks.c"		// openbsd socks 
-#include "../core/netcat-openbsd/remote_connect.c"	// openbsd socks 
+#include "../core/netcat-openbsd/remote_connect.c"	// openbsd socks
+#include "../core/broadcast.c"
 #include "../core/libevent.c"			/* Libevent testing file */
 #include "../core/onion_gen.c"
 #include "../core/file_magic.c"

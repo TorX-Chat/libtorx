@@ -1678,42 +1678,6 @@ static inline uint32_t fnv1a_32_salted(const void *data,const size_t len)
 	return hash;
 }
 
-/*uint32_t fnv1a_32(const void *data,const size_t len)
-{ // DO NOT USE: B2sum returns a hex encoded checksum, which we store encoded. Better if we store it in binary. For truncated hashes, we send first 5 bytes in binary instead of 4 bytes of hex encoding.
-	uint32_t hash = 0;
-	const uint8_t *src = data;
-	for(size_t i=0 ; i < len ; ++i) {
-		hash ^= src[i];
-		hash *= 0x01000193;
-	}
-	if(!hash) // TorX modification: cannot allow return of 0
-		hash++;
-	return hash;
-}
-uint32_t jenkins_one_at_a_time_hash(const uint8_t* key, size_t length)
-{ // TODO remove, unused. Using fnv1a_32
-	size_t i = 0;
-	uint32_t hash = 0;
-	while (i != length) {
-		hash += key[i++];
-		hash += hash << 10;
-		hash ^= hash >> 6;
-	}
-	hash += hash << 3;
-	hash ^= hash >> 11;
-	hash += hash << 15;
-	return hash;
-}
-uint32_t fnv_32a_str(char *str, uint32_t hval)
-{ // TODO remove, unused. Using fnv1a_32
-    unsigned char *s = (unsigned char *)str;
-    while (*s) {
-	hval ^= (uint32_t)*s++;
-	hval += (hval<<1) + (hval<<4) + (hval<<7) + (hval<<8) + (hval<<24);
-    }
-    return hval;
-}
-*/
 static int pid_write(const int pid)
 { // Write Tor's PID to file
 	FILE *fp;
@@ -1823,41 +1787,6 @@ char *which(const char *binary)
 	return run_binary(NULL,NULL,NULL,args_cmd,NULL);
 }
 
-/*void error_ll(const int debug_level,...)
-{ // TODO DEPRECIATED: use error_simple or error_printf instead
- // XXX List of strings MUST be terminated with NULL or junk will be added. Lower level == higher priority. 3+ is for sensitive info. Could set specific levels to pop up messages, etc.
- // NOTE: Occassionally calls will be wrapped in if(debug > x) where one of the arguments to error_ll is a function, which is appropriate to prevent IO waste
-	if(debug_level > torx_debug_level(-1))
-		return;
-	char *string = {0};
-	char *do_not_free_message = {0};
-	size_t error_len = 0;
-	va_list va_args;
-	va_start(va_args,debug_level);
-	while(1)
-	{
-		if((string = va_arg(va_args,char*)) == NULL) // Must be null terminated
-		{
-			if(do_not_free_message)
-				do_not_free_message = torx_realloc(do_not_free_message,error_len+1+1);
-			else
-				do_not_free_message = torx_secure_malloc(error_len+1+1);
-			snprintf(&do_not_free_message[error_len],1+1,"\n");
-			error_len++;
-			break; // End of list
-		}
-		const size_t string_len = strlen(string);
-		if(do_not_free_message)
-			do_not_free_message = torx_realloc(do_not_free_message,error_len+string_len+1);
-		else
-			do_not_free_message = torx_secure_malloc(error_len+string_len+1);
-		memcpy(&do_not_free_message[error_len],string,string_len+1); // includes copying null terminator
-		error_len += string_len;
-	}
-	va_end(va_args);
-	error_allocated_already(debug_level,do_not_free_message);
-}*/
-
 void zero_i(const int n,const int i) // XXX do not put locks in here (except mutex_global_variable + mutex_protocols)
 { // GROUP_PEER looks hacky because we should maybe use ** but we don't (note: hacky here simplifies a lot of things elsewhere)
 	if(peer[n].message[i].p_iter == -1)
@@ -1917,7 +1846,6 @@ void zero_n(const int n) // XXX do not put locks in here
 	peer[n].status = 0;
 	memset(peer[n].privkey,'0',sizeof(peer[n].privkey)-1); // DO NOT REPLACE WITH SODIUM MEMZERO as we currently expect these to be 0'd not \0'd
 	peer[n].peer_index = -2; // MUST be lower than -1 to properly error by sql_setting if unset
-//	memset(peer[n].hashed_privkey,'0',sizeof(peer[n].hashed_privkey)-1);
 	memset(peer[n].onion,'0',sizeof(peer[n].onion)-1);
 	memset(peer[n].torxid,'0',sizeof(peer[n].torxid)-1);
 	peer[n].peerversion = 0;
@@ -1943,9 +1871,6 @@ void zero_n(const int n) // XXX do not put locks in here
 	sodium_memzero(peer[n].sign_sk,crypto_sign_SECRETKEYBYTES);
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
-//	torx_free((void*)&peer[n].buffer);
-//	peer[n].buffer_len = 0;
-//	peer[n].untrusted_message_len = 0;
 	peer[n].blacklisted = 0;
 	peer[n].thrd_send = 0; // thread_kill(peer[n].thrd_send); // NO. will result in deadlocks.
 	peer[n].thrd_recv = 0; // thread_kill(peer[n].thrd_recv); // NO. will result in deadlocks.
@@ -2151,17 +2076,6 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 	return array;
 }
 
-/*void remove_spaces(char* s) 
-{ // There is another way of doing this, somewhere
-	const char* d = s;
-	do
-	{
-		while(*d == ' ')
-			++d;
-	}
-	while((*s++ = *d++));
-}*/
-
 size_t stripbuffer(char *buffer)
 { // For handshakes and general use. This function strips anything other than 0-9 and a-zA-Z.
 	size_t j = 1; // necessary to initialize as 1 in case of 0 length
@@ -2348,49 +2262,6 @@ static inline void remove_lines_with_suffix(char *input)
 			start = end + 1;
 	}
 }
-
-/*char *read_tor_pipe(void)
-{ // Remember to torx_free. This is to be called by GUI periodically or as desired to read any new lines from the Tor log. GUI is responsible for buffering and freeing return value. GUI devs may choose to read directly from pipe_tor1 instead. This may one day change in case libtorx needs to read that cache to determine the status of something.
-	char data[40960]; // should be big
-	pthread_mutex_lock(&mutex_tor_pipe);
-	const ssize_t len = read(pipe_tor1[0],data,sizeof(data)-1);
-	pthread_mutex_unlock(&mutex_tor_pipe);
-	if(len > 0)
-	{ // Casting as size_t is safe because > 0
-		data[len] = '\0';
-		char *msg = NULL;
-		pthread_mutex_lock(&mutex_tor_pipe);
-		if(read_tor_pipe_cache)
-		{
-			const size_t current_size = torx_allocation_len(read_tor_pipe_cache);
-			read_tor_pipe_cache = torx_realloc(read_tor_pipe_cache,current_size+(size_t)len);
-			memcpy(&read_tor_pipe_cache[current_size-1],data,(size_t)len+1);
-		}
-		if(data[(size_t)len-1] == '\n')
-		{ // complete
-			if(read_tor_pipe_cache)
-			{
-				msg = read_tor_pipe_cache;
-				read_tor_pipe_cache = NULL;
-			}
-			else
-			{
-				msg = torx_secure_malloc((size_t)len+1);
-				memcpy(msg,data,(size_t)len+1); // includes copying null terminator
-			}
-			remove_lines_with_suffix(msg);
-		}
-		else if(read_tor_pipe_cache == NULL)
-		{ // incomplete, no existing cache
-			read_tor_pipe_cache = torx_secure_malloc((size_t)len+1);
-			memcpy(read_tor_pipe_cache,data,(size_t)len+1); // includes copying null terminator
-		}
-		pthread_mutex_unlock(&mutex_tor_pipe);
-		sodium_memzero(data,(size_t)len);
-		return msg;
-	}
-	return NULL;
-}*/
 
 static inline void *tor_log_reader(void *arg)
 {
@@ -2762,77 +2633,6 @@ char *b64_encode(const void *in_arg,const size_t len)
 	return out;
 }
 
-static inline void *broadcast_threaded(void *arg)
-{ // TODO this runs forever even when nothing is queued. TODO for safety, it should ONLY RUN WHEN WE ARE CONNECTED, otherwise it will queue up all our messages and then send them all at once when we get online... totally defeating the purpose of a queue
-	(void) arg;
-	pusher(zero_pthread,(void*)&thrd_broadcast)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
-	unsigned int broadcast_delay_local;
-	while(1)
-	{
-		broadcast_delay_local = BROADCAST_DELAY_SLEEP;
-		pthread_rwlock_rdlock(&mutex_broadcast);
-		int random_start_1 = rand() % BROADCAST_QUEUE_SIZE; // Call rand() once as the starting position then iterate.
-		for(int iter1 = 0; iter1 < BROADCAST_QUEUE_SIZE ; iter1++,random_start_1++)
-		{ // choose a random broadcast
-			int random_broadcast = random_start_1;
-			if(random_broadcast >= BROADCAST_QUEUE_SIZE)
-				random_broadcast -= BROADCAST_QUEUE_SIZE;
-			if(broadcasts_queued[random_broadcast].hash)
-			{ // found one
-			//	error_simple(0,"Checkpoint 1: chose random broadcast");
-				int random_start_2 = rand() % BROADCAST_MAX_PEERS; // Call rand() once as the starting position then iterate.
-				for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS ; iter2++,random_start_2++)
-				{ // choose a random peer to send it to
-					int random_peer = random_start_2;
-					if(random_peer >= BROADCAST_MAX_PEERS)
-						random_peer -= BROADCAST_MAX_PEERS;
-					const int n = broadcasts_queued[random_broadcast].peers[random_peer]; // note: we're not checking if peer is online because might be a group
-					if(n == -1) // faster to have this check before we retrieve owner/online status
-						continue;
-					const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-					const uint8_t sendfd_connected = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected));
-					const uint8_t recvfd_connected = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected));
-					const uint8_t online = sendfd_connected + recvfd_connected;
-					if(online || owner == ENUM_OWNER_GROUP_CTRL)
-					{ // chose one and send to it, then delist if applicable
-						error_printf(0,"Checkpoint 2: chose ONLINE victim owner=%u",owner); // TODO this must trigger if 1 triggers TODO
-						message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,broadcasts_queued[random_broadcast].broadcast,GROUP_BROADCAST_LEN);
-						pthread_rwlock_unlock(&mutex_broadcast);
-						pthread_rwlock_wrlock(&mutex_broadcast);
-						broadcasts_queued[random_broadcast].peers[random_peer] = -1;
-						int more_peers = -1;
-						for(int iter3 = 0; iter3 < BROADCAST_MAX_PEERS ; iter3++)
-							if((more_peers = broadcasts_queued[random_broadcast].peers[iter3]) > -1)
-							{
-								error_simple(1,"Checkpoint still peers to send to");
-								break;
-							}
-						if(more_peers > -1)
-							break;
-						error_simple(0,"Checkpoint broadcast sent to all peers");
-						broadcasts_queued[random_broadcast].hash = 0; // broadcast has been sent to last peer
-						sodium_memzero(broadcasts_queued[random_broadcast].broadcast,GROUP_BROADCAST_LEN);
-						broadcast_delay_local = BROADCAST_DELAY; // sent something, so set the lower delay
-						break;
-					}
-//printf("Checkpoint 2: chose OFFLINE victim owner=%u\n",owner); // TODO this must trigger if 1 triggers TODO
-				}
-				break;
-			}
-		}
-		pthread_rwlock_unlock(&mutex_broadcast);
-		sleep(broadcast_delay_local);
-	}
-	return NULL;
-}
-
-static inline void broadcast_start(void)
-{ // Should run from late in initial_keyed, after everything is loaded
-	if(pthread_create(&thrd_broadcast,&ATTR_DETACHED,&broadcast_threaded,NULL))
-		error_simple(-1,"Failed to create thread");
-}
-
 void initial_keyed(void)
 { // Read in settings from file. Can also be used by clients for their settings. XXX Do not *need* locks. Unnecessary. Runs before most threads (except UI) start.
 //	mlockall(MCL_FUTURE); // TODO TODO TODO this causes pthread_create to fail on some systems
@@ -2950,7 +2750,6 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].owner = 0;
 	peer[n].status = 0;
 	sodium_memzero(peer[n].privkey,sizeof(peer[n].privkey)); // peer[n].privkey[0] = '\0';
-//	sodium_memzero(peer[n].hashed_privkey,sizeof(peer[n].hashed_privkey));
 	peer[n].peer_index = -2; // MUST be lower than -1 to properly error by sql_setting if unset
 	sodium_memzero(peer[n].onion,sizeof(peer[n].onion)); // peer[n].onion[0] = '\0';
 	sodium_memzero(peer[n].torxid,sizeof(peer[n].torxid));
@@ -2974,9 +2773,6 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	sodium_memzero(peer[n].sign_sk,crypto_sign_SECRETKEYBYTES);
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
-//	peer[n].buffer = NULL;
-//	peer[n].buffer_len = 0;
-//	peer[n].untrusted_message_len = 0;
 	peer[n].blacklisted = 0;
 	pthread_rwlock_init(&peer[n].mutex_page,NULL);
 	peer[n].thrd_send = 0;
@@ -3682,246 +3478,6 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	load_onion(n); // connect to their onion with our signed onion, also in sql_populate_peer()
 	peer_new_cb(n);
 	return n;
-}
-
-static inline void broadcast_remove(const int g)
-{ // Remove hash from queue because we joined the group successfully, or for other reasons
-	if(g < 0)
-		return;
-	pthread_rwlock_rdlock(&mutex_expand_group);
-	const uint32_t hash = group[g].hash;
-	pthread_rwlock_unlock(&mutex_expand_group);
-	if(!hash)
-		return;
-	pthread_rwlock_rdlock(&mutex_broadcast);
-	for(int iter1 = 0; iter1 < BROADCAST_QUEUE_SIZE; iter1++)
-		if(broadcasts_queued[iter1].hash == hash)
-		{
-			pthread_rwlock_unlock(&mutex_broadcast);
-			pthread_rwlock_wrlock(&mutex_broadcast);
-			broadcasts_queued[iter1].hash = 0;
-			sodium_memzero(broadcasts_queued[iter1].broadcast,GROUP_BROADCAST_LEN);
-			for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS; iter2++)
-				broadcasts_queued[iter1].peers[iter2] = -1;
-			error_simple(0,WHITE"Checkpoint removed a hash successfully"RESET); // great!
-			break;
-		}
-	pthread_rwlock_unlock(&mutex_broadcast);
-}
-
-void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN])
-{ // Add or discard a broadcast, depending on queue and whether it has already been added/sent
-// "Broadcast should be added to queue if checksum (single int) is not in broadcast_history array. Queue should store an integer hash of each sent broadcast to avoid repetition. It should also be rate limited (random rate, random delays) to avoid facilitating mapping of the network. Broadcast thread should run perpetually if there is anything in the queue, otherwise close. Broadcasts exceeding queue should be discarded? Undecided."
-// TODO (?) Queue should take note of how many broadcasts came from each user
-	if(!broadcast)
-	{
-		error_simple(0,"Sanity check fail in broadcast_add. Coding error. Report this.");
-		breakpoint();
-		return;
-	}
-	const uint32_t hash = fnv1a_32_salted(broadcast,GROUP_BROADCAST_LEN);
-	pthread_rwlock_rdlock(&mutex_broadcast);
-	for(int iter1 = 0; iter1 < BROADCAST_HISTORY_SIZE; iter1++)
-	{
-		if(broadcast_history[iter1] == 0)
-		{ // Not in queued/sent list, add it
-			int iter2 = 0;
-			for(; iter2 < BROADCAST_QUEUE_SIZE; iter2++)
-				if(broadcasts_queued[iter2].hash == 0)
-				{ // found empty slot
-					pthread_rwlock_unlock(&mutex_broadcast);
-					pthread_rwlock_wrlock(&mutex_broadcast);
-					broadcasts_queued[iter2].hash = hash;
-					memcpy(broadcasts_queued[iter2].broadcast,broadcast,GROUP_BROADCAST_LEN);
-					int origin_group_n = origin_n;
-					if(origin_n > -1)
-					{ // This can only trigger from goto send_out
-						const uint8_t owner = getter_uint8(origin_n,-1,-1,-1,offsetof(struct peer_list,owner));
-						if(owner == ENUM_OWNER_GROUP_PEER)
-						{
-							const int g = set_g(origin_n,NULL);
-							origin_group_n = getter_group_int(g,offsetof(struct group_list,n));
-						}
-					}
-					int iter3 = BROADCAST_MAX_PEERS - 1;
-					int n = 0;
-					torx_read(n) // XXX
-					while(iter3 > -1)
-					{
-						if(peer[n].onion[0] == '\0' && peer[n].peer_index == -2)
-							break;
-						const uint8_t owner = peer[n].owner;
-						const uint8_t status = peer[n].status;
-						if(n != origin_group_n && status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
-							broadcasts_queued[iter2].peers[iter3] = n; // TODO using GROUP_PEER instead of GROUP_CTRL so we can check online status later
-						torx_unlock(n++) // XXX
-						torx_read(n) // XXX
-						iter3--;
-					}
-					torx_unlock(n) // XXX
-					error_printf(0,"Broadcast added and slotted, peers=%d",BROADCAST_MAX_PEERS-iter3);
-					break;
-				}
-			if(iter2 == BROADCAST_QUEUE_SIZE)
-			{
-				error_simple(0,"Queue is full. Broadcast will be discarded.");
-				break; // queue is full, bail out. broadcast will be discarded.
-			}
-			broadcast_history[iter1] = hash; // NOTE: this is sent OR queued
-			break;
-		}
-		else if(broadcast_history[iter1] == hash)
-		{
-			error_simple(0,"Broadcast already queued. Will be discarded.");
-			break; // Already in queued/sent list, bail
-		}
-	}
-	pthread_rwlock_unlock(&mutex_broadcast);
-}
-
-void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
-{ // Audited 2024/02/15 // ciphertext must be an array sized 48 + 16 + 56 + 32 (crypto_box_SEALBYTES + crypto_pwhash_SALTBYTES + 56 + crypto_box_PUBLICKEYBYTES)
-	if(ciphertext == NULL || g < 0)
-	{
-		error_simple(0,"Sanity check in broadcast_prep failed. Coding error. Report this.");
-		breakpoint();
-		return;
-	}
-	const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-	unsigned char message[GROUP_BROADCAST_DECRYPTED_LEN];
-	randombytes_buf(message,crypto_pwhash_SALTBYTES); // salt the message. crypto_pwhash_SALTBYTES is 16
-	getter_array(&message[crypto_pwhash_SALTBYTES],56,group_n,-1,-1,-1,offsetof(struct peer_list,onion)); // affix the group_n
-	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-	getter_array(&sign_sk,sizeof(sign_sk),group_n,-1,-1,-1,offsetof(struct peer_list,sign_sk));
-	crypto_sign_ed25519_sk_to_pk(&message[crypto_pwhash_SALTBYTES+56],sign_sk); // affix the pk of size crypto_box_PUBLICKEYBYTES
-	sodium_memzero(sign_sk,sizeof(sign_sk));
-	unsigned char recipient_pk[crypto_box_PUBLICKEYBYTES];
-	pthread_rwlock_rdlock(&mutex_expand_group);
-	crypto_scalarmult_base(recipient_pk, group[g].id); // convert sk_to_pk
-	pthread_rwlock_unlock(&mutex_expand_group);
-	crypto_box_seal(ciphertext, message, sizeof(message), recipient_pk); // add some error checking? is of value or perhaps not?
-	sodium_memzero(message,sizeof(message));
-	sodium_memzero(recipient_pk,sizeof(recipient_pk));
-
-	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-	if(!g_peercount)
-	{ // store the hash so that we can broadcast_remove the broadcast from queue after we join the group
-		const uint32_t hash = fnv1a_32_salted(ciphertext,GROUP_BROADCAST_LEN);
-		pthread_rwlock_wrlock(&mutex_expand_group);
-		group[g].hash = hash;
-		pthread_rwlock_unlock(&mutex_expand_group);
-	}
-}
-
-void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN])
-{ // Origin_n is utilized on recv, origin_n == -1 is utilized when sending
-	// TODO put message_send here on some sort of queuing system to prevent timing based network topography analysis
-	// TODO store a integer hash of sent broadcast messages in some sort of array to prevent resending the same message multiple times? (per session)
-	// TODO determine some way to avoid sending out broadcast messages (on startup) if we created the group? how do we know that?
-	if(ciphertext == NULL)
-	{
-		error_simple(0,"Sanity check failed in broadcast function. Report this.");
-		breakpoint();
-		return;
-	}
-	if(origin_n < 0)
-	{ // Attempting to join a public group (or, if send_out, re-broadcast). We should be queuing. TODO
-		send_out: {}
-		if(BROADCAST_QUEUE)
-			broadcast_add(origin_n,ciphertext);
-		else
-		{
-			int origin_group_n = origin_n;
-			if(origin_n > -1)
-			{ // This can only trigger from goto send_out
-				const uint8_t owner = getter_uint8(origin_n,-1,-1,-1,offsetof(struct peer_list,owner));
-				if(owner == ENUM_OWNER_GROUP_PEER)
-				{
-					const int g = set_g(origin_n,NULL);
-					origin_group_n = getter_group_int(g,offsetof(struct group_list,n));
-				}
-			}
-			for(int n = 0 ; getter_byte(n,-1,-1,-1,offsetof(struct peer_list,onion)) != 0 || getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index)) > -1 ; n++)
-			{ // Send to EVERYONE other than orign_n and origin_n's group
-				const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-				const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
-				if(n != origin_group_n && status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL))
-					message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,ciphertext,GROUP_BROADCAST_LEN);
-			}
-		}
-	}
-	else // if(origin_n > -1) // this if statement must be here because we reserve with set_g in group_join (???)
-	{ // Handle Inbound Broadcast
-		pthread_rwlock_rdlock(&mutex_expand_group);
-		for(int group_n,g = 0 ; (group_n = group[g].n) > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
-		{ // Attempt decryption of ciphertext, in all circumstances
-			if(group_n < 0)
-				continue; // this group is deleted, skip checking it
-			pthread_rwlock_unlock(&mutex_expand_group);
-			const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-			if(!g_invite_required)
-			{ // Only try public groups
-				unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
-				unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32
-				pthread_rwlock_rdlock(&mutex_expand_group);
-				memcpy(x25519_sk,group[g].id,sizeof(x25519_sk));
-				pthread_rwlock_unlock(&mutex_expand_group);
-				crypto_scalarmult_base(x25519_pk, x25519_sk); // convert sk_to_pk
-				unsigned char decrypted[GROUP_BROADCAST_DECRYPTED_LEN];
-				if(crypto_box_seal_open(decrypted,ciphertext,GROUP_BROADCAST_LEN,x25519_pk, x25519_sk) == 0)
-				{ // Successful decryption, meaning we have this group
-					sodium_memzero(x25519_pk,sizeof(x25519_pk));
-					sodium_memzero(x25519_sk,sizeof(x25519_sk));
-					char onion[56+1];
-					getter_array(&onion,sizeof(onion),group_n,-1,-1,-1,offsetof(struct peer_list,onion)); // TODO 2024/02/19 hit this with group_n being -1, which is a possible race because we *have* this group or we couldn't decrypt
-					if(!memcmp(onion,&decrypted[crypto_pwhash_SALTBYTES],56)) // TODO hit error here in valgrind on 2023/10/24
-					{ // Check if this is our own broadcast being returned to us (which is fine and normal)
-						sodium_memzero(onion,sizeof(onion));
-						sodium_memzero(decrypted,sizeof(decrypted));
-						error_simple(1,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
-						return;
-					}
-					else
-					{ // Some user wants into a group we are in.
-						sodium_memzero(onion,sizeof(onion));
-						const int new_peer = group_add_peer(g,(char*)&decrypted[crypto_pwhash_SALTBYTES],NULL,&decrypted[crypto_pwhash_SALTBYTES+56],NULL);
-						sodium_memzero(decrypted,sizeof(decrypted));
-						if(new_peer > -1)
-						{ // Send them a peerlist
-							error_simple(0,RED"Checkpoint New group peer!(broadcast)"RESET);
-							broadcast_remove(g);
-						//	error_simple(1,"Sending a peerlist to our brand new peer in public group");
-						//	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-						//	message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PUBLIC_LEN);
-							unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
-							broadcast_prep(ciphertext_new,g);
-						/*	torx_read(new_peer) // TODO remove
-							const uint8_t owner = peer[new_peer].owner; // TODO remove
-							torx_unlock(new_peer) // TODO remove
-							printf("Checkpoint REQUESTING RECIPROCITY via GROUP_BROADCAST to specific peer: %u =? 5\n",owner); // TODO remove // should be ENUM_OWNER_GROUP_PEER ??? but isn't by the time we go to message_send
-							if(owner != 5) // TODO remove
-								breakpoint(); // TODO remove
-							printf("Checkpoint ciphertext: %s\n",b64_encode(ciphertext_new,sizeof(ciphertext_new)));	*/
-							message_send(new_peer,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);  // REQUEST RECIPROCITY CONNECTION (critical)
-						//	printf("Checkpoint did it message_send?\n");
-							sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
-						}
-						else if(new_peer == -1)
-						{ // == -2 is already have it
-							error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
-						}
-						return;
-					}
-				}
-				sodium_memzero(x25519_pk,sizeof(x25519_pk));
-				sodium_memzero(x25519_sk,sizeof(x25519_sk));
-			//	printf("Checkpoint decryption fail on g==%d\n",g);
-			}
-			pthread_rwlock_rdlock(&mutex_expand_group);
-		} // If getting here, means unable to decrypt ciphertext with any public group ID. Carry on.
-		pthread_rwlock_unlock(&mutex_expand_group);
-		goto send_out;
-	}
 }
 
 int group_join(const int inviter_n,const unsigned char *group_id,const char *group_name,const char *creator_onion,const unsigned char *creator_ed25519_pk)
