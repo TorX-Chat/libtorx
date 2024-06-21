@@ -204,7 +204,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	uint8_t status; // 0 blocked, 1 friend, 2 pending acceptance
 	char privkey[88+1];
 	int peer_index; // For use with SQL functions only
-//	char hashed_privkey[20+1];
 	char onion[56+1]; // our onion derrived from privkey, except for "peer", where it is peeronion, because this must ALWAYS exist
 	char torxid[52+1];
 	uint8_t peerversion;
@@ -227,25 +226,19 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	struct message_list {
 		time_t time; // time since epoch in seconds
 		uint8_t stat;
-	//	uint16_t protocol; // see enum protocols
 		int p_iter;
 		char *message; // should free on shutdown, in cleanup()
 		uint32_t message_len; // includes (where applicable only) applicable null terminator, date, untrusted protocol, signature
 		uint32_t pos; // amount sent TODO utilize for amount received also
 		time_t nstime; // nanoseconds (essentially after a decimal point of time)
-//		uint32_t random_string_len; // note: we store this so that our :sent: and :done: messages are the same line lengths. Alternatively We could also just read/strlen it in save_log to save memory. This will however be depreciated when we move to SQLCipher.
 	} *message; // TODO keep signed in case we want to go into negatives when loading more messages
 	struct file_list { // variables contained within structs are called "Members"
 		unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
 		char *filename;
 		char *file_path;
 		uint64_t size;
-//		uint64_t transferred; // amount already transferred
-//		uint64_t requested_end; // DEPRECIATE TO THREAD-HELD STATIC VAR requested endpoint, from peer's current request ( RELEVANT ONLY TO SENDER)
 		uint8_t status; // see enum file_statuses for values
-//		FILE *fd;
 		uint8_t full_duplex; // full_duplex is only applicable on the requestor side. file sender just sends on whatever socket the request is received. // Slows any outbound messages during transfer (since they are added to end of buffer), but inbound messages are unaffected (speed) 
-//		pthread_mutex_t mutex;
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
@@ -281,9 +274,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES]; // ONLY use for CTRL + GROUP_PEER, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char invitation[crypto_sign_BYTES]; // PRIVATE groups only. ONLY for GROUP_PEER, 64 this the SIGNATURE on our onion, from who invited us, which we will need when connecting to other peers.
-//	char *buffer; // for use with incomplete messages in read_conn. // TODO should this be one on sendfd and one on recvfd?
-//	uint32_t buffer_len; // current length of .buffer (received so far) // TODO should this be one on sendfd and one on recvfd?
-//	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer // TODO should this be one on sendfd and one on recvfd?
 	uint8_t blacklisted; // blacklisted for giving us corrupt file sections in group transfers // note: alternative names:  denylist/disallowed https://web.archive.org/web/20221219160303/https://itcommunity.stanford.edu/ehli
 	pthread_rwlock_t mutex_page;
 	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
@@ -317,15 +307,9 @@ struct protocol_info {
 	uint16_t protocol;
 	char name[64];
 	char description[512]; // Array is preferable than pointer for speed here
-//////	uint32_t len_minimum;
-//	uint32_t len_expected; 
-//////	uint32_t prefix_len;
-//	uint32_t binary_suffix_len;
 	uint32_t null_terminated_len; // 0 or 1, determines whether entirely binary or not // NOTE: Currently doing UTF8 validation on ALL PROTOCOLS UTILIZING .null_terminated_len, which will need to be adjusted if someone implements a non-UTF8 protocol
 	uint32_t date_len; // typically 0 or 8, could be just a 'dated' instead
 	uint32_t signature_len; // typically 0 or crypto_sign_BYTES
-//	uint8_t group_public_public; // suitable for public message in public group (typically unsigned and undated, cannot be rebroadcasted)
-//	uint8_t group_private_public; // suitable for public message in private group (typically timed and dated, to be rebroadcastable)
 	uint8_t logged;
 	uint8_t notifiable; // messages will be printed by UI
 	uint8_t file_checksum; // contains CHECKSUM_BIN_LEN prefix compatible with set_f
@@ -343,7 +327,7 @@ struct protocol_info {
 struct broadcasts_list {
 	uint32_t hash;
 	unsigned char broadcast[GROUP_BROADCAST_LEN];
-	int peers[BROADCAST_MAX_PEERS]; // TODO intialize as -1
+	int peers[BROADCAST_MAX_PEERS];
 } broadcasts_queued[BROADCAST_QUEUE_SIZE]; // this is queue
 
 enum exclusive_types {

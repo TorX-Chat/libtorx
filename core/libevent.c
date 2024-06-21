@@ -71,6 +71,18 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 	disconnect_forever(bev_recv,NULL);
 }*/
 
+static inline void pipe_auth_and_request_peerlist(const int n)
+{ // Send ENUM_PROTOCOL_PIPE_AUTH && ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST
+	char peeronion[56+1];
+	getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+	message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
+	sodium_memzero(peeronion,sizeof(peeronion));
+	const int g = set_g(n,NULL);
+	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+	const uint32_t trash = htobe32(peercount);
+	message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
+}
+
 static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
 {
 	size_t drained = 0;
@@ -191,8 +203,10 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					torx_unlock(n) // XXX
 					error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 					error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
-					if(protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-					{ // prevent cascading effect from triggering after these because they are queue skipping
+					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+						pipe_auth_and_request_peerlist(n); // this will trigger cascade
+					else
+					{
 						const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
 						for(int next_i = i+1; next_i < message_n ; next_i++)
 						{
@@ -1305,7 +1319,6 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 			{ // important check, to snuff out deleted messages
 				pthread_rwlock_rdlock(&mutex_protocols);
 				const uint8_t stream = protocols[p_iter].stream;
-				const uint16_t protocol = protocols[p_iter].protocol;
 				pthread_rwlock_unlock(&mutex_protocols);
 				if(stat == ENUM_MESSAGE_FAIL && stream == 0)
 					if(!send_prep(n,i,p_iter,fd_type)) // Will do nothing if there are no messages to send
@@ -1379,7 +1392,6 @@ void *torx_events(void *arg)
 			peer[n].bev_send = bev_send;
 			torx_unlock(n) // XXX
 			// TODO 0u92fj20f230fjw ... to here. TODO
-			const uint8_t v3auth = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,v3auth));
 			const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			if(owner == ENUM_OWNER_CTRL && threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1 && peerversion == 0)
@@ -1387,6 +1399,7 @@ void *torx_events(void *arg)
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
+				uint8_t first_connect = 0;
 				if(stat == ENUM_MESSAGE_FAIL)
 				{ // Put queue skipping protocols first, if unsent, before pipe auth
 					const int p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter));
@@ -1394,35 +1407,13 @@ void *torx_events(void *arg)
 					const uint16_t protocol = protocols[p_iter].protocol;
 					pthread_rwlock_unlock(&mutex_protocols);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
+					{
 						send_prep(n,0,p_iter,1);
-				}
-				char peeronion[56+1];
-				getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
-				message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
-				sodium_memzero(peeronion,sizeof(peeronion));
-				const int g = set_g(n,NULL);
-				const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-				const uint32_t trash = htobe32(peercount);
-				message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
-			}
-			if(!v3auth/* || owner == ENUM_OWNER_GROUP_PEER*/)
-			{ // No longer necessary on GROUP_PEER because we have calls when we pipe auth and request peerlist
-				const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-				for(int i = 0; i < message_n; i++)
-				{
-					const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
-					const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-					if(p_iter > -1)
-					{ // important check, to snuff out deleted messages
-						pthread_rwlock_rdlock(&mutex_protocols);
-						const uint8_t stream = protocols[p_iter].stream;
-						const uint16_t protocol = protocols[p_iter].protocol;
-						pthread_rwlock_unlock(&mutex_protocols);
-						if(stat == ENUM_MESSAGE_FAIL && stream == 0)
-							if(!send_prep(n,i,p_iter,1)) // Will do nothing if there are no messages to send
-								break; // cascading effect
+						first_connect = 1;
 					}
 				}
+				if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
+					pipe_auth_and_request_peerlist(n);
 			}
 			peer_online(n); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 		}
