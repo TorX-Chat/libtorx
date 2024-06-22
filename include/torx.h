@@ -109,12 +109,12 @@ typedef u_short in_port_t;
 
 #define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently. Set by the file offerer exlusively.
 
-#define BROADCAST_QUEUE 1 // 1 enable, 0 disable. Note: disabled is depreciated. Instead, if choosing to disable, set BROADCAST_DELAY to 0.
-#define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP
+#define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
 #define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
 #define BROADCAST_QUEUE_SIZE 4096
 #define BROADCAST_HISTORY_SIZE BROADCAST_QUEUE_SIZE*2 // should be equal to or larger than queue size
+#define BROADCAST_MAX_INBOUND_PER_PEER BROADCAST_QUEUE_SIZE/16 // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
 
 /* The following DO NOT CONTAIN + '\0' + [Time] + [NSTime] + Protocol + Signature */
 #define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + strlen(peer[n].file[f].filename))
@@ -278,6 +278,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	pthread_rwlock_t mutex_page;
 	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
 	pthread_t thrd_recv; // for torx_events (recv)
+	uint32_t broadcasts_inbound;
 } *peer;
 
 struct group_list { // XXX NOTE: individual peers will be in peer struct but peer[n].owner != CTRL so they won't appear in peer list or show online notifications XXX
@@ -700,7 +701,7 @@ int custom_input(const uint8_t owner,const char *identifier,const char *privkey)
 /* broadcast.c */
 void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN]);
 void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g);
-void broadcast(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
+void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
 void broadcast_start(void);
 
 /* sql.c */

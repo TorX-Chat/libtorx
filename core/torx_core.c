@@ -1874,6 +1874,7 @@ void zero_n(const int n) // XXX do not put locks in here
 	peer[n].blacklisted = 0;
 	peer[n].thrd_send = 0; // thread_kill(peer[n].thrd_send); // NO. will result in deadlocks.
 	peer[n].thrd_recv = 0; // thread_kill(peer[n].thrd_recv); // NO. will result in deadlocks.
+	peer[n].broadcasts_inbound = 0;
 //	torx_unlock(n) // XXX
 // TODO probably need a callback to UI (to zero the UI struct)
 }
@@ -2672,14 +2673,12 @@ void initial_keyed(void)
 		tor_socks_port = randport(0);
 	start_tor(); // XXX NOTE: might need to make this independently called by UI because on mobile it might be a problem to exec binaries within native code
 
-	if(BROADCAST_QUEUE)
-	{
-		sodium_memzero(broadcasts_queued,sizeof(broadcasts_queued));
-		for(int iter1 = 0; iter1 < BROADCAST_QUEUE_SIZE; iter1++)
-			for(int iter2 = 0; iter2 < BROADCAST_MAX_PEERS; iter2++)
-				broadcasts_queued[iter1].peers[iter2] = -1;
-		broadcast_start();
-	}
+	sodium_memzero(broadcasts_queued,sizeof(broadcasts_queued));
+	for(int iter_queue = 0; iter_queue < BROADCAST_QUEUE_SIZE; iter_queue++)
+		for(int iter_peer = 0; iter_peer < BROADCAST_MAX_PEERS; iter_peer++)
+			broadcasts_queued[iter_queue].peers[iter_peer] = -1;
+	broadcast_start();
+
 	keyed = 1; // KEEP THIS AT THE END, after start_tor, etc.
 }
 
@@ -2777,6 +2776,7 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	pthread_rwlock_init(&peer[n].mutex_page,NULL);
 	peer[n].thrd_send = 0;
 	peer[n].thrd_recv = 0;
+	peer[n].broadcasts_inbound = 0;
 
 	initialize_n_cb(n); // must be before initialize_i/f
 
@@ -3464,10 +3464,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	// Add it to our peerlist
 	pthread_rwlock_wrlock(&mutex_expand_group);
 	if(group[g].peerlist)
-	{
-		error_simple(0,"Checkpoint realloc called in group_add_peer");
 		group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)g_peercount+1)*sizeof(int));
-	}
 	else
 		group[g].peerlist = torx_insecure_malloc(((size_t)g_peercount+1)*sizeof(int));
 	group[g].peerlist[group[g].peercount] = n;
@@ -3540,7 +3537,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 	// Broadcast to everyone, including members of groups. Check if we own the requesting onion before processing. In groups, do not rebroadcast received messages. Also no need to sign.
 		unsigned char ciphertext[GROUP_BROADCAST_LEN];
 		broadcast_prep(ciphertext,g);
-		broadcast(-1,ciphertext);
+		broadcast_add(-1,ciphertext);
 		sodium_memzero(ciphertext,sizeof(ciphertext));
 	}
 	return g; // now it waits for a our signed ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY

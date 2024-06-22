@@ -618,10 +618,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
 					if(event_strc->buffer)
-					{
-					//	error_printf(0,"Checkpoint realloc called in libevent: %s %u + (%u - %u)",name,event_strc->buffer_len,packet_len,cur);
 						event_strc->buffer = torx_realloc(event_strc->buffer,event_strc->buffer_len + (packet_len - cur));
-					}
 					else
 						event_strc->buffer = torx_secure_malloc(event_strc->buffer_len + (packet_len - cur));
 					memcpy(&event_strc->buffer[event_strc->buffer_len],&read_buffer[cur],packet_len - cur); // TODO segfault on 2023/10/26 twice. send a 1 byte file to replicate. segfaulted on 2023/11/22 also, on larger file
@@ -752,11 +749,18 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 												break;
 											}
 											else if(ret != -2)
-											{
+											{ // -2 is "already have it"
 												added_one++;
 												error_simple(0,RED"Checkpoint New group peer! (read_conn 1)"RESET);
-												if(g_invite_required && getter_group_uint32(g,offsetof(struct group_list,peercount)) > 1)
+												if(g_invite_required)
 													message_send(ret,ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,itovp(g),GROUP_PRIVATE_ENTRY_REQUEST_LEN);
+												else
+												{
+													unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
+													broadcast_prep(ciphertext_new,g);
+													message_send(ret,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
+													sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
+												}
 											}
 										}
 									}
@@ -1092,7 +1096,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						else if(protocol == ENUM_PROTOCOL_GROUP_BROADCAST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
 						{
 							if(event_strc->buffer_len == GROUP_BROADCAST_LEN)
-								broadcast(n,(unsigned char *)event_strc->buffer); // this can rebroadcast or handle
+								broadcast_inbound(n,(unsigned char *)event_strc->buffer); // this can rebroadcast or handle
 							else
 							{
 								error_printf(0,"Requested rebroadcast of bad broadcast. Bailing. Protocol: %u with an odd lengthed broadcast: %u instead of expected %u.",protocol,event_strc->buffer_len,GROUP_BROADCAST_LEN);

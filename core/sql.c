@@ -1174,7 +1174,7 @@ int sql_populate_peer(void)
 						{ // Broadcast if the group is public and empty. Do not check if we created the group first (expiration) because even so it could be operating independantly even if empty (we could have created it then two users could have joined each other without joining us). Public groups must be wholely ownerless.
 							unsigned char ciphertext[GROUP_BROADCAST_LEN];
 							broadcast_prep(ciphertext,g);
-							broadcast(-1,ciphertext);
+							broadcast_add(-1,ciphertext);
 							sodium_memzero(ciphertext,sizeof(ciphertext));
 						}
 						torx_read(n) // XXX

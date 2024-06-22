@@ -115,7 +115,8 @@ struct offsets offsets_peer[] = {
 	offsize(peer_list,sign_sk,"sign_sk"),
 	offsize(peer_list,peer_sign_pk,"peer_sign_pk"),
 	offsize(peer_list,invitation,"invitation"),
-	offsize(peer_list,blacklisted,"blacklisted")
+	offsize(peer_list,blacklisted,"blacklisted"),
+	offsize(peer_list,broadcasts_inbound,"broadcasts_inbound")
 };
 
 struct offsets offsets_message[] = {
