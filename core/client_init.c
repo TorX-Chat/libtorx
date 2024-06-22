@@ -938,11 +938,14 @@ void file_accept(const int n,const int f)
 		{ // Setting file_path to inside download_dir if existing. Client may have already set .file_path, preventing this from occuring.
 			torx_write(n) // XXX
 			pthread_rwlock_rdlock(&mutex_global_variable);
-			const size_t allocated_size = strlen(download_dir)+strlen(peer[n].file[f].filename)+1;
+			const size_t allocated_size = strlen(download_dir)+1+strlen(peer[n].file[f].filename)+1;
 			peer[n].file[f].file_path = torx_secure_malloc(allocated_size);
-			snprintf(peer[n].file[f].file_path,allocated_size,"%s%s",download_dir,peer[n].file[f].filename);
+			#ifdef WIN32
+			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,'\\',peer[n].file[f].filename);
+			#else
+			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,'/',peer[n].file[f].filename);
+			#endif
 			pthread_rwlock_unlock(&mutex_global_variable);
-			printf("Checkpoint file_accept %s\n",peer[n].file[f].file_path);
 			torx_unlock(n) // XXX
 		}
 		else if(local_download_dir == NULL && file_path == NULL)

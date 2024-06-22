@@ -1414,6 +1414,13 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(tor_location,setting_value,setting_value_len);
 					tor_location[setting_value_len] = '\0';
 				}
+				else if(!strncmp(setting_name,"download_dir",12))
+				{
+					torx_free((void*)&download_dir);
+					download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(download_dir,setting_value,setting_value_len);
+					download_dir[setting_value_len] = '\0';
+				}
 				else if(!strncmp(setting_name,"torrc",5))
 				{
 					torx_free((void*)&torrc_content);

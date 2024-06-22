@@ -661,9 +661,13 @@ static void set_split_path(const int n,const int f)
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	if(split_folder)
 	{
-		allocation_size = strlen(split_folder) + strlen(peer[n].file[f].filename) + 6 + 1;
+		allocation_size = strlen(split_folder) + 1 + strlen(peer[n].file[f].filename) + 6 + 1;
 		peer[n].file[f].split_path = torx_secure_malloc(allocation_size);
-		snprintf(peer[n].file[f].split_path,allocation_size,"%s%s.split",split_folder,peer[n].file[f].filename);
+		#ifdef WIN32
+		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,'\\',peer[n].file[f].filename);
+		#else
+		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,'/',peer[n].file[f].filename);
+		#endif
 		pthread_rwlock_unlock(&mutex_global_variable);
 	}
 	else
