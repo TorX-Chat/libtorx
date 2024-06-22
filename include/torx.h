@@ -810,7 +810,7 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 	struct qr_data *qr_bool(const char *text,const size_t multiplier);
 	char *qr_utf8(const struct qr_data *arg);
 	void *return_png(size_t *size_ptr,const struct qr_data *arg);
-	void write_bytes(const char *filename,const size_t length,const void *png_data);
+	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
 	#include "../torx_qr.c"
 #endif
 

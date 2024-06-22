@@ -145,15 +145,16 @@ void *return_png(size_t *size_ptr,const struct qr_data *arg)
 //		fclose(fp);
 }
 
-void write_bytes(const char *filename,const size_t length,const void *png_data)
+size_t write_bytes(const char *filename,const void *png_data,const size_t length)
 { /* This will TRUNCATE any file. It is only intended as a helper function for saving a small QR Code */ // NOTE: Could write these bytes direcly in flutter. Search .asTypedList for how to get bytes to something usable with a writeToFile function that works with ByteData (which is lists of Uint8)
 	if(!length)
-		return;
+		return 0;
 	FILE *fp = fopen(filename, "wb");
 	if(!fp)
-		return;
-	fwrite(png_data,1,length,fp);
+		return 0;
+	const size_t bytes_written = fwrite(png_data,1,length,fp);
 	fclose(fp); fp = NULL;
+	return bytes_written;
 }
 
 //#endif
