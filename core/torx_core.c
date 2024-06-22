@@ -51,8 +51,10 @@ int max_group = 0; // Should not be used except to constrain expand_messages_str
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
 #ifdef WIN32
 HANDLE tor_fd_stdout = {0};
+const char platform_slash = '\\';
 #else
 int tor_fd_stdout = -1;
+const char platform_slash = '/';
 #endif
 
 /* User configurable options that will automatically be checked by initial() */

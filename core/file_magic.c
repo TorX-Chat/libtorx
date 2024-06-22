@@ -592,15 +592,7 @@ void destroy_file(const char *file_path)
 	snprintf(path_copy,sizeof(path_copy),"%s",file_path); // Both dirname() and basename() may modify the contents of path, so it may be desirable to pass a copy when calling one of these functions.
 	char *directory = dirname(path_copy);
 	char new_file_path[file_path_len+20+4+1];
-	#ifdef WIN32
-	{
-		snprintf(new_file_path,sizeof(new_file_path), "%s\%s.tmp",directory,new_file_name);
-	}
-	#else
-	{
-		snprintf(new_file_path,sizeof(new_file_path), "%s/%s.tmp",directory,new_file_name);
-	}
-	#endif
+	snprintf(new_file_path,sizeof(new_file_path), "%s%c%s.tmp",directory,platform_slash,new_file_name);
 	sodium_memzero(path_copy,sizeof(path_copy)); // DO NOT do this before using directory. Basename and dirname are peculiar
 	if(rename(file_path, new_file_path) != 0)
 	{
@@ -663,11 +655,7 @@ static void set_split_path(const int n,const int f)
 	{
 		allocation_size = strlen(split_folder) + 1 + strlen(peer[n].file[f].filename) + 6 + 1;
 		peer[n].file[f].split_path = torx_secure_malloc(allocation_size);
-		#ifdef WIN32
-		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,'\\',peer[n].file[f].filename);
-		#else
-		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,'/',peer[n].file[f].filename);
-		#endif
+		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,platform_slash,peer[n].file[f].filename);
 		pthread_rwlock_unlock(&mutex_global_variable);
 	}
 	else

@@ -940,11 +940,7 @@ void file_accept(const int n,const int f)
 			pthread_rwlock_rdlock(&mutex_global_variable);
 			const size_t allocated_size = strlen(download_dir)+1+strlen(peer[n].file[f].filename)+1;
 			peer[n].file[f].file_path = torx_secure_malloc(allocated_size);
-			#ifdef WIN32
-			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,'\\',peer[n].file[f].filename);
-			#else
-			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,'/',peer[n].file[f].filename);
-			#endif
+			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,platform_slash,peer[n].file[f].filename);
 			pthread_rwlock_unlock(&mutex_global_variable);
 			torx_unlock(n) // XXX
 		}
