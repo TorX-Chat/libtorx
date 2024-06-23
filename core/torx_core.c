@@ -44,7 +44,7 @@ uint8_t tor_running = 0; // TODO utilize this in UI somehow (but doing so requir
 uint8_t lockout = 0;
 uint8_t keyed = 0; // whether initial_keyed has run. better than checking !torrc_content or !tor_ctrl_port
 pid_t tor_pid = -1;
-int highest_ever_o = 0; // TODO delete, only for learning purposes. Do not need. On 2023/11/17, we hit 3
+int highest_ever_o = 0;
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
 int max_group = 0; // Should not be used except to constrain expand_messages_struc
@@ -1320,7 +1320,7 @@ void set_time(time_t *time,time_t *nstime)
 }
 
 static inline uint64_t calculate_average(const int n,const int f,const uint64_t bytes_per_second)
-{ // Calculate average file transfer speed over 255 seconds, for the purpose of calculating remaining time
+{ // Calculate average file transfer speed over 255 seconds, for the purpose of calculating remaining time // TODO consider weighting the most recent speeds
 /*	#define smoothing 0.02
 	if(peer[n].file[f].average_speed == 0)
 		peer[n].file[f].average_speed = peer[n].file[f].bytes_per_second;
@@ -1435,11 +1435,10 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 		transfer_progress_cb(n,f,transferred);
 	}
 	else if(diff > file_progress_delay || last_transferred == transferred /* stalled */)
-	{ /* For more accuracy and less variation, do an average over time */
+	{ // For more accuracy and less variation, do an average over time
 		uint64_t bytes_per_second = 0;
 		if(diff > 0)
 			bytes_per_second = (uint64_t)((double)(transferred - last_transferred) / (diff / 1000000000));
-	//	printf("Checkpoint %lu = (%lu - %lu) / (%f / 1000000000)\n",bytes_per_second,transferred,last_transferred,diff);
 		time_t time_left = 0;
 		uint64_t average_speed = 0;
 		if(last_progress_update_time && bytes_per_second < 1024*1024*1024) // necessary to prevent putting in bad bytes_per_second data (sanity checks)
@@ -1448,7 +1447,6 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 			time_left = (time_t)((size - transferred) / average_speed); // alt: bytes_per_second
 		if(last_transferred == transferred)
 			error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu\n",time_left,bytes_per_second);
-	//	printf("Checkpoint bytes_per_second: %lu transferred: %lu\n",bytes_per_second,transferred);
 		torx_write(n) // XXX
 		peer[n].file[f].time_left = time_left; // will be 0 if bytes_per_second is 0
 		peer[n].file[f].bytes_per_second = bytes_per_second;
@@ -1457,10 +1455,7 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 		peer[n].file[f].last_transferred = transferred;
 		torx_unlock(n) // XXX
 		transfer_progress_cb(n,f,transferred);
-	//	printf("Checkpoint time_left: %ld Average_speed: %lu Diff: %f Transferred: %lu\n",time_left, average_speed,diff,transferred);
 	}
-//	else
-//		printf("Checkpoint transfer_progress %lu -> %lu\n",last_transferred,transferred);
 }
 
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)
@@ -3780,7 +3775,7 @@ void initial(void)
 			packet[o].n = -1;
 			packet[o].f_i = -1;
 			packet[o].packet_len = 0;
-			packet[o].p_iter = -1; // initialize but DO NOT reset this, unless all sendbuffers are clear. this keeps track of maximum used packets at any given moment across all buffers.
+			packet[o].p_iter = -1;
 			packet[o].fd_type = -1;
 			packet[o].start = 0;
 			pthread_rwlock_unlock(&mutex_packet);

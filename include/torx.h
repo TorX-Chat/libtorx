@@ -299,7 +299,7 @@ struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
 	int f_i; // f value or i value, as appropriate? (cannot be required)
 	uint16_t packet_len; // size of packet, or unsent size of packet if partial
-	int p_iter; // initialize at -1, do not reset
+	int p_iter; // initialize at -1
 	int8_t fd_type; // -1 trash (ready for re-use??? but then out of order),0 recv, 1 send
 	uint64_t start; // TODO NEW TODO, replacing .transferred for outgoing counter. this is OPTIONAL (ie only for file pieces)
 } packet[SIZE_PACKET_STRC]; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 

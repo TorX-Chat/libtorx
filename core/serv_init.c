@@ -67,7 +67,6 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	}
 	uint8_t connected;
 	FILE **fd_active = {0};
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 	const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
 	torx_read(n) // XXX
 	if(fd_type == 0 && peer[n].bev_recv)
@@ -99,26 +98,28 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			if(!*fd_active || (start = (uint64_t)ftell(*fd_active)) == (uint64_t)-1)
 			{
 				torx_unlock(n) // XXX
-				error_simple(1,"Null filepointer in send_prep, possibly caused by file being completed.");
+				error_simple(0,"Null filepointer in send_prep, possibly caused by file being completed.");
 				return -1;
 			}
+			torx_unlock(n) // XXX
+			torx_fd_lock(n,f) // XXX
+			FILE *local = *fd_active; // local file descriptor that has the proper location, then after fread, write the new location to the proper file pointer (avoids lockup if/while read hangs)
+			torx_fd_unlock(n,f) // XXX
+			torx_read(n) // XXX
 			if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start)
 			{ // This is apparently not an error and must exist to prevent corruption
 				error_printf(0,"Shifting filepointer: %lu + %lu != %lu\n",peer[n].file[f].outbound_start[fd_type],peer[n].file[f].outbound_transferred[fd_type],start);
-				torx_unlock(n) // XXX
-				torx_fd_lock(n,f) // XXX
-				fseek(*fd_active,(long int)start,SEEK_SET);
-				torx_fd_unlock(n,f) // XXX
-				torx_read(n) // XXX
+				fseek(local,(long int)start,SEEK_SET);
 			} // Appears NOT to be our (main?) cause of corruption. Best guess is failing to properly close file descriptors on shutdown.
 			const uint64_t endian_corrected_start = htobe64(start);
 			uint16_t data_size = PACKET_SIZE_MAX-16;
 			if(start + data_size > peer[n].file[f].outbound_end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[n].file[f].outbound_end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
 			torx_unlock(n) // XXX
-			torx_fd_lock(n,f) // XXX // TODO TODO TODO XXX 2024/02/04 this blocks (bad), need to have an local file descriptor that has the proper location, then after fread, write the new location to the proper file pointer (avoids lockup if/while read hangs)
-			const size_t bytes = fread(&send_buffer[16],1,data_size,*fd_active);
-			torx_fd_unlock(n,f) // XXX should probably enable? but this could block...
+			const size_t bytes = fread(&send_buffer[16],1,data_size,local);
+			torx_fd_lock(n,f) // XXX
+			*fd_active = local;
+			torx_fd_unlock(n,f) // XXX
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -144,6 +145,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		}
 		else
 		{ // only i is initialized
+			const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;

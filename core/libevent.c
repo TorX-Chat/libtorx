@@ -86,159 +86,151 @@ static inline void pipe_auth_and_request_peerlist(const int n)
 static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
 {
 	size_t drained = 0;
-	int o = 0;
-	uint8_t removed_something = 0; // removed one or more packets
 	pthread_rwlock_rdlock(&mutex_packet);
 	const int highest_ever_o_local = highest_ever_o;
 	pthread_rwlock_unlock(&mutex_packet);
-	for( ; o <= highest_ever_o_local ; o++)
+	for(int o = 0 ; o <= highest_ever_o_local ; o++)
 	{
 		pthread_rwlock_wrlock(&mutex_packet);
-		const int p_iter = packet[o].p_iter;
-		if(p_iter == -1)
-		{
-			pthread_rwlock_unlock(&mutex_packet);
-			if(!removed_something)
-				continue;
-			//	error_printf(0,"packet_removal o=%d p_iter == -1. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.",o);
-			break; // high packets, never used, have p_iter == -1, do not modify
-		}
 		const int packet_n = packet[o].n;
-		const int packet_f_i = packet[o].f_i;
 		const int8_t packet_fd_type = packet[o].fd_type;
-		const uint16_t packet_len = packet[o].packet_len;
-		const uint64_t packet_start = packet[o].start;
-		packet[o].n = -1; // release it for re-use.
-		packet[o].f_i = -1; // release it for re-use.
-		packet[o].packet_len = 0; // release it for re-use.
-	//	packet[o].p_iter = -1; // DO NOT reset this, unless all sendbuffers are clear.
-		packet[o].fd_type = -1; // release it for re-use.
-		packet[o].start = 0; // release it for re-use.
-		pthread_rwlock_unlock(&mutex_packet);
-		pthread_rwlock_rdlock(&mutex_protocols);
-		const uint16_t protocol = protocols[p_iter].protocol;
-		const uint8_t stream = protocols[p_iter].stream;
-		const char *name = protocols[p_iter].name;
-		pthread_rwlock_unlock(&mutex_protocols);
 		if(packet_n == n && packet_fd_type == fd_type)
 		{ // Found the packet info, now we handle
-			if(drain_len)
-			{
-				drained += packet_len;
-				error_printf(0,"Checkpoint packet_removed of protocol=%s len=%u of %lu",name,packet_len,drain_len);
-			}
-			else if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-			{
-				const int f = packet_f_i;
-				torx_write(n) // XXX
-				peer[n].file[f].outbound_transferred[packet_fd_type] += packet_len-16;
-				torx_unlock(n) // XXX
-				uint8_t file_status = getter_uint8(n,-1,f,-1,offsetof(struct file_list,status));
-				const uint64_t transferred = calculate_transferred(n,f);
-				torx_read(n) // XXX
-				const uint64_t current_pos = peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type];
-				const uint64_t current_end = peer[n].file[f].outbound_end[fd_type]+1;
-				torx_unlock(n) // XXX
-				if(current_pos == current_end)
+			const int p_iter = packet[o].p_iter;
+			const int packet_f_i = packet[o].f_i;
+			const uint16_t packet_len = packet[o].packet_len;
+			const uint64_t packet_start = packet[o].start;
+			packet[o].n = -1; // release it for re-use.
+			packet[o].f_i = -1; // release it for re-use.
+			packet[o].packet_len = 0; // release it for re-use.
+			packet[o].p_iter = -1; // release it for re-use.
+			packet[o].fd_type = -1; // release it for re-use.
+			packet[o].start = 0; // release it for re-use.
+			pthread_rwlock_unlock(&mutex_packet);
+			drained += packet_len;
+			if(!drain_len)
+			{ // For drain_len, we don't do anything except 0 the packets above
+				pthread_rwlock_rdlock(&mutex_protocols);
+				const uint16_t protocol = protocols[p_iter].protocol;
+				const uint8_t stream = protocols[p_iter].stream;
+				const char *name = protocols[p_iter].name;
+				pthread_rwlock_unlock(&mutex_protocols);
+				if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 				{
-					error_printf(0,"Outbound File Section Completed on fd_type=%d",fd_type);
-					if(fd_type == 0)
-						close_sockets(n,f,peer[n].file[f].fd_out_recvfd)
-					else /* fd_type == 1 */
-						close_sockets(n,f,peer[n].file[f].fd_out_sendfd)
-					const uint64_t size = getter_uint64(n,-1,f,-1,offsetof(struct file_list,size));
-					if(transferred >= size) // All Requested Sections Fully Completed
-					{
-						if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
-							error_printf(0,"Checkpoint output_cb exceeded size of file by %lu bytes",transferred - size);
-						file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-						setter(n,-1,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
-					}
-				}
-				else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED) // || peer[n].file[f].file_status == ENUM_FILE_OUTBOUND_COMPLETED) // not ideal to permit continuing on _COMPLETED but its kind of a work-around to an issue we have atm with full duplex
-					send_prep(n,f,p_iter,fd_type); // sends next packet on same fd, or closes it
-				if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
-					transfer_progress(n,f,transferred);
-			}
-			else
-			{ // All protocols that contain a message size on the first packet of a message
-				const int i = packet_f_i;
-				torx_write(n) // XXX Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
-				if(packet_start == 0) // first packet of a message, has message_len prefix
-					peer[n].message[i].pos += packet_len - (2+2+4);
-				else // subsequent packet (ie, second or later packet in a message > PACKET_SIZE_MAX)
-					peer[n].message[i].pos += packet_len - (2+2);
-				const uint32_t message_len = peer[n].message[i].message_len;
-				const uint32_t pos = peer[n].message[i].pos;
-				torx_unlock(n) // XXX
-				if(pos == message_len)
-				{ // complete message, complete send
-					carry_on_regardless: {}
-					if(stream)
-					{ // discard/delete message and attempt rollback
-						torx_write(n) // XXX
-						zero_i(n,i);
-						torx_unlock(n) // XXX
-					/*	printf("Checkpoint actually deleted group_peer's i\n");
-						// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to. 
-						// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
-					}
-					else
-					{
-						const uint8_t stat = ENUM_MESSAGE_SENT;
-						setter(n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
-						sql_update_message(n,i);
-						print_message_cb(n,i,2);
-						if(protocol == ENUM_PROTOCOL_KILL_CODE)
-						{
-							error_simple(1,"Successfully sent a kill code. Deleting peer.");
-							const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
-							takedown_onion(peer_index,1);
-							error_simple(0,"TODO should probably return here to avoid actions on deleted n.1");
-						//	disconnect_forever(peer [n]. bev_send); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
-						}
-					}
+					const int f = packet_f_i;
 					torx_write(n) // XXX
-					peer[n].socket_utilized[fd_type] = -1;
+					peer[n].file[f].outbound_transferred[packet_fd_type] += packet_len-16;
 					torx_unlock(n) // XXX
-					error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
-					error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
-					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-						pipe_auth_and_request_peerlist(n); // this will trigger cascade
-					else
+					const uint64_t transferred = calculate_transferred(n,f);
+					torx_read(n) // XXX
+					uint8_t file_status = peer[n].file[f].status;
+					const uint64_t current_pos = peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type];
+					const uint64_t current_end = peer[n].file[f].outbound_end[fd_type]+1;
+					torx_unlock(n) // XXX
+					if(current_pos == current_end)
 					{
-						const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-						for(int next_i = i+1; next_i < message_n ; next_i++)
+						error_printf(0,"Outbound File Section Completed on fd_type=%d",fd_type);
+						if(fd_type == 0)
+							close_sockets(n,f,peer[n].file[f].fd_out_recvfd)
+						else /* fd_type == 1 */
+							close_sockets(n,f,peer[n].file[f].fd_out_sendfd)
+						const uint64_t size = getter_uint64(n,-1,f,-1,offsetof(struct file_list,size));
+						if(transferred >= size) // All Requested Sections Fully Completed
 						{
-							const uint8_t next_stat = getter_uint8(n,next_i,-1,-1,offsetof(struct message_list,stat));
-							const int next_p_iter = getter_int(n,next_i,-1,-1,offsetof(struct message_list,p_iter));
-							if(next_stat == ENUM_MESSAGE_FAIL && next_p_iter > -1)
-								if(!send_prep(n,next_i,next_p_iter,fd_type))
-									break; // cascading effect
+							if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
+								error_printf(0,"Checkpoint output_cb exceeded size of file by %lu bytes",transferred - size);
+							file_status = ENUM_FILE_OUTBOUND_COMPLETED;
+							setter(n,-1,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
 						}
+						transfer_progress(n,f,transferred);
+					}
+					else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
+					{
+						printf("Checkpoint bang OUT%d %lu of %lu\n",fd_type,transferred,getter_uint64(n,-1,f,-1,offsetof(struct file_list,size)));
+						transfer_progress(n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
+						send_prep(n,f,p_iter,fd_type); // sends next packet on same fd, or closes it
 					}
 				}
-				else if(pos > message_len)
-				{ // 2024/05/04 This is happening when massive amounts of sticker requests come in on same peer. Unknown reason. Possibly caused by race on deleted (stream) i.
-					error_printf(0,"output_cb reported message pos > message_len: %u > %u. Likely will corrupt message. Packet len was %u. Coding error. Report this.",pos,message_len,packet_len);
-					breakpoint();
-					goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
-				}
-				else // incomplete message, complete send
-				{
-				//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,fd_type,packet_len,pos,message_len); // partial incomplete
-					printf("."); fflush(stdout);
-					send_prep(n,i,p_iter,fd_type); // send next packet on same fd
+				else
+				{ // All protocols that contain a message size on the first packet of a message
+					const int i = packet_f_i;
+					torx_write(n) // XXX Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
+					if(packet_start == 0) // first packet of a message, has message_len prefix
+						peer[n].message[i].pos += packet_len - (2+2+4);
+					else // subsequent packet (ie, second or later packet in a message > PACKET_SIZE_MAX)
+						peer[n].message[i].pos += packet_len - (2+2);
+					const uint32_t message_len = peer[n].message[i].message_len;
+					const uint32_t pos = peer[n].message[i].pos;
+					torx_unlock(n) // XXX
+					if(pos == message_len)
+					{ // complete message, complete send
+						carry_on_regardless: {}
+						if(stream)
+						{ // discard/delete message and attempt rollback
+							torx_write(n) // XXX
+							zero_i(n,i);
+							torx_unlock(n) // XXX
+						/*	printf("Checkpoint actually deleted group_peer's i\n");
+							// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to. 
+							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
+						}
+						else
+						{
+							const uint8_t stat = ENUM_MESSAGE_SENT;
+							setter(n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
+							sql_update_message(n,i);
+							print_message_cb(n,i,2);
+							if(protocol == ENUM_PROTOCOL_KILL_CODE)
+							{
+								error_simple(1,"Successfully sent a kill code. Deleting peer.");
+								const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+								takedown_onion(peer_index,1);
+								error_simple(0,"TODO should probably return here to avoid actions on deleted n.1");
+							//	disconnect_forever(peer [n]. bev_send); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
+							}
+						}
+						torx_write(n) // XXX
+						peer[n].socket_utilized[fd_type] = -1;
+						torx_unlock(n) // XXX
+						error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+						error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
+						if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+							pipe_auth_and_request_peerlist(n); // this will trigger cascade
+						else
+						{
+							const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
+							for(int next_i = i+1; next_i < message_n ; next_i++)
+							{
+								const uint8_t next_stat = getter_uint8(n,next_i,-1,-1,offsetof(struct message_list,stat));
+								const int next_p_iter = getter_int(n,next_i,-1,-1,offsetof(struct message_list,p_iter));
+								if(next_stat == ENUM_MESSAGE_FAIL && next_p_iter > -1)
+									if(!send_prep(n,next_i,next_p_iter,fd_type))
+										break; // cascading effect
+							}
+						}
+					}
+					else if(pos > message_len)
+					{ // 2024/05/04 This is happening when massive amounts of sticker requests come in on same peer. Unknown reason. Possibly caused by race on deleted (stream) i.
+						error_printf(0,"output_cb reported message pos > message_len: %u > %u. Likely will corrupt message. Packet len was %u. Coding error. Report this.",pos,message_len,packet_len);
+						breakpoint();
+						goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
+					}
+					else // incomplete message, complete send
+					{
+					//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,fd_type,packet_len,pos,message_len); // partial incomplete
+						printf("."); fflush(stdout);
+						send_prep(n,i,p_iter,fd_type); // send next packet on same fd
+					}
 				}
 			}
-			removed_something = 1;
-		} // END PACKET HANDLING SECTION
+		}
+		else
+			pthread_rwlock_unlock(&mutex_packet);
 	}
-	if(o >= SIZE_PACKET_STRC) // Overrun safety
-	{
-		error_simple(0,"packet_removal Hit SIZE_PACKET_STRC. Could not find sent packet information in struct. Cannot determine what was sent. Coding error. Report this.");
-		breakpoint();
-	}
+	if(!drained)
+		error_simple(0,"Remove packet failed to remove anything. Coding error. Report this.");
+	else if(drain_len && drained != drain_len)
+		error_printf(0,"Remove packet drained less than expected: %lu != %lu. Coding error. Report this.",drained,drain_len);
 	return drained;
 }
 
@@ -371,7 +363,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 	{ // Bytes to Read on CTRL
-		unsigned char read_buffer[4096]; // free'd // == "EVBUFFER_MAX_READ_DEFAULT" variable from libevent. could set this to 64kb to be safe, in case libevent increases one day
+		unsigned char read_buffer[PACKET_SIZE_MAX]; // free'd // == "EVBUFFER_MAX_READ_DEFAULT" variable from libevent. could set this to 64kb to be safe, in case libevent increases one day
 		int group_peer_n; // DO NOT USE except for signed group messages
 		int group_ctrl_n; // DO NOT USE except for signed group messages
 		uint8_t continued = 0;
@@ -380,29 +372,22 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		{ // not a real while loop, just eliminating goto. Do not attempt to eliminate. We use a lot of 'continue' here.
 			group_ctrl_n = group_peer_n = -1;
 			if(continued == 1 && protocol != ENUM_PROTOCOL_FILE_PIECE) // we came here from continue, so we should flush out whatever complete (but worthless) packet was in the buffer
-			{
-		//		printf("Checkpoint hit a continue, resetting buffer_len\n");
+			{ // Must not 0 on ENUM_PROTOCOL_FILE_PIECE because it doesn't use buffer/buffer_len. Zeroing will interfere with other protocols which do.
 				event_strc->buffer_len = 0;
 				torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
 			}
 			continued = 1;
-			if(evbuffer_get_length(input) < 7)
+			uint16_t trash_int = 0;
+			uint16_t minimum_length = 2+2; // packet length + protocol
+			if(evbuffer_get_length(input) < minimum_length || evbuffer_copyout(input,&trash_int,2) != 2)
 			{
 				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				return; // too short to get protocol and length
 			}
-			uint16_t cur = 0; // current position
-			uint16_t trash_int = 0;
-			if(evbuffer_copyout(input,&trash_int,2) != 2) // does NOT remove, just looks
-			{
-				error_simple(0,"Failed to read two bytes from evbuffer");
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
-				return;
-			}
 			uint16_t packet_len = be16toh(trash_int);
-			cur += 2; // 0 --> 2
+			uint16_t cur = 2; // current position, after reading packet len
 			if(evbuffer_get_length(input) < (size_t) packet_len)
-			{
+			{ // Wait for more data
 				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				return; // not enough data yet, only partial packet. Minimize CPU cycles and allocations before this. Occurs on about 20% of packets without EV_ET and 25% of packets with EV_ET.
 			}
@@ -413,51 +398,42 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				evbuffer_drain(input,(size_t)packet_len);
 				return;
 			}
-			int read_len; // TODO utilize this to ensure we don't do illegal reads (note: message types are often known-length... we should check against read_len)
-			if((read_len = evbuffer_remove(input,read_buffer,(size_t)packet_len)) != packet_len) // multiples of PACKET_SIZE_MAX, up to 4096 max, otherwise bytes get lost to the ether.
-			{
+			if(evbuffer_remove(input,read_buffer,(size_t)packet_len) != packet_len) // multiples of PACKET_SIZE_MAX, up to 4096 max, otherwise bytes get lost to the ether.
+			{ // This is a libevent bug because we already checked length is sufficient.
 				error_simple(0,"This should not occur 12873. should never occur under any circumstances. report this.");
 				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				breakpoint();
 				return;
 			}
-			if(read_len < 4)
-				goto bunk;
 			protocol = be16toh(align_uint16((void*)&read_buffer[cur]));
 			cur += 2; // 2 --> 4
-			int minimum_length = 2+2; // packet length + protocol
-			if(event_strc->buffer_len == 0 || protocol == ENUM_PROTOCOL_FILE_PIECE)
+			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+				minimum_length += 4 + 8; // truncated checksum + start
+			else if(event_strc->buffer_len == 0)
 				minimum_length += 4; // length of message or start (starting position for file piece)
-			if(read_len < minimum_length)
+			if(packet_len < minimum_length)
 			{ // TODO make protocol specific minimum lengths?
-				bunk: {}
 				error_simple(0,"Unreasonably small packet received. Peer likely buggy. Report this.");
 				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				breakpoint();
 				return;
 			}
-		//	printf("Checkpoint received packet of size: %d\n",read_len);
-		//	printf("Protocol: %u read: %d of %d\n",protocol,read_len,packet_len);
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{ // Received Message type: Raw File data // TODO we do too much processing here. this might get CPU intensive.
-			//	printf(".");
-			//	fflush(stdout);
 				int nn = n;
 				try_group_n: {}
 				const int f = set_f(nn,&read_buffer[cur],4); // find F from truncated_checksum
 				cur += 4; // 4 --> 8
 				if(f == -1)
 				{
-					const uint8_t owner_nn = getter_uint8(nn,-1,-1,-1,offsetof(struct peer_list,owner));
-					if(owner_nn != ENUM_OWNER_GROUP_CTRL)
+					if(n == nn && owner == ENUM_OWNER_GROUP_PEER)
 					{
 						const int g = set_g(n,NULL);
 						nn = getter_group_int(g,offsetof(struct group_list,n));
 						cur -= 4; // 8 --> 4 DO NOT DELETE, will break things
 						goto try_group_n;
 					}
-					error_simple(0,"Invalid raw data packet received."); // TODO consider blocking peer if this triggers. this peer is probably buggy or malicious.
-					printf("Checkpoint data owner: %d\n",owner); // should not be GROUP_CTRL. should be passing authorized_pipe_n
+					error_printf(0,"Invalid raw data packet received from owner: %u",owner); // TODO consider blocking peer if this triggers. this peer is probably buggy or malicious.
 					sodium_memzero(read_buffer,sizeof(read_buffer));
 					continue;
 				}
@@ -470,6 +446,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					fd_active = &peer[nn].file[f].fd_in_sendfd;
 				if(!*fd_active)
 				{ // Should already be open from file_accept but just in case its not
+					error_simple(0,"Re-opening file pointer which we assumed would be open.");
 					const char *file_path = peer[nn].file[f].file_path;
 					torx_unlock(nn) // XXX
 					torx_fd_lock(nn,f) // XXX
@@ -560,8 +537,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					continue;
 				}
 				torx_fd_lock(nn,f) // XXX
-				fseek(*fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here
-				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,*fd_active);
+				FILE *local = *fd_active;
+				torx_fd_unlock(nn,f) // XXX
+				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here
+				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local);
+				torx_fd_lock(nn,f) // XXX
+				*fd_active = local;
 				torx_fd_unlock(nn,f) // XXX
 			//	printf("Checkpoint wrote %lu bytes from %lu owner==%d fd_type==%d\n",wrote,packet_start,owner,fd_type);
 				section_update(nn,f,packet_start,wrote,fd_type,section,section_end,n);
@@ -570,8 +551,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
 					error_simple(-1,"Failed to write a file packet. Check disk space (this message will NOT repeat).");
 				const uint8_t file_status = getter_uint8(nn,-1,f,-1,offsetof(struct file_list,status));
+				const uint64_t transferred = calculate_transferred(nn,f);
 				if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
-					transfer_progress(nn,f,calculate_transferred(nn,f)); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+					transfer_progress(nn,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+				printf("Checkpoint bang IN%d %lu of %lu\n",fd_type,transferred,getter_uint64(n,-1,f,-1,offsetof(struct file_list,size)));
 			}
 			else
 			{
