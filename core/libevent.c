@@ -368,40 +368,38 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		int group_ctrl_n; // DO NOT USE except for signed group messages
 		uint8_t continued = 0;
 		uint16_t protocol = 0; // NOTE: Until this is set, it could be 0 or the prior packet's protocol
+		uint16_t packet_len = 0;
 		while(1)
 		{ // not a real while loop, just eliminating goto. Do not attempt to eliminate. We use a lot of 'continue' here.
 			group_ctrl_n = group_peer_n = -1;
-			if(continued == 1 && protocol != ENUM_PROTOCOL_FILE_PIECE) // we came here from continue, so we should flush out whatever complete (but worthless) packet was in the buffer
-			{ // Must not 0 on ENUM_PROTOCOL_FILE_PIECE because it doesn't use buffer/buffer_len. Zeroing will interfere with other protocols which do.
-				event_strc->buffer_len = 0;
-				torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
+			if(continued == 1)
+			{// we came here from continue, so we should flush out whatever complete (but worthless) packet was in the buffer
+				sodium_memzero(read_buffer,packet_len);
+				if(protocol != ENUM_PROTOCOL_FILE_PIECE)
+				{ // Must not 0 on ENUM_PROTOCOL_FILE_PIECE because it doesn't use buffer/buffer_len. Zeroing will interfere with other protocols which do.
+					event_strc->buffer_len = 0;
+					torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
+				}
 			}
 			continued = 1;
 			uint16_t trash_int = 0;
 			uint16_t minimum_length = 2+2; // packet length + protocol
 			if(evbuffer_get_length(input) < minimum_length || evbuffer_copyout(input,&trash_int,2) != 2)
-			{
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				return; // too short to get protocol and length
-			}
-			uint16_t packet_len = be16toh(trash_int);
+			packet_len = be16toh(trash_int);
 			uint16_t cur = 2; // current position, after reading packet len
 			if(evbuffer_get_length(input) < (size_t) packet_len)
-			{ // Wait for more data
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				return; // not enough data yet, only partial packet. Minimize CPU cycles and allocations before this. Occurs on about 20% of packets without EV_ET and 25% of packets with EV_ET.
-			}
 			if(packet_len > PACKET_SIZE_MAX)
-			{
+			{ // Sanity check
 				error_simple(0,"Major unexpected problem, either an invalid packet size or an oversized packet. Packet is being discarded."); // \npacket_len:\t%d\ttrash_int:\t%d\n",packet_len,trash_int);
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				evbuffer_drain(input,(size_t)packet_len);
 				return;
 			}
 			if(evbuffer_remove(input,read_buffer,(size_t)packet_len) != packet_len) // multiples of PACKET_SIZE_MAX, up to 4096 max, otherwise bytes get lost to the ether.
 			{ // This is a libevent bug because we already checked length is sufficient.
 				error_simple(0,"This should not occur 12873. should never occur under any circumstances. report this.");
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
+				sodium_memzero(read_buffer,packet_len); // important, could be in a continue or have something sensitive
 				breakpoint();
 				return;
 			}
@@ -414,7 +412,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			if(packet_len < minimum_length)
 			{ // TODO make protocol specific minimum lengths?
 				error_simple(0,"Unreasonably small packet received. Peer likely buggy. Report this.");
-				sodium_memzero(read_buffer,sizeof(read_buffer)); // important, could be in a continue or have something sensitive
 				breakpoint();
 				return;
 			}
@@ -434,7 +431,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						goto try_group_n;
 					}
 					error_printf(0,"Invalid raw data packet received from owner: %u",owner); // TODO consider blocking peer if this triggers. this peer is probably buggy or malicious.
-					sodium_memzero(read_buffer,sizeof(read_buffer));
 					continue;
 				}
 				umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
@@ -455,7 +451,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					if(!file_path || *fd_active == NULL)
 					{
 						error_printf(0,"Failed to open for writing: %s",file_path);
-						sodium_memzero(read_buffer,sizeof(read_buffer));
 						continue;
 					}
 					torx_fd_lock(nn,f) // XXX
@@ -465,7 +460,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					if(*fd_active == NULL)
 					{
 						error_printf(0,"Failed to open for writing2: %s",file_path);
-						sodium_memzero(read_buffer,sizeof(read_buffer));
 						continue;
 					}
 				}
@@ -503,13 +497,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				if(packet_start + packet_len-cur > section_end + 1)
 				{
 					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
-					sodium_memzero(read_buffer,sizeof(read_buffer));
 					continue;
 				}
 				else if(packet_start != section_start + section_info_current)
 				{
 					error_printf(0,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
-					sodium_memzero(read_buffer,sizeof(read_buffer));
 					continue;
 				}
 				else if(split_status == NULL || split_status_fd == NULL || split_status[section] != n || split_status_fd[section] != fd_type)
@@ -525,7 +517,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					else
 						error_printf(0,"Checkpoint improper split_status and/or split_status_fd null\n");
 				//	breakpoint();
-					sodium_memzero(read_buffer,sizeof(read_buffer));
 				/*	if(!sent_pause++)
 					{
 						unsigned char checksum[CHECKSUM_BIN_LEN];
@@ -614,7 +605,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						|| (g_invite_required == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)))
 						{
 							error_printf(0,"Unexpected protocol received on group ctrl before PIPE_AUTH: %u. Closing.",protocol);
-							sodium_memzero(read_buffer,sizeof(read_buffer));
+							sodium_memzero(read_buffer,packet_len);
 							bufferevent_free(bev); // close a connection and await a new accept_conn
 							return;
 						}
@@ -623,8 +614,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					{ // This has to be after the file struct is loaded (? what?)
 						if(event_strc->buffer_len < null_terminated_len + date_len + signature_len)
 						{
-							error_simple(0,"Unreasonably short message received from peer. Discarding entire message.");
-							printf("Checkpoint short message: %u owner: %u size: %u of reported: %u\n",protocol,owner,event_strc->buffer_len,event_strc->untrusted_message_len);
+							error_printf(0,"Unreasonably short message received from peer. Discarding entire message protocol: %u owner: %u size: %u of reported: %u",protocol,owner,event_strc->buffer_len,event_strc->untrusted_message_len);
 							continue;
 						}
 						error_printf(0,CYAN"<--IN%d %s %u"RESET,fd_type,name,event_strc->untrusted_message_len);
@@ -665,7 +655,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									{ // Fail
 										sodium_memzero(onion_group_n,sizeof(onion_group_n));
 										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH: fd_type=%d owner=%d len=%u",fd_type,owner,event_strc->buffer_len); // TODO 2024/03/23 Triggers on private group handshake. wrong fd_type could result from peer improperly queuing message?
-										sodium_memzero(read_buffer,sizeof(read_buffer));
+										sodium_memzero(read_buffer,packet_len);
 										bufferevent_free(bev); // close a connection and await a new accept_conn
 										return;
 									}
@@ -1146,13 +1136,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						event_strc->buffer_len = 0;
 					}
 					else
-					{
-					//	printf("Checkpoint partial msg RECV: %u of %u\n",event_strc->buffer_len,event_strc->untrusted_message_len); // partial incomplete
 						continued = 0; // important or oversized messages will break
-					}
 				}
 			}
-			sodium_memzero(read_buffer,sizeof(read_buffer));
 		}
 	}
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
