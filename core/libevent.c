@@ -146,7 +146,6 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					}
 					else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
 					{
-						printf("Checkpoint bang OUT%d %lu of %lu\n",fd_type,transferred,getter_uint64(n,-1,f,-1,offsetof(struct file_list,size)));
 						transfer_progress(n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
 						send_prep(n,f,p_iter,fd_type); // sends next packet on same fd, or closes it
 					}
@@ -535,7 +534,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_fd_lock(nn,f) // XXX
 				*fd_active = local;
 				torx_fd_unlock(nn,f) // XXX
-			//	printf("Checkpoint wrote %lu bytes from %lu owner==%d fd_type==%d\n",wrote,packet_start,owner,fd_type);
 				section_update(nn,f,packet_start,wrote,fd_type,section,section_end,n);
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
@@ -545,7 +543,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				const uint64_t transferred = calculate_transferred(nn,f);
 				if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
 					transfer_progress(nn,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
-				printf("Checkpoint bang IN%d %lu of %lu\n",fd_type,transferred,getter_uint64(n,-1,f,-1,offsetof(struct file_list,size)));
 			}
 			else
 			{
