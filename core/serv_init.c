@@ -311,12 +311,6 @@ static inline void *send_init(void *arg)
 	char suffixonion[56+6+1]; // Correct length to handle the .onion suffix required.
 	memcpy(suffixonion,peeronion,56);
 	snprintf(&suffixonion[56],sizeof(suffixonion)-56,".onion");
-/*	if(show_log_days > 0)
-	{
-		sql_populate_message(peer_index,show_log_days);
-		if(peer[n].message_n > 0)
-			print_log_cb(n,peer[n].message_n);
-	} */ // suspicious of redunancy
 	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 	const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
 	char privkey[88+1];

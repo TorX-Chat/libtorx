@@ -973,7 +973,7 @@ int sql_update_peer(const int n)
 }
 
 static void sql_populate_message(const int peer_index,const uint32_t days)
-{ // formerly print_log() --> print_log_cb()
+{
 	if(peer_index < 0)
 	{
 		error_simple(0,"Invalid peer_index in sql_populate_message. Bailing out. Report this.");
@@ -1147,9 +1147,7 @@ int sql_populate_peer(void)
 				if(messages_loaded == 0)
 				{
 					sql_populate_message(peer_index,local_show_log_days);
-					const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-					if(message_n > 0)
-						print_log_cb(n,message_n);
+					peer_loaded_cb(n);
 				}
 			}
 			else if((status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT))
@@ -1162,9 +1160,7 @@ int sql_populate_peer(void)
 				if(messages_loaded == 0)
 				{
 					sql_populate_message(peer_index,local_show_log_days);
-					const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-					if(message_n > 0)
-						print_log_cb(n,message_n);
+					peer_loaded_cb(n);
 					if(owner == ENUM_OWNER_GROUP_CTRL)
 					{
 						const int g = set_g(n,NULL);

@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 4 , 5 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 5 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
@@ -484,10 +484,10 @@ void login_cb(const int value)
 	if(login_registered)
 		login_registered(value);
 }
-void print_log_cb(const int n,const int actual)
+void peer_loaded_cb(const int n)
 {
-	if(print_log_registered)
-		print_log_registered(n,actual);
+	if(peer_loaded_registered)
+		peer_loaded_registered(n);
 }
 void cleanup_cb(const int sig_num)
 {
@@ -634,10 +634,10 @@ void login_setter(void (*callback)(int))
 		login_registered = callback;
 }
 
-void print_log_setter(void (*callback)(int,int))
+void peer_loaded_setter(void (*callback)(int))
 {
-	if(print_log_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
-		print_log_registered = callback;
+	if(peer_loaded_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		peer_loaded_registered = callback;
 }
 
 void cleanup_setter(void (*callback)(int))
