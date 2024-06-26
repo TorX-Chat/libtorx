@@ -35,8 +35,9 @@ void delete_log(const int n)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			int message_n = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,message_n));
-			for(int i = 0 ; i < message_n ; i++)
+			int max_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i));
+			int min_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+			for(int i = min_i ; i < max_i + 1 ; i++)
 			{
 				const int p_iter = getter_int(peer_n,i,-1,-1,offsetof(struct message_list,p_iter));
 				if(p_iter > -1) // snuff out deleted messages
@@ -54,12 +55,15 @@ void delete_log(const int n)
 					print_message_cb(peer_n,i,2); // optional
 				}
 			}
-			message_n = 0;
-			setter(peer_n,-1,-1,-1,offsetof(struct peer_list,message_n),&message_n,sizeof(message_n));
+			max_i = -1;
+			min_i = 0;
+			setter(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
+			setter(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i),&min_i,sizeof(min_i));
 		}
 	}
-	int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-	for(int i = 0 ; i < message_n ; i++) 
+	int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+	int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = min_i ; i < max_i + 1 ; i++)
 	{
 		if(owner == ENUM_OWNER_GROUP_CTRL/* || owner == ENUM_OWNER_GROUP_PEER*/)
 		{ // I think only ENUM_OWNER_GROUP_CTRL hits this, even for PMs
@@ -71,8 +75,10 @@ void delete_log(const int n)
 		torx_unlock(n) // XXX
 		print_message_cb(n,i,2); // optional
 	}
-	message_n = 0;
-	setter(n,-1,-1,-1,offsetof(struct peer_list,message_n),&message_n,sizeof(message_n));
+	max_i = -1;
+	min_i = 0;
+	setter(n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
+	setter(n,-1,-1,-1,offsetof(struct peer_list,min_i),&min_i,sizeof(min_i));
 }
 
 int message_edit(const int n,const int i,const char *message)
@@ -130,8 +136,8 @@ int message_edit(const int n,const int i,const char *message)
 						pthread_rwlock_rdlock(&mutex_expand_group);
 						const int nn = group[g].peerlist[p];
 						pthread_rwlock_unlock(&mutex_expand_group);
-						const int message_n = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,message_n));
-						for(int ii = 0 ; ii < message_n ; ii++) // should perhaps reverse this check, for greater speed?
+						const int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
+						for(int ii = 0 ; ii < max_i + 1 ; ii++) // should perhaps reverse this check, for greater speed?
 						{
 							const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
 							const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
@@ -177,8 +183,8 @@ int message_edit(const int n,const int i,const char *message)
 					pthread_rwlock_rdlock(&mutex_expand_group);
 					const int nn = group[g].peerlist[p];
 					pthread_rwlock_unlock(&mutex_expand_group);
-					int message_n = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,message_n));
-					for(int ii = 0 ; ii < message_n ; ii++) // should perhaps reverse this check, for greater speed?
+					int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
+					for(int ii = 0 ; ii < max_i + 1 ; ii++) // should perhaps reverse this check, for greater speed?
 					{
 						const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
 						const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
@@ -187,10 +193,10 @@ int message_edit(const int n,const int i,const char *message)
 							torx_write(nn) // XXX
 							zero_i(nn,ii);
 							torx_unlock(nn) // XXX
-							if(ii == message_n - 1)
+							if(ii == max_i)
 							{
-								message_n--;
-								setter(nn,-1,-1,-1,offsetof(struct peer_list,message_n),&message_n,sizeof(message_n));
+								max_i--;
+								setter(nn,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
 							}
 							break;
 						}
@@ -201,11 +207,11 @@ int message_edit(const int n,const int i,const char *message)
 		torx_write(n) // XXX
 		zero_i(n,i);
 		torx_unlock(n) // XXX
-		int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-		if(i == message_n - 1)
+		int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+		if(i == max_i)
 		{
-			message_n--;
-			setter(n,-1,-1,-1,offsetof(struct peer_list,message_n),&message_n,sizeof(message_n));
+			max_i--;
+			setter(n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
 		}
 		print_message_cb(n,i,2); // deleted just must be not 0
 	}
@@ -391,13 +397,13 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 	{ // Match outbound .message with equivalent GROUP_CTRL's .message, based on time/nstime check ( DO NOT RELY ON n+i because PMs will shift those )
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int message_n = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,message_n));
+		const int max_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,max_i));
 		while(1)
 		{ // Careful with the logic and prioritize efficiency
 			int ii = 0;
-			while(ii < message_n && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,time)) != time)
+			while(ii < max_i + 1 && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,time)) != time)
 				ii++;
-			if(ii < message_n && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,nstime)) == nstime)
+			if(ii < max_i + 1 && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,nstime)) == nstime)
 			{
 				torx_read(group_n) // XXX
 				tmp_message = peer[group_n].message[ii].message;
@@ -405,7 +411,7 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 				torx_unlock(group_n) // XXX
 				break; // winner
 			}
-			else if(ii >= message_n)
+			else if(ii > max_i)
 			{ // 2024/05/25 this probably occurs due to deleted messages?
 				error_printf(0,"Message not found. Cannot match GROUP_PEER with GROUP_CTRL message. Protocol: %u. Report this for science.",protocol);
 			//	breakpoint();
@@ -467,10 +473,10 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 			}
 		}
 	}
-	const int i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
+	const int i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
 	expand_messages_struc(n,i);
 	torx_write(n) // XXX
-	peer[n].message_n++;
+	peer[n].max_i++;
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
 	peer[n].message[i].stat = stat;

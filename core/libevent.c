@@ -197,8 +197,8 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 							pipe_auth_and_request_peerlist(n); // this will trigger cascade
 						else
 						{
-							const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-							for(int next_i = i+1; next_i < message_n ; next_i++)
+							const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+							for(int next_i = i+1; next_i < max_i + 1 ; next_i++)
 							{
 								const uint8_t next_stat = getter_uint8(n,next_i,-1,-1,offsetof(struct message_list,stat));
 								const int next_p_iter = getter_int(n,next_i,-1,-1,offsetof(struct message_list,p_iter));
@@ -754,7 +754,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									error_printf(3,"Inbound Signature: %s",signature_b64);
 									torx_free((void*)&signature_b64);
 									torx_free((void*)&prefixed_message);
-								//	peer[n].message_n--; // XXX NOTHING CAN BE DONE WITH "peer[n].message[peer[n].message_n]." AFTER THIS XXX
 									continue;
 								}
 								sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
@@ -1095,10 +1094,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							}
 							else
 								set_time(&time,&nstime);
-							const int i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,message_n)); // need to set this to prevent issues with full-duplex
+							const int i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1; // need to set this to prevent issues with full-duplex
 							expand_messages_struc(nn,i);
 							torx_write(nn) // XXX
-							peer[nn].message_n++; // NOTHING CAN BE DONE WITH "peer[n].message[peer[n].message_n]." AFTER THIS
+							peer[nn].max_i++; // NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
 							if(group_peer_n > -1 && group_peer_n == group_ctrl_n) // we received a message that we signed... it as resent to us.
 								peer[nn].message[i].stat = ENUM_MESSAGE_SENT;
 							else
@@ -1280,8 +1279,9 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	const uint8_t v3auth = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,v3auth));
 	if(v3auth && owner != ENUM_OWNER_GROUP_PEER)
 	{ // this test is necessary. if no v3auth, another similar test triggers elsewhere
-		const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-		for(int i = 0; i < message_n; i++)
+		const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+		const int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
+		for(int i = min_i; i < max_i + 1; i++)
 		{
 			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));

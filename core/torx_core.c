@@ -15,7 +15,8 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 5 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 6 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+// XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
@@ -1014,10 +1015,11 @@ void message_sort(const int g)
 	group[g].msg_count = 0;
 	pthread_rwlock_unlock(&mutex_expand_group);
 	struct msg_list *message_prior = NULL; // NOTE: this will change
-	const int group_n_message_n = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,message_n));
+	const int group_n_max_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,max_i));
 	time_t time_last = 0;
 	time_t nstime_last = 0;
-	for(int i = 0; i < group_n_message_n; i++)
+	const int group_n_min_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = group_n_min_i; i < group_n_max_i + 1; i++)
 	{ // Do outbound messages on group_n. NOTE: For speed of insertion, we assume they are sequential. If that assumption is wrong, *MUST USE* message_insert instead.
 		torx_read(group_n) // XXX
 		const uint8_t stat = peer[group_n].message[i].stat;
@@ -1047,7 +1049,7 @@ void message_sort(const int g)
 					group[g].msg_first = page;
 					pthread_rwlock_unlock(&mutex_expand_group);
 				}
-				if(i == group_n_message_n-1)
+				if(i == group_n_max_i)
 				{ // Potentiallly last (can be overruled by message_insert later)
 					pthread_rwlock_wrlock(&mutex_expand_group);
 					group[g].msg_last = page;
@@ -1073,11 +1075,12 @@ void message_sort(const int g)
 			const int peer_n = peerlist[nn];
 			torx_read(peer_n) // XXX
 			const uint8_t status = peer[peer_n].status;
-			const int message_n = peer[peer_n].message_n;
+			const int max_i = peer[peer_n].max_i;
+			const int min_i = peer[peer_n].min_i;
 			torx_unlock(peer_n) // XXX
 			if(hide_blocked_group_peer_messages_local && status == ENUM_STATUS_BLOCKED)
 				continue; // skip if appropriate
-			for(int i = 0; i < message_n; i++)
+			for(int i = min_i; i < max_i + 1; i++)
 			{ // Do inbound messages && outbound private messages on peers
 				torx_read(peer_n) // XXX
 				const int p_iter = peer[peer_n].message[i].p_iter;
@@ -1802,8 +1805,8 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 	peer[n].message[i].pos = 0;
 	peer[n].message[i].time = 0;
 	peer[n].message[i].nstime = 0;
-	if(peer[n].message_n == i + 1) // EXPERIMENTAL ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
-		peer[n].message_n--;
+	if(peer[n].max_i == i) // EXPERIMENTAL ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
+		peer[n].max_i--;
 }
 
 static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here
@@ -1833,12 +1836,13 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 void zero_n(const int n) // XXX do not put locks in here
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
 //	torx_write(n) // XXX
-	for(int i = 0 ; i < peer[n].message_n ; i++) // must go before .owner, for variations in zero_i
+	for(int i = peer[n].min_i ; i < peer[n].max_i + 1 ; i++) // must go before .owner, for variations in zero_i
 		zero_i(n,i);
 	for(int f = 0 ; !is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN) ; f++)
 		zero_f(n,f);
 //	torx_free((void*)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup.
-	peer[n].message_n = 0; // must be after zero_i
+	peer[n].max_i = -1; // must be after zero_i
+	peer[n].min_i = 0; // must be after zero_i
 	peer[n].owner = 0;
 	peer[n].status = 0;
 	memset(peer[n].privkey,'0',sizeof(peer[n].privkey)-1); // DO NOT REPLACE WITH SODIUM MEMZERO as we currently expect these to be 0'd not \0'd
@@ -1927,9 +1931,9 @@ static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
 		}
 		else
 		{
-			const int message_n = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,message_n));
-			if(message_n)
-				last_time[nn] = getter_time(nn,message_n-1,-1,-1,offsetof(struct message_list,time)); // last message time
+			const int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
+			if(max_i > -1)
+				last_time[nn] = getter_time(nn,max_i,-1,-1,offsetof(struct message_list,time)); // last message time
 			else
 				last_time[nn] = 0;
 		}
@@ -2765,7 +2769,8 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].recvfd_connected = 0;
 	peer[n].bev_send = NULL;
 	peer[n].bev_recv = NULL;
-	peer[n].message_n = 0;
+	peer[n].max_i = -1;
+	peer[n].min_i = 0;
 	sodium_memzero(peer[n].sign_sk,crypto_sign_SECRETKEYBYTES);
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
@@ -2821,11 +2826,12 @@ void re_expand_callbacks(void)
 		for(int nn = n+10; nn > n; nn--)
 		{
 			initialize_n_cb(nn);
-			const int message_n = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,message_n));
-			for(int i = 0; ; i += 10)
+			const int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
+			const int min_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,min_i));
+			for(int i = min_i; ; i += 10)
 			{
 				const int p_iter = getter_int(nn,i,-1,-1,offsetof(struct message_list,p_iter));
-				if(p_iter == -1 && i%10 == 0 && i+10 > message_n)
+				if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks i");
 				expand_messages_struc_cb(nn,i);
@@ -2908,9 +2914,9 @@ void expand_messages_struc(const int n,const int i)
 		error_simple(0,"expand_messages_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
+	const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-	if(p_iter == -1 && i%10 == 0 && i+10 > message_n)
+	if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
 	{ // Safe to cast i as size_t because > -1
 		torx_write(n) // XXX
 		peer[n].message = torx_realloc(peer[n].message, sizeof(struct message_list)*((size_t)i+1) + sizeof(struct message_list) *10);
@@ -2991,9 +2997,10 @@ int set_last_message(int *nn,const int n,const int count_back)
 	}
 	else
 	{ // Last message for non-group
-		const int message_n = getter_int(n,-1,-1,-1,offsetof(struct peer_list,message_n));
-		int i = message_n-1;
-		if(i > -1)
+		const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+		const int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
+		int i = max_i;
+		if(i > min_i - 1)
 		{ // Critical check
 		//	for(int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)); threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) == 0 ; p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)))
 		//		if(--i == -1) // do NOT modify. this should be --i, not i++

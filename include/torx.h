@@ -222,7 +222,8 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	struct bufferevent *bev_send; // currently only used in libevent.c by libevent thread because libevent is not threadsafe, even with such flags
 	struct bufferevent *bev_recv; 
 //	int8_t oldest_message; // TODO currently unused, should be used. default: 0, this should be set to permit the cycling of messages. when there are too many to fit in the struct, it should start over at 0, overwritting the oldest and moving this start point
-	int message_n; // message index number; cap: messages_max. do not depreciate this; it saves cpu cycles and helps reduce chance of race condition when concurrently sending and receiving a message on different threads.
+	int max_i; // message index number; cap: messages_max. do not depreciate this; it saves cpu cycles and helps reduce chance of race condition when concurrently sending and receiving a message on different threads.
+	int min_i;
 	struct message_list {
 		time_t time; // time since epoch in seconds
 		uint8_t stat;
