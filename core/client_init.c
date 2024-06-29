@@ -445,7 +445,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	}
 	// XXX Step 6: Iterate message
 	const int i = getter_int(target_n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-	expand_messages_struc(target_n,i);
+	expand_message_struc(target_n,i);
 	torx_write(target_n) // XXX
 	peer[target_n].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
 	peer[target_n].message[i].time = time;
@@ -480,7 +480,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			torx_unlock(target_n) // XXX
 
 			iiii = getter_int(nnnn,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-			expand_messages_struc(nnnn,iiii);
+			expand_message_struc(nnnn,iiii);
 			torx_write(nnnn) // XXX
 			peer[nnnn].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
 			peer[nnnn].message[iiii].time = local_time; // needs to be duplicate so that we can do lookup later

@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 6 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 7 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -48,8 +48,9 @@ pid_t tor_pid = -1;
 int highest_ever_o = 0;
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
-int max_group = 0; // Should not be used except to constrain expand_messages_struc
+int max_group = 0; // Should not be used except to constrain expand_message_struc
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
+time_t startup_time = 0;
 #ifdef WIN32
 HANDLE tor_fd_stdout = {0};
 const char platform_slash = '\\';
@@ -394,10 +395,10 @@ void expand_file_struc_cb(const int n,const int f)
 	if(expand_file_struc_registered)
 		expand_file_struc_registered(n,f);
 }
-void expand_messages_struc_cb(const int n,const int i)
+void expand_message_struc_cb(const int n,const int i)
 {
-	if(expand_messages_struc_registered)
-		expand_messages_struc_registered(n,i);
+	if(expand_message_struc_registered)
+		expand_message_struc_registered(n,i);
 }
 void expand_peer_struc_cb(const int n)
 {
@@ -533,10 +534,10 @@ void expand_file_struc_setter(void (*callback)(int,int))
 		expand_file_struc_registered = callback;
 }
 
-void expand_messages_struc_setter(void (*callback)(int,int))
+void expand_message_struc_setter(void (*callback)(int,int))
 {
-	if(expand_messages_struc_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
-		expand_messages_struc_registered = callback;
+	if(expand_message_struc_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		expand_message_struc_registered = callback;
 }
 
 void expand_peer_struc_setter(void (*callback)(int))
@@ -1080,7 +1081,7 @@ void message_sort(const int g)
 			torx_unlock(peer_n) // XXX
 			if(hide_blocked_group_peer_messages_local && status == ENUM_STATUS_BLOCKED)
 				continue; // skip if appropriate
-			for(int i = min_i; i < max_i + 1; i++)
+			for(int i = min_i; i <= max_i; i++)
 			{ // Do inbound messages && outbound private messages on peers
 				torx_read(peer_n) // XXX
 				const int p_iter = peer[peer_n].message[i].p_iter;
@@ -1088,7 +1089,9 @@ void message_sort(const int g)
 				torx_unlock(peer_n) // XXX
 				if(p_iter > -1)
 				{
+					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint8_t group_pm = protocols[p_iter].group_pm;
+					pthread_rwlock_unlock(&mutex_protocols);
 					if(stat == ENUM_MESSAGE_RECV || group_pm)
 						message_insert(g,peer_n,i);
 				}
@@ -2783,11 +2786,11 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	initialize_n_cb(n); // must be before initialize_i/f
 
 	peer[n].message = torx_secure_malloc(sizeof(struct message_list) *11);
-	for(int j = 0; j < 11; j++) /* Initialize iter 0-10 */
+	for(int j = 0; j < 11; j++)
 		initialize_i(n,j);
 
 	peer[n].file = torx_secure_malloc(sizeof(struct file_list) *11);
-	for(int j = 0; j < 11; j++) /* Initialize iter 0-10 */
+	for(int j = 0; j < 11; j++)
 		initialize_f(n,j);
 
 	max_peer++;
@@ -2834,7 +2837,7 @@ void re_expand_callbacks(void)
 				if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks i");
-				expand_messages_struc_cb(nn,i);
+				expand_message_struc_cb(nn,i);
 				for(int j = i+10; j > i; j--)
 					initialize_i_cb(nn,j);
 			}
@@ -2906,22 +2909,36 @@ static inline void expand_file_struc(const int n,const int f)
 	sodium_memzero(checksum,sizeof(checksum));
 }
 
-void expand_messages_struc(const int n,const int i)
+void expand_message_struc(const int n,const int i)
 { /* Expand messages struct if our current i is unused && divisible by 10 */
-//printf("Checkpoint expand_messages_struc: n=%d i=%d\n",n,i);
-	if(n < 0 || i < 0)
+//printf("Checkpoint expand_message_struc: n=%d i=%d\n",n,i);
+	if(n < 0/* || i < 0*/)
 	{
-		error_simple(0,"expand_messages_struc failed sanity check. Coding error. Report this.");
+		error_simple(0,"expand_message_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
-	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	torx_read(n) // XXX
+	const int max_i = peer[n].max_i;
+	const int min_i = peer[n].min_i;
+	const int p_iter = peer[n].message[i].p_iter;
+	torx_unlock(n) // XXX
 	if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
-	{ // Safe to cast i as size_t because > -1
+	{ // i > -1
 		torx_write(n) // XXX
-		peer[n].message = torx_realloc(peer[n].message, sizeof(struct message_list)*((size_t)i+1) + sizeof(struct message_list) *10);
-		expand_messages_struc_cb(n,i);
+		peer[n].message = torx_realloc(peer[n].message - abs(min_i), sizeof(struct message_list)*((size_t)(i+abs(min_i)+1)) + sizeof(struct message_list) *10);
+		peer[n].message = peer[n].message + abs(min_i);
+		expand_message_struc_cb(n,i);
 		for(int j = i+10; j > i; j--)
+			initialize_i(n,j);
+		torx_unlock(n) // XXX
+	}
+	else if(p_iter == -1 && i%10 == 0 && i-10 < min_i - 1)
+	{ // i < 0
+		torx_write(n) // XXX
+		peer[n].message = torx_realloc(peer[n].message - abs(min_i), sizeof(struct message_list)*((size_t)(max_i+abs(i)+1)) + sizeof(struct message_list) *10);
+		peer[n].message = peer[n].message + abs(min_i);
+		expand_message_struc_cb(n,i);
+		for(int j = i-10; j < i; j++)
 			initialize_i(n,j);
 		torx_unlock(n) // XXX
 	}
@@ -3008,7 +3025,7 @@ int set_last_message(int *nn,const int n,const int count_back)
 			while(1)
 			{ // DO NOT CHANGE ORDER OR LOGIC. The logic is complex
 				const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-				if((p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back) || --i < 0)
+				if((p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back) || --i < min_i)
 					break;
 			}
 		}
@@ -3740,6 +3757,7 @@ void initial(void)
 
 	if(peer == NULL)
 	{ // make safe for repeated calls of initial, in case UI is buggy // XXX 2024 this check is safe because variables declared in .h are zero initialized https://en.wikipedia.org/wiki/.bss
+		startup_time = time(NULL);
 		if(!file_db_plaintext || sqlite3_open(file_db_plaintext, &db_plaintext) != SQLITE_OK)
 		{
 			error_printf(0, "Cannot open database: %s", sqlite3_errmsg(db_plaintext));

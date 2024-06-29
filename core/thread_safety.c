@@ -31,7 +31,6 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		}
 		else
 			error_printf(-1,"Invalid offset passed to getter_string1: %lu. Coding error. Report this.",offset);
-
 	}
 	else if(f > -1)
 	{
@@ -57,7 +56,6 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		}
 		else
 			error_printf(-1,"Invalid offset passed to getter_string2: %lu. Coding error. Report this.",offset);
-
 	}
 	else
 	{

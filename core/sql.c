@@ -35,9 +35,9 @@ void delete_log(const int n)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			int max_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i));
-			int min_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i));
-			for(int i = min_i ; i < max_i + 1 ; i++)
+			const int max_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i));
+			const int min_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+			for(int i = min_i ; i <= max_i ; i++)
 			{
 				const int p_iter = getter_int(peer_n,i,-1,-1,offsetof(struct message_list,p_iter));
 				if(p_iter > -1) // snuff out deleted messages
@@ -55,15 +55,15 @@ void delete_log(const int n)
 					print_message_cb(peer_n,i,2); // optional
 				}
 			}
-			max_i = -1;
-			min_i = 0;
-			setter(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
-			setter(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i),&min_i,sizeof(min_i));
+			torx_write(peer_n) // XXX
+			peer[peer_n].max_i = -1;
+			peer[peer_n].min_i = 0;
+			torx_unlock(peer_n) // XXX
 		}
 	}
-	int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
-	int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
-	for(int i = min_i ; i < max_i + 1 ; i++)
+	const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = min_i ; i <= max_i ; i++)
 	{
 		if(owner == ENUM_OWNER_GROUP_CTRL/* || owner == ENUM_OWNER_GROUP_PEER*/)
 		{ // I think only ENUM_OWNER_GROUP_CTRL hits this, even for PMs
@@ -75,10 +75,10 @@ void delete_log(const int n)
 		torx_unlock(n) // XXX
 		print_message_cb(n,i,2); // optional
 	}
-	max_i = -1;
-	min_i = 0;
-	setter(n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
-	setter(n,-1,-1,-1,offsetof(struct peer_list,min_i),&min_i,sizeof(min_i));
+	torx_write(n) // XXX
+	peer[n].max_i = -1;
+	peer[n].min_i = 0;
+	torx_unlock(n) // XXX
 }
 
 int message_edit(const int n,const int i,const char *message)
@@ -137,7 +137,8 @@ int message_edit(const int n,const int i,const char *message)
 						const int nn = group[g].peerlist[p];
 						pthread_rwlock_unlock(&mutex_expand_group);
 						const int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
-						for(int ii = 0 ; ii < max_i + 1 ; ii++) // should perhaps reverse this check, for greater speed?
+						const int min_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,min_i));
+						for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 						{
 							const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
 							const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
@@ -184,7 +185,8 @@ int message_edit(const int n,const int i,const char *message)
 					const int nn = group[g].peerlist[p];
 					pthread_rwlock_unlock(&mutex_expand_group);
 					int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
-					for(int ii = 0 ; ii < max_i + 1 ; ii++) // should perhaps reverse this check, for greater speed?
+					const int min_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,min_i));
+					for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 					{
 						const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
 						const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
@@ -365,7 +367,7 @@ int sql_setting(const int force_plaintext,const int peer_index,const char *setti
 	return val;
 }
 
-static inline void load_messages_struc(const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
+static inline void load_messages_struc(const uint8_t reverse,const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
 {
 	if(n < 0 || p_iter < 0/* || !message*/)
 	{
@@ -398,25 +400,26 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 		const int max_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,max_i));
+		const int min_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+		int group_i = min_i; // must be OUTSIDE while loop to prevent infinity loop
 		while(1)
-		{ // Careful with the logic and prioritize efficiency
-			int ii = 0;
-			while(ii < max_i + 1 && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,time)) != time)
-				ii++;
-			if(ii < max_i + 1 && getter_time(group_n,ii,-1,-1,offsetof(struct message_list,nstime)) == nstime)
+		{ // Careful with the logic and prioritize efficiency. This loop is for when two messages have the same time but different nstime.
+			while(group_i <= max_i && getter_time(group_n,group_i,-1,-1,offsetof(struct message_list,time)) != time)
+				group_i++;
+			if(group_i <= max_i && getter_time(group_n,group_i,-1,-1,offsetof(struct message_list,nstime)) == nstime)
 			{
 				torx_read(group_n) // XXX
-				tmp_message = peer[group_n].message[ii].message;
-				message_len = peer[group_n].message[ii].message_len;
+				tmp_message = peer[group_n].message[group_i].message;
+				message_len = peer[group_n].message[group_i].message_len;
 				torx_unlock(group_n) // XXX
 				break; // winner
 			}
-			else if(ii > max_i)
+			else if(group_i > max_i)
 			{ // 2024/05/25 this probably occurs due to deleted messages?
 				error_printf(0,"Message not found. Cannot match GROUP_PEER with GROUP_CTRL message. Protocol: %u. Report this for science.",protocol);
-			//	breakpoint();
 				return; // fail
 			}
+			error_simple(0,"Checkpoint two messages had the same time but different nstime. Great! delete this."); // TODO when hitting this first time, if no issues, delete line
 		}
 	}
 	else // Most/All message types get here
@@ -440,14 +443,7 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 		if(file_offer)
 		{
 			if(stat == ENUM_MESSAGE_RECV)
-		/*	{ // this copy seems unnecessary, so we are using tmp_message
-				char *temp = torx_secure_malloc(message_len);
-				torx_read(n) // XXX
-				memcpy(temp,peer[n].message[i].message,message_len);
-				torx_unlock(n) // XXX	*/
 				process_file_offer_inbound(n,p_iter,tmp_message,message_len);
-			/*	torx_free((void*)&temp);
-			}*/
 			else if(message_len)  // TODO use protocol_lookup to check all protocols for minimum size
 			{
 				if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
@@ -473,10 +469,17 @@ static inline void load_messages_struc(const int n,const time_t time,const time_
 			}
 		}
 	}
-	const int i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-	expand_messages_struc(n,i);
+	int i;
+	if(reverse)
+		i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i)) - 1;
+	else
+		i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
+	expand_message_struc(n,i);
 	torx_write(n) // XXX
-	peer[n].max_i++;
+	if(reverse)
+		peer[n].min_i--;
+	else
+		peer[n].max_i++;
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
 	peer[n].message[i].stat = stat;
@@ -986,10 +989,28 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 		breakpoint();
 		return;
 	}
+	const int n = set_n(peer_index,NULL);
+	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
+	torx_read(n) // XXX
+	const int min_i = peer[n].min_i;
+	const time_t earliest_time = peer[n].message[min_i].time;
+	const time_t earliest_nstime = peer[n].message[min_i].nstime;
+	const char *tmp_message = peer[n].message[0].message;
+	torx_unlock(n) // XXX
 	sqlite3_stmt *stmt;
-	char command[256]; // size is somewhat arbitrary
-	int len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %ld;",peer_index,time(NULL)+60*60*24*days);
-	pthread_mutex_lock(&mutex_sql_messages);
+	char command[512]; // size is somewhat arbitrary
+	int len;
+	uint8_t reverse;
+	if(tmp_message == NULL)
+	{ // On startup
+		reverse = 0;
+		len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld ORDER BY time ASC,nstime ASC;",peer_index,startup_time - 60*60*24*days);
+	}
+	else
+	{ // This is for "load more" aka populate peer struct from -1--
+		reverse = 1;
+		len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time - 60*60*24*days,earliest_time,peer_index,earliest_time,earliest_nstime);
+	}
 	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
 	if(val != SQLITE_OK)
@@ -998,108 +1019,91 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 		pthread_mutex_unlock(&mutex_sql_messages);
 		return;
 	}
-	const int n = set_n(peer_index,NULL);
-	torx_read(n) // XXX
-	const char *tmp_message = peer[n].message[0].message;
-	torx_unlock(n) // XXX
-	if(tmp_message == NULL)
-	{ // start from 0++
-		while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
-		{ // 
-			const time_t time = (time_t)sqlite3_column_int(stmt, 0);
-			const time_t nstime = (time_t)sqlite3_column_int(stmt, 1);
-			const uint8_t message_stat = (uint8_t)sqlite3_column_int(stmt, 3);
-			const uint16_t protocol = (uint16_t)sqlite3_column_int(stmt, 4);
-			const char *message;
-			uint32_t message_len;
-			int column;
-			const int p_iter = protocol_lookup(protocol);
-			pthread_rwlock_rdlock(&mutex_protocols);
-			const uint8_t logged = protocols[p_iter].logged;
-			const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
-			const uint8_t file_offer = protocols[p_iter].file_offer;
-			const uint8_t file_checksum = protocols[p_iter].file_checksum;
-			pthread_rwlock_unlock(&mutex_protocols);
-			if(null_terminated_len == 0 && logged)
-				column = 6;
-			else
-				column = 5;
-			message = (const char *)sqlite3_column_text(stmt, column); // (const char *)
-			message_len = (uint32_t)sqlite3_column_bytes(stmt, column);
-			const unsigned char *signature = sqlite3_column_blob(stmt, 7); // TODO bad, fix, sqlite3_finalize issue?
-			const size_t signature_length = (size_t)sqlite3_column_bytes(stmt, 7);
-			if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
-				process_pause_cancel(n,set_f(n,(const unsigned char *)message,CHECKSUM_BIN_LEN),protocol,message_stat);
-			else if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
-			{ // handle outbound file related messages
-				int nn = n;
-				int f = -1;
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
-				if(f == -1 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
-				{ // do NOT make else if
-					const int g = set_g(n,NULL);
-					nn = getter_group_int(g,offsetof(struct group_list,n));
-					if(nn < 0)
-					{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
-						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",nn,protocol);
-						continue;
+	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
+	{
+		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
+		const time_t nstime = (time_t)sqlite3_column_int(stmt, 1);
+		const uint8_t message_stat = (uint8_t)sqlite3_column_int(stmt, 3);
+		const uint16_t protocol = (uint16_t)sqlite3_column_int(stmt, 4);
+		const char *message;
+		uint32_t message_len;
+		int column;
+		const int p_iter = protocol_lookup(protocol);
+		pthread_rwlock_rdlock(&mutex_protocols);
+		const uint8_t logged = protocols[p_iter].logged;
+		const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
+		const uint8_t file_offer = protocols[p_iter].file_offer;
+		const uint8_t file_checksum = protocols[p_iter].file_checksum;
+		pthread_rwlock_unlock(&mutex_protocols);
+		if(null_terminated_len == 0 && logged)
+			column = 6;
+		else
+			column = 5;
+		message = (const char *)sqlite3_column_text(stmt, column);
+		message_len = (uint32_t)sqlite3_column_bytes(stmt, column);
+		const unsigned char *signature = sqlite3_column_blob(stmt, 7);
+		const size_t signature_length = (size_t)sqlite3_column_bytes(stmt, 7);
+		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
+			process_pause_cancel(n,set_f(n,(const unsigned char *)message,CHECKSUM_BIN_LEN),protocol,message_stat);
+		else if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
+		{ // handle outbound file related messages
+			int nn = n;
+			int f = -1;
+			if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
+				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
+			if(f == -1 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
+			{ // do NOT make else if
+				const int g = set_g(n,NULL);
+				nn = getter_group_int(g,offsetof(struct group_list,n));
+				if(nn < 0)
+				{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
+					error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",nn,protocol);
+					continue;
+				}
+				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+			}
+			else if(f == -1)
+				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
+			{ // Retrieve file_path /* goat */
+				const size_t path_len = (size_t)sqlite3_column_bytes(stmt, 8);
+				if(path_len)
+				{ // necessary check
+					torx_write(nn) // XXX
+					peer[nn].file[f].file_path = torx_secure_malloc(path_len+1);
+					const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
+					memcpy(peer[nn].file[f].file_path,file_path,path_len);
+					peer[nn].file[f].file_path[path_len] = '\0';
+					const uint64_t *split_info = peer[nn].file[f].split_info;
+					torx_unlock(nn) // XXX
+					uint8_t status = getter_uint8(nn,-1,f,-1,offsetof(struct file_list,status));
+					if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
+					{ // This can trigger when the status == pending due to having received a pause at any time
+						status = ENUM_FILE_INBOUND_ACCEPTED;
+						setter(nn,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 					}
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
-				}
-				else if(f == -1)
-				{
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
-				}
-				if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
-				{ // Retrieve file_path /* goat */
-					const size_t path_len = (size_t)sqlite3_column_bytes(stmt, 8);
-					if(path_len)
-					{ // necessary check
-					//	printf("Checkpoint loading file path\n");
-						torx_write(nn) // XXX
-						peer[nn].file[f].file_path = torx_secure_malloc(path_len+1);
-						const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
-						memcpy(peer[nn].file[f].file_path,file_path,path_len);
-						peer[nn].file[f].file_path[path_len] = '\0';
-					//	printf("Checkpoint loading file path: %s\n",peer[nn].file[f].file_path);
-						const uint64_t *split_info = peer[nn].file[f].split_info;
-						torx_unlock(nn) // XXX
-						uint8_t status = getter_uint8(nn,-1,f,-1,offsetof(struct file_list,status));
-						if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
-						{ // This can trigger when the status == pending due to having received a pause at any time
-						//	printf("Checkpoint prior status: %d\n",status);
-							status = ENUM_FILE_INBOUND_ACCEPTED;
-							setter(nn,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-						}
-						else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-						{
-							initialize_split_info(nn,f);
-							torx_read(nn) // XXX
-							if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
-							{ // 2024/05/12 Setting transferred amount according to file size
-								torx_unlock(nn) // XXX
-								const uint64_t size_on_disk = get_file_size(file_path);
-								torx_write(nn) // XXX
-								peer[nn].file[f].split_info[0] = size_on_disk;
-								if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
-									peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
-							}
+					else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+					{
+						initialize_split_info(nn,f);
+						torx_read(nn) // XXX
+						if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
+						{ // 2024/05/12 Setting transferred amount according to file size
 							torx_unlock(nn) // XXX
+							const uint64_t size_on_disk = get_file_size(file_path);
+							torx_write(nn) // XXX
+							peer[nn].file[f].split_info[0] = size_on_disk;
+							if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
+								peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
 						}
+						torx_unlock(nn) // XXX
 					}
 				}
 			}
-			load_messages_struc(n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
 		}
-	}
-	else
-	{
-		error_simple(0," Called sql_populate_message twice on the same peer. Report this.");
-		breakpoint();
+		load_messages_struc(reverse,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
 	}
 	if(val != SQLITE_DONE)
-		error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
+		error_printf(0, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	pthread_mutex_unlock(&mutex_sql_messages);
 }
