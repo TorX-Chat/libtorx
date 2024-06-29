@@ -419,6 +419,7 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 				error_printf(0,"Message not found. Cannot match GROUP_PEER with GROUP_CTRL message. Protocol: %u. Report this for science.",protocol);
 				return; // fail
 			}
+			group_i++;
 			error_simple(0,"Checkpoint two messages had the same time but different nstime. Great! delete this."); // TODO when hitting this first time, if no issues, delete line
 		}
 	}
