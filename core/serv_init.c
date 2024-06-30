@@ -12,6 +12,12 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	const char *name = protocols[p_iter].name;
 	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
+	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	if(owner != ENUM_OWNER_GROUP_PEER && owner != ENUM_OWNER_CTRL)
+	{
+		error_printf(0,"Questionable action in send_prep: %u Coding error. Report this.",owner);
+		return -1;
+	}
 	uint64_t start = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		f = f_i; // f is passed as f_i
@@ -145,7 +151,6 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		}
 		else
 		{ // only i is initialized
-			const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
 			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;

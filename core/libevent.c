@@ -1277,7 +1277,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	peer[n].bev_recv = bev_recv;
 	torx_unlock(n) // XXX
 	const uint8_t v3auth = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,v3auth));
-	if(v3auth && owner != ENUM_OWNER_GROUP_PEER)
+	if(v3auth && owner == ENUM_OWNER_CTRL)
 	{ // this test is necessary. if no v3auth, another similar test triggers elsewhere
 		const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
 		const int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));

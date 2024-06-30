@@ -420,7 +420,6 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 				return; // fail
 			}
 			group_i++;
-			error_simple(0,"Checkpoint two messages had the same time but different nstime. Great! delete this."); // TODO when hitting this first time, if no issues, delete line
 		}
 	}
 	else // Most/All message types get here
