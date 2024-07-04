@@ -716,6 +716,7 @@ int sql_insert_message(const int n,const int i);
 int sql_update_message(const int n,const int i);
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint8_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);
 int sql_update_peer(const int n);
+int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages);
 int sql_populate_peer(void);
 unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query);
 void sql_populate_setting(const int force_plaintext);

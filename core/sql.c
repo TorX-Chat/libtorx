@@ -23,9 +23,9 @@ Legal:
 */
 void delete_log(const int n)
 { // WARNING: If called on GROUP_CTRL, THIS WILL ALSO DELETE PRIVATE MESSAGES
-	const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	sql_delete_history(peer_index); // TODO must go first. consider verifying return before deleting in memory
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Handle GROUP_PEER ; not tested fully. Must go first before GROUP_CTRL
 		const int g = set_g(n,NULL);
@@ -35,8 +35,8 @@ void delete_log(const int n)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			const int max_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,max_i));
-			const int min_i = getter_int(peer_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+			const int max_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+			const int min_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 			for(int i = min_i ; i <= max_i ; i++)
 			{
 				const int p_iter = getter_int(peer_n,i,-1,-1,offsetof(struct message_list,p_iter));
@@ -61,8 +61,8 @@ void delete_log(const int n)
 			torx_unlock(peer_n) // XXX
 		}
 	}
-	const int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
-	const int min_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i));
+	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i ; i <= max_i ; i++)
 	{
 		if(owner == ENUM_OWNER_GROUP_CTRL/* || owner == ENUM_OWNER_GROUP_PEER*/)
@@ -94,7 +94,7 @@ int message_edit(const int n,const int i,const char *message)
 	const int protocol = protocols[p_iter].protocol;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	pthread_rwlock_unlock(&mutex_protocols);
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	if(message)
@@ -116,7 +116,7 @@ int message_edit(const int n,const int i,const char *message)
 		else if(signature_len)
 		{
 			unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-			getter_array(&sign_sk,sizeof(sign_sk),n,-1,-1,-1,offsetof(struct peer_list,sign_sk));
+			getter_array(&sign_sk,sizeof(sign_sk),n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
 			uint32_t signed_len = 0;
 			char *message_new = message_sign(&signed_len,sign_sk,time,nstime,p_iter,message,base_message_len);
 			sodium_memzero(sign_sk,sizeof(sign_sk));
@@ -136,8 +136,8 @@ int message_edit(const int n,const int i,const char *message)
 						pthread_rwlock_rdlock(&mutex_expand_group);
 						const int nn = group[g].peerlist[p];
 						pthread_rwlock_unlock(&mutex_expand_group);
-						const int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
-						const int min_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,min_i));
+						const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+						const int min_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 						for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 						{
 							const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
@@ -170,7 +170,7 @@ int message_edit(const int n,const int i,const char *message)
 	}
 	else
 	{ // Delete individual message
-		const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_delete_message(peer_index,time,nstime); // TODO must go first. consider verifying return before deleting in memory
 		if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		{
@@ -184,8 +184,8 @@ int message_edit(const int n,const int i,const char *message)
 					pthread_rwlock_rdlock(&mutex_expand_group);
 					const int nn = group[g].peerlist[p];
 					pthread_rwlock_unlock(&mutex_expand_group);
-					int max_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,max_i));
-					const int min_i = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,min_i));
+					int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+					const int min_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 					for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 					{
 						const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
@@ -198,7 +198,7 @@ int message_edit(const int n,const int i,const char *message)
 							if(ii == max_i)
 							{
 								max_i--;
-								setter(nn,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
+								setter(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
 							}
 							break;
 						}
@@ -209,11 +209,11 @@ int message_edit(const int n,const int i,const char *message)
 		torx_write(n) // XXX
 		zero_i(n,i);
 		torx_unlock(n) // XXX
-		int max_i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i));
+		int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 		if(i == max_i)
 		{
 			max_i--;
-			setter(n,-1,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
+			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
 		}
 		print_message_cb(n,i,2); // deleted just must be not 0
 	}
@@ -367,7 +367,7 @@ int sql_setting(const int force_plaintext,const int peer_index,const char *setti
 	return val;
 }
 
-static inline void load_messages_struc(const uint8_t reverse,const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
+static inline int load_messages_struc(const uint8_t reverse,const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
 {
 	if(n < 0 || p_iter < 0/* || !message*/)
 	{
@@ -382,9 +382,9 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d has message",n,p_iter);
 		else // TODO currently triggers on all non-PM GROUP_PEER messages
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %u, nstime: %u, base_message_len: %u, signature_length: %lu, protocol: %s",n,p_iter,time,nstime,base_message_len,signature_length,name);
-		return;
+		return -1;
 	}
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
@@ -399,8 +399,8 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 	{ // Match outbound .message with equivalent GROUP_CTRL's .message, based on time/nstime check ( DO NOT RELY ON n+i because PMs will shift those )
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int max_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,max_i));
-		const int min_i = getter_int(group_n,-1,-1,-1,offsetof(struct peer_list,min_i));
+		const int max_i = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+		const int min_i = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 		int group_i = min_i; // must be OUTSIDE while loop to prevent infinity loop
 		while(1)
 		{ // Careful with the logic and prioritize efficiency. This loop is for when two messages have the same time but different nstime.
@@ -417,7 +417,7 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 			else if(group_i > max_i)
 			{ // 2024/05/25 this probably occurs due to deleted messages?
 				error_printf(0,"Message not found. Cannot match GROUP_PEER with GROUP_CTRL message. Protocol: %u. Report this for science.",protocol);
-				return; // fail
+				return -1; // fail
 			}
 			group_i++;
 		}
@@ -471,9 +471,9 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 	}
 	int i;
 	if(reverse)
-		i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,min_i)) - 1;
+		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i)) - 1;
 	else
-		i = getter_int(n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
+		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
 	expand_message_struc(n,i);
 	torx_write(n) // XXX
 	if(reverse)
@@ -487,6 +487,7 @@ static inline void load_messages_struc(const uint8_t reverse,const int n,const t
 	peer[n].message[i].message = tmp_message;
 	peer[n].message[i].message_len = message_len;
 	torx_unlock(n) // XXX
+	return 0;
 }
 
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint8_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
@@ -605,8 +606,8 @@ void load_onion(const int n)
 		breakpoint();
 		return;
 	}
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	if(status == ENUM_STATUS_PENDING || status == ENUM_STATUS_BLOCKED)
 	{
 		error_simple(3,"Not loading a pending or blocked onion.");
@@ -619,14 +620,14 @@ void load_onion(const int n)
 		vport = CTRL_VPORT;
 		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 	//	printf("Checkpoint load_onion owner: %u v3: %d\n",owner,local_v3auth_enabled);
-		const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
+		const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		if(local_v3auth_enabled == 1 && peerversion > 1)
 		{ // V3auth
 			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES] = {0}; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
 			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
 			char peeronion_uppercase[56+1] = {0};
 			baseencode_error_t err = {0}; // for base32
-			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 			xstrupr(peeronion_uppercase);
 			unsigned char *p1;
 			memcpy(ed25519_pk,p1=base32_decode(peeronion_uppercase,56,&err),sizeof(ed25519_pk));
@@ -645,7 +646,7 @@ void load_onion(const int n)
 			}
 			sodium_memzero(x25519_pk,sizeof(x25519_pk));
 			const uint8_t v3auth = 1;
-			setter(n,-1,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
+			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
 			error_printf(3,"Incoming Auth: %s",incomingauthkey);
 		}
 		else if(!local_v3auth_enabled)
@@ -662,13 +663,13 @@ void load_onion(const int n)
 		error_simple(0,"Load_onion attempted to load a PEER. This is wrong, as PEER is not a listening server.");
 		return;
 	}
-	setter(n,-1,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
+	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 	const uint16_t tport = randport(0);
-	setter(n,-1,-1,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
+	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
 	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		const uint8_t v3auth = 1; // XXX 2023/11/13 HIGHLY experimental. It isn't really v3auth but we use ENUM_PROTOCOL_PIPE_AUTH to simulate
-		setter(n,-1,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
+		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
 	}
 	if(owner == ENUM_OWNER_GROUP_PEER)
 		load_onion_events(n); // no recv on this to setup, so no need to tor_call
@@ -678,7 +679,7 @@ void load_onion(const int n)
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 			max_streams = MAX_STREAMS_GROUP;
 		char privkey[88+1];
-		getter_array(&privkey,sizeof(privkey),n,-1,-1,-1,offsetof(struct peer_list,privkey));
+		getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 		char *apibuffer = v3auth_ll(privkey,vport,tport,max_streams,incomingauthkey,NULL);
 		sodium_memzero(privkey,sizeof(privkey));
 		sodium_memzero(incomingauthkey,sizeof(incomingauthkey));
@@ -788,7 +789,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	pthread_rwlock_unlock(&mutex_protocols);
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
@@ -802,11 +803,11 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	else if(null_terminated_len == 0 && tmp_message)
 	{ // Prevent update_blob from triggering on outbound group_public messages, even if binary only
 		val = sql_exec(&db_messages,command,NULL,0);
-		const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,tmp_message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
 	}
 	else if(null_terminated_len && tmp_message)
-		val = sql_exec(&db_messages,command,tmp_message,strlen(tmp_message));
+		val = sql_exec(&db_messages,command,tmp_message,strlen(tmp_message)); // TODO 2024/07/03 segfaulted on strlen heres
 	else
 		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,tmp_message ? 1 : 0);
 	return val;
@@ -821,12 +822,6 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	{ /* save file_path as extraneous */ /* goat */ \
 		int nn = n; \
 		int f = set_f(nn,(const unsigned char *)tmp_message,CHECKSUM_BIN_LEN-1); \
-		if(f == -1) \
-		{ /* not pm/p2p, must be group transfer */ \
-			const int g = set_g(n,NULL); \
-			nn = getter_group_int(g,offsetof(struct group_list,n)); \
-			f = set_f(nn,(const unsigned char *)tmp_message,CHECKSUM_BIN_LEN); \
-		} \
 		if(f > -1) \
 		{ \
 			torx_read(nn) \
@@ -835,11 +830,17 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 			if(file_path) /* not always true */ \
 				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path)); \
 		} \
+		else \
+		{ /* not pm/p2p, must be group transfer */ \
+			const int g = set_g(n,NULL); \
+			nn = getter_group_int(g,offsetof(struct group_list,n)); \
+			f = set_f(nn,(const unsigned char *)tmp_message,CHECKSUM_BIN_LEN); \
+		} \
 	}
 
 static int log_check(const int n,const uint8_t group_pm)
 {
-	const int8_t log_messages = getter_int8(n,-1,-1,-1,offsetof(struct peer_list,log_messages));
+	const int8_t log_messages = getter_int8(n,INT_MIN,-1,-1,offsetof(struct peer_list,log_messages));
 	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
 	if(!(log_messages != -1 && (global > 0 || log_messages > 0)))
 		return 0; // do not log these
@@ -847,7 +848,7 @@ static int log_check(const int n,const uint8_t group_pm)
 	{
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int8_t group_log_messages = getter_int8(group_n,-1,-1,-1,offsetof(struct peer_list,log_messages));
+		const int8_t group_log_messages = getter_int8(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,log_messages));
 		if(!(group_log_messages != -1 && (global > 0 || group_log_messages > 0)))
 			return 0;
 	}
@@ -883,8 +884,8 @@ int sql_insert_message(const int n,const int i)
 		return -1;
 	}
 	int val;
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-	const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
@@ -925,7 +926,7 @@ int sql_update_message(const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(logged == 0 || !log_check(n,group_pm))
 		return 0; // do not log these
-	const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
@@ -943,35 +944,35 @@ int sql_update_message(const int n,const int i)
 
 int sql_update_peer(const int n)
 { // XXX WARNING: passing sign_sk or peer_sign_pk as NULL will render them null in the database.
-	const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	if(peer_index < 0)
 	{
 		error_simple(0,"Negative peer_index exists in peer struct. Bailing out from sql_update_peer. Report this.");
 		breakpoint();
 		return -1;
 	}
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
-	const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 	char privkey[88+1];
-	getter_array(&privkey,sizeof(privkey),n,-1,-1,-1,offsetof(struct peer_list,privkey));
+	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 	char peeronion[56+1];
-	getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	char command[1024]; // size is arbitrary
 	snprintf(command,sizeof(command),"UPDATE OR ABORT peer SET (owner,status,peerversion,privkey,peeronion,peernick) = (%u,%u,%u,'%s','%s',?) WHERE peer_index = %d;",owner,status,peerversion,privkey,peeronion,peer_index);
 	sodium_memzero(privkey,sizeof(privkey));
 	sodium_memzero(peeronion,sizeof(peeronion));
 	char peernick[56+1];
-	getter_array(&peernick,sizeof(peernick),n,-1,-1,-1,offsetof(struct peer_list,peernick));
+	getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
 	const int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
 	sodium_memzero(peernick,sizeof(peernick));
 	sodium_memzero(command,sizeof(command));
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-	getter_array(&sign_sk,sizeof(sign_sk),n,-1,-1,-1,offsetof(struct peer_list,sign_sk));
+	getter_array(&sign_sk,sizeof(sign_sk),n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-	getter_array(&peer_sign_pk,sizeof(peer_sign_pk),n,-1,-1,-1,offsetof(struct peer_list,peer_sign_pk));
+	getter_array(&peer_sign_pk,sizeof(peer_sign_pk),n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
 	unsigned char invitation[crypto_sign_BYTES];
-	getter_array(&invitation,sizeof(invitation),n,-1,-1,-1,offsetof(struct peer_list,invitation));
+	getter_array(&invitation,sizeof(invitation),n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
 	sql_update_blob(&db_encrypted,"peer","sign_sk",peer_index,0,0,sign_sk,crypto_sign_SECRETKEYBYTES);
 	sql_update_blob(&db_encrypted,"peer","peer_sign_pk",peer_index,0,0,peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sql_update_blob(&db_encrypted,"peer","invitation",peer_index,0,0,invitation,crypto_sign_BYTES);
@@ -981,13 +982,13 @@ int sql_update_peer(const int n)
 	return val;
 }
 
-static void sql_populate_message(const int peer_index,const uint32_t days)
-{
-	if(peer_index < 0)
+int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages)
+{ // WARNING: Calling by messages is a work-in-progress for groups
+	if(peer_index < 0 || (days && messages) || (!days && !messages))
 	{
-		error_simple(0,"Invalid peer_index in sql_populate_message. Bailing out. Report this.");
+		error_simple(0,"Sanity check fail in sql_populate_message. Bailing out. Report this.");
 		breakpoint();
-		return;
+		return 0;
 	}
 	const int n = set_n(peer_index,NULL);
 	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
@@ -1004,12 +1005,18 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 	if(tmp_message == NULL)
 	{ // On startup
 		reverse = 0;
-		len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld ORDER BY time ASC,nstime ASC;",peer_index,startup_time - 60*60*24*days);
+		if(days)
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld ORDER BY time ASC,nstime ASC;",peer_index,startup_time - 60*60*24*days);
+		if(messages)
+			len = snprintf(command,sizeof(command),"SELECT *FROM ( SELECT *FROM message WHERE peer_index = %d ORDER BY time DESC,nstime DESC LIMIT %u ) ORDER BY time ASC,nstime ASC;",peer_index,messages);
 	}
 	else
 	{ // This is for "load more" aka populate peer struct from -1--
 		reverse = 1;
-		len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time - 60*60*24*days,earliest_time,peer_index,earliest_time,earliest_nstime);
+		if(days)
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time - 60*60*24*days,earliest_time,peer_index,earliest_time,earliest_nstime);
+		if(messages)
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time,peer_index,earliest_time,earliest_nstime);
 	}
 	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
@@ -1017,8 +1024,9 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 	{
 		error_printf(0, "Can't prepare message statement: %s. Not loading messages. Report this.",sqlite3_errmsg(db_messages));
 		pthread_mutex_unlock(&mutex_sql_messages);
-		return;
+		return 0;
 	}
+	uint32_t loaded = 0; // start at 0
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
 	{
 		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
@@ -1051,7 +1059,7 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 			int f = -1;
 			if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
 				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
-			if(f == -1 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
+			if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
 			{ // do NOT make else if
 				const int g = set_g(n,NULL);
 				nn = getter_group_int(g,offsetof(struct group_list,n));
@@ -1062,7 +1070,7 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 				}
 				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			}
-			else if(f == -1)
+			else if(f < 0)
 				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
 			{ // Retrieve file_path /* goat */
@@ -1076,11 +1084,11 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 					peer[nn].file[f].file_path[path_len] = '\0';
 					const uint64_t *split_info = peer[nn].file[f].split_info;
 					torx_unlock(nn) // XXX
-					uint8_t status = getter_uint8(nn,-1,f,-1,offsetof(struct file_list,status));
+					uint8_t status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
 					if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
 					{ // This can trigger when the status == pending due to having received a pause at any time
 						status = ENUM_FILE_INBOUND_ACCEPTED;
-						setter(nn,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+						setter(nn,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 					}
 					else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 					{
@@ -1100,12 +1108,16 @@ static void sql_populate_message(const int peer_index,const uint32_t days)
 				}
 			}
 		}
-		load_messages_struc(reverse,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
+		if(!load_messages_struc(reverse,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length))
+			loaded++;
+	//	if(messages && messages == loaded)
+	//		break;
 	}
-	if(val != SQLITE_DONE)
+	if(val != SQLITE_DONE/* && val != SQLITE_ROW*/) // SQLITE_ROW can occur when we broke the loop above because message arg was passed
 		error_printf(0, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	pthread_mutex_unlock(&mutex_sql_messages);
+	return (int)loaded;
 }
 
 int sql_populate_peer(void)
@@ -1137,7 +1149,7 @@ int sql_populate_peer(void)
 		const unsigned char *invitation = sqlite3_column_blob(stmt, 9); // TODO should probably check length to prevent potential overflow read in case of error
 		const int expiration = sqlite3_column_int(stmt, 10);
 		int n = -1;
-		const uint32_t local_show_log_days = threadsafe_read_uint32(&mutex_global_variable,&show_log_days);
+		const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 		if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		{
 			if((owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT) && expiration > 0 && time(NULL) > expiration)
@@ -1156,7 +1168,7 @@ int sql_populate_peer(void)
 					continue;
 				if(messages_loaded == 0)
 				{
-					sql_populate_message(peer_index,local_show_log_days);
+					sql_populate_message(peer_index,0,local_show_log_messages);
 					peer_loaded_cb(n);
 				}
 			}
@@ -1169,7 +1181,7 @@ int sql_populate_peer(void)
 				load_onion(n);
 				if(messages_loaded == 0)
 				{
-					sql_populate_message(peer_index,local_show_log_days);
+					sql_populate_message(peer_index,0,local_show_log_messages);
 					peer_loaded_cb(n);
 					if(owner == ENUM_OWNER_GROUP_CTRL)
 					{
@@ -1442,8 +1454,6 @@ void sql_populate_setting(const int force_plaintext)
 					global_threads = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"global_log_messages",19))
 					global_log_messages = (uint8_t)atoi(setting_value); // SIGNED
-				else if(!strncmp(setting_name,"show_log_days",13))
-					show_log_days = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"sing_expiration_days",20))
 					sing_expiration_days = (uint32_t)atoi(setting_value);
 				else if(!strncmp(setting_name,"mult_expiration_days",20))
@@ -1465,14 +1475,14 @@ void sql_populate_setting(const int force_plaintext)
 					sanity_check
 					const int n = set_n(peer_index,NULL);
 					const time_t last_seen = atoi(setting_value);
-					setter(n,-1,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
+					setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 				}
 				else if(!strncmp(setting_name,"logging",7))
 				{
 					sanity_check
 					const int n = set_n(peer_index,NULL);
 					const int8_t log_messages = (int8_t)atoi(setting_value);
-					setter(n,-1,-1,-1,offsetof(struct peer_list,log_messages),&log_messages,sizeof(log_messages));
+					setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,log_messages),&log_messages,sizeof(log_messages));
 				}
 				else if(!strncmp(setting_name,"group_id",8))
 				{ // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
@@ -1486,7 +1496,7 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(id,setting_value,sizeof(id));
 					const int ctrl_n = set_n(peer_index,NULL);
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,-1,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
 			/*int g = */	set_g(ctrl_n,id); // just for reserving
 					sodium_memzero(id,GROUP_ID_SIZE);
 				}
@@ -1495,7 +1505,7 @@ void sql_populate_setting(const int force_plaintext)
 					sanity_check
 					const int ctrl_n = set_n(peer_index,NULL);
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,-1,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
 					const int g = set_g(ctrl_n,NULL); // reserved
 					const uint8_t invite_required = (uint8_t)atoi(setting_value);
 					setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
@@ -1505,7 +1515,7 @@ void sql_populate_setting(const int force_plaintext)
 					sanity_check
 					const int ctrl_n = set_n(peer_index,NULL); // this is group_n's peer_index, not group_peer's
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,-1,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
 					const int g = set_g(ctrl_n,NULL); // reserved
 					const int stripped_peer_index = atoi(&setting_name[10]);
 					const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
@@ -1581,7 +1591,7 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 	}
 	const int n = set_n(peer_index,NULL);
 	char command[256]; // size is somewhat arbitrary
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER messages
 		const int g = set_g(n,NULL);
@@ -1591,7 +1601,7 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int specific_peer = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			const int peer_index_other = getter_int(specific_peer,-1,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %ld AND nstime = %ld;",peer_index_other,time,nstime);
 			sql_exec(&db_messages,command,NULL,0);
 		}
@@ -1611,7 +1621,7 @@ int sql_delete_history(const int peer_index)
 	}
 	const int n = set_n(peer_index,NULL);
 	char command[256]; // size is somewhat arbitrary
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER message history first
 		const int g = set_g(n,NULL);
@@ -1621,7 +1631,7 @@ int sql_delete_history(const int peer_index)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int specific_peer = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			const int peer_index_other = getter_int(specific_peer,-1,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index_other);
 			sql_exec(&db_messages,command,NULL,0);
 		}

@@ -1,9 +1,9 @@
 
 int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send
-	if(n < 0 || f_i < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
+	if(n < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
 	{
-		error_printf(0,"Sanity check failure in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
+		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
 		return -1;
 	}
 	int f,i; // DO NOT INITIALIZE, we want the warnings... but our compiler is not playing nice so we have to
@@ -12,7 +12,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	const char *name = protocols[p_iter].name;
 	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_GROUP_PEER && owner != ENUM_OWNER_CTRL)
 	{
 		error_printf(0,"Questionable action in send_prep: %u Coding error. Report this.",owner);
@@ -20,7 +20,14 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	}
 	uint64_t start = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+	{
 		f = f_i; // f is passed as f_i
+		if(f < 0)
+		{
+			error_printf(0,"Sanity check failure 2 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
+			return -1;
+		}
+	}
 	else
 	{ // i is passed as f_i
 		i = f_i;
@@ -73,7 +80,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	}
 	uint8_t connected;
 	FILE **fd_active = {0};
-	const uint8_t status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	torx_read(n) // XXX
 	if(fd_type == 0 && peer[n].bev_recv)
 	{
@@ -142,7 +149,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			{ // TODO entire block is legacy, no longer triggers because of refinements. File completion is in output_cb. 
 				error_simple(0,"File completed in a legacy manner. Coding error or IO error. Report this."); // could be falsely triggered by file shrinkage
 				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-				setter(n,-1,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
+				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
 				close_sockets(n,f,*fd_active)
 				transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 				sodium_memzero(send_buffer,(size_t)packet_len);
@@ -309,17 +316,17 @@ static inline void *send_init(void *arg)
 	pusher(zero_pthread,(void*)&peer[n].thrd_send)
 	torx_unlock(n) // XXX
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	char peeronion[56+1];
-	getter_array(&peeronion,sizeof(peeronion),n,-1,-1,-1,offsetof(struct peer_list,peeronion));
+	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	uint8_t status; // must constantly re-check
 	char suffixonion[56+6+1]; // Correct length to handle the .onion suffix required.
 	memcpy(suffixonion,peeronion,56);
 	snprintf(&suffixonion[56],sizeof(suffixonion)-56,".onion");
 	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-	const uint8_t peerversion = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,peerversion));
+	const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 	char privkey[88+1];
-	getter_array(&privkey,sizeof(privkey),n,-1,-1,-1,offsetof(struct peer_list,privkey));
+	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 	if(local_v3auth_enabled == 1 && peerversion > 1 && owner == ENUM_OWNER_CTRL && outgoing_auth_x25519(peeronion,privkey))
 	{
 		sodium_memzero(peeronion,sizeof(peeronion));
@@ -330,15 +337,15 @@ static inline void *send_init(void *arg)
 	}
 	sodium_memzero(peeronion,sizeof(peeronion));
 	sodium_memzero(privkey,sizeof(privkey));
-	const uint16_t vport = getter_uint16(n,-1,-1,-1,offsetof(struct peer_list,vport));
+	const uint16_t vport = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport));
 	char port_string[21];
 	snprintf(port_string,sizeof(port_string),"%u",vport);
-	while((status = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,status))) == ENUM_STATUS_FRIEND)
+	while((status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status))) == ENUM_STATUS_FRIEND)
 	{
 		const int socket = socks_connect(suffixonion,port_string);
 		if(socket < 1)
 		{ // this causes blocking only until connected TODO endless segfaults here for unexplained reasons
-			const uint8_t sendfd_connected = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 			if(sendfd_connected)
 			{ // TODO this occured on 2024/05/18 when doing repeated blocks/unblocks of online peer. unsure of implications. lots of warnings happened after.
 				error_simple(0,"Nulling a .bev_send here possibly without doing any necessary free in libevent. Report this!!!");
@@ -351,10 +358,10 @@ static inline void *send_init(void *arg)
 		{
 			DisableNagle(socket);
 			evutil_make_socket_nonblocking(socket); // for libevent
-			setter(n,-1,-1,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
+			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
 			error_simple(1,"Connected to existing peer.");
 			const uint8_t sendfd_connected = 1;
-			setter(n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
+			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 			event_strc->sockfd = socket;
 			event_strc->fd_type = 1; // sendfd
@@ -377,7 +384,7 @@ static inline void *send_init(void *arg)
 
 void load_onion_events(const int n)
 { /* Passable to tor_call as callback after load_onion */ // TODO should check if this n is still valid and not deleted (or blocked?)
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 	{
 		torx_read(n) // XXX
@@ -391,7 +398,7 @@ void load_onion_events(const int n)
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Open .recvfd for a SING/MULT/CTRL/GROUP_CTRL onion, then call torx_events() on it
 		struct sockaddr_in serv_addr = {0};//, cli_addr;
-		const uint16_t tport = getter_uint16(n,-1,-1,-1,offsetof(struct peer_list,tport));
+		const uint16_t tport = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,tport));
 		if(tport < 1025)
 		{
 			error_simple(0,"No valid port provided.");
@@ -415,7 +422,7 @@ void load_onion_events(const int n)
 				error_simple(0,"Unlikely socket failed to close error.6");
 			return;
 		}
-		setter(n,-1,-1,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
+		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
 		struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 		event_strc->sockfd = sock;
 		event_strc->fd_type = 0; // recvfd

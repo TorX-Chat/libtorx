@@ -7,7 +7,7 @@ void breakpoint(void)
 
 char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)
 { // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void*)&string);
-	if(n < 0 || !peer)
+	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
 		error_printf(0,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
 		breakpoint();
@@ -18,7 +18,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 	uint32_t len = 0;
 	char *string = NULL;
 	torx_read(n) // XXX
-	if(i > -1)
+	if(i > INT_MIN)
 	{
 		if(offset == offsetof(struct message_list,message))
 		{
@@ -388,7 +388,7 @@ size_t getter_offset(const char *parent,const char *member)
 char getter_byte(const int n,const int i,const int f,const int o,const size_t offset)
 { // WARNING: This gets a single byte, without doing any sanity checks that would occur on an integer. I hate this function, but it serves a purpose.
 	char value;
-	if(n < 0)
+	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0))
 	{
 		error_printf(0,"getter byte sanity check failed at offset: %lu",offset);
 		breakpoint();
@@ -397,7 +397,7 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 	else if(!peer)
 		return 0;
 	torx_read(n)
-	if(i > -1)
+	if(i > INT_MIN)
 		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));
 	else if(f > -1 && o > -1)
 		memcpy(&value,(char*)&peer[n].file[f].offer[o] + offset,sizeof(value));
@@ -420,7 +420,7 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 		error_printf(-1,"Illegal getter return value. Coding error. Report this.2 %lu != %lu",offsets_struc[iter].size,sizeof(value));
 
 #define return_getter_value \
-	if(n < 0)\
+	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0))\
 	{\
 		error_printf(0,"getter sanity check failed at offset: %lu",offset);\
 		breakpoint();\
@@ -428,7 +428,7 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 	}\
 	else if(!peer)\
 		return 0;\
-	if(i > -1)\
+	if(i > INT_MIN)\
 	{\
 		getter_sanity_check(offsets_message)\
 		torx_read(n)\
@@ -467,7 +467,7 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const int o,const size_t offset)
 { // Be careful on size. TODO Could actually use this on integers, not just arrays.
-	if(n < 0 || size < 1 || array == NULL)
+	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0) || size < 1 || array == NULL)
 	{
 		error_printf(0,"getter_array sanity check failed at offset: %lu",offset);
 		if(!array)
@@ -482,7 +482,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	}
 	else if(!peer) // can occur during shutdown
 		return;
-	if(i > -1)
+	if(i > INT_MIN)
 	{
 		getter_array_sanity_check(offsets_message)
 		torx_read(n)
@@ -591,7 +591,7 @@ void setter(const int n,const int i,const int f,const int o,const size_t offset,
     Pointer Usage (target):
 	not utilized so far / not tested / not sure
 */
-	if(n < 0 || size < 1 || value == NULL)
+	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0) || size < 1 || value == NULL)
 	{
 		error_printf(0,"setter sanity check failed at offset: %lu sanity: %d %d %d %d",offset,n,i,f,o);
 		breakpoint();
@@ -599,7 +599,7 @@ void setter(const int n,const int i,const int f,const int o,const size_t offset,
 	}
 	else if(!peer) // can occur during shutdown
 		return;
-	if(i > -1)
+	if(i > INT_MIN)
 	{
 		getter_array_sanity_check(offsets_message)
 		torx_write(n) // XXX

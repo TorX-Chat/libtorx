@@ -25,14 +25,14 @@ void DisableNagle(const int sendfd)
 
 static inline int unclaim(const int n,const int f,const int peer_n,const int8_t fd_type)
 { // This is used on ALL TYPES of file transfer (group, PM, p2p).
-	const uint8_t peer_owner = getter_uint8(peer_n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t peer_owner = getter_uint8(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(n < 0 || f < 0 || peer_n < 0 || peer_owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		error_printf(0,"Unclaim sanity check fail: n=%d f=%d peer_n=%d peer_owner=%u\n",n,f,peer_n,peer_owner);
 		return 0;
 	}
 	int was_transferring = 0;
-	const uint8_t status = getter_uint8(n,-1,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
 	if(status == ENUM_FILE_INBOUND_ACCEPTED)
 	{
 		uint16_t active_transfers_ongoing = 0;
@@ -62,14 +62,14 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 		if(active_transfers_ongoing == 0)
 		{ // call transfer_progress with .last_transferred to trigger a stall
 			stall: {}
-			const uint64_t last_transferred = getter_uint64(n,-1,f,-1,offsetof(struct file_list,last_transferred));
+			const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
 			transfer_progress(n,f,last_transferred);
 		}
 	}
 	else if(status == ENUM_FILE_OUTBOUND_ACCEPTED)
 	{
-		const uint8_t sendfd_connected = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected));
-		const uint8_t recvfd_connected = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,recvfd_connected));
+		const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+		const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
 		if(!recvfd_connected && !sendfd_connected)
 			process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_PAUSE,ENUM_MESSAGE_RECV); // close file descriptors, set to OUTBOUND_PENDING
 		goto stall; // Stall check any outbound transfers. This is NOT as effective as section_unclaim because this doesn't verify that there aren't other active sockets. Its not fully reliable.
@@ -115,7 +115,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	char *base_message = torx_secure_malloc(base_message_len + null_terminated_len);
 	uint64_t file_size = 0;
 	if(f > -1)
-		file_size = getter_uint64(n,-1,f,-1,offsetof(struct file_list,size));
+		file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	int group_n = -1;
 	uint32_t peercount = 0;
 	uint8_t invite_required = 0;
@@ -126,15 +126,15 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		group_n = getter_group_int(g,offsetof(struct group_list,n));
 		invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 		peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,-1,-1,-1,offsetof(struct peer_list,onion));
-		getter_array(&sign_sk_group_n,sizeof(sign_sk_group_n),group_n,-1,-1,-1,offsetof(struct peer_list,sign_sk));
+		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+		getter_array(&sign_sk_group_n,sizeof(sign_sk_group_n),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
 	}
 	if(protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE)
 	{ // CHECKSUM[64] + SIZE[8] + MODIFIED[4] + FILENAME (no null termination)
-		getter_array(base_message,CHECKSUM_BIN_LEN,n,-1,f,-1,offsetof(struct file_list,checksum));
+		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		const uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash64,sizeof(uint64_t));
-		const time_t modified = getter_time(n,-1,f,-1,offsetof(struct file_list,modified));
+		const time_t modified = getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified));
 		uint32_t trash32 = htobe32((uint32_t)modified);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
 		torx_read(n) // XXX
@@ -152,8 +152,8 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			breakpoint();
 			goto error;
 		}
-		getter_array(base_message,CHECKSUM_BIN_LEN,n,-1,f,-1,offsetof(struct file_list,checksum)); // hash of hashes + size, not hash of file
-		const uint8_t splits = getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits));
+		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum)); // hash of hashes + size, not hash of file
+		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
 		const size_t split_hashes_len = (size_t)(CHECKSUM_BIN_LEN *(splits + 1));
 		torx_read(n) // XXX
@@ -171,7 +171,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			}
 		else /* if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) */
 		{ // Add modification date and filename
-			const time_t modified = getter_time(n,-1,f,-1,offsetof(struct file_list,modified));
+			const time_t modified = getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified));
 			const uint32_t trash32 = htobe32((uint32_t)modified);
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
 			torx_read(n) // XXX
@@ -192,7 +192,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
 			split_read(n,f);
 		}
-		const uint8_t splits = getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits));
+		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 		torx_read(n) // XXX
 		for(int section = 0; section <= splits; section++)
 			if(peer[n].file[f].split_status_fd[section] == fd_type && peer[n].file[f].split_status[section] == target_n)
@@ -234,7 +234,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		peer[n].file[f].split_status[section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 		peer[n].file[f].split_status_fd[section] = fd_type;
 		torx_unlock(n) // XXX
-		getter_array(base_message,CHECKSUM_BIN_LEN,n,-1,f,-1,offsetof(struct file_list,checksum));
+		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd==%d",section,start,end,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
@@ -260,20 +260,20 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{ // Peeronions first
 			obtain_specific_peer
-			getter_array(&base_message[cur],56,specific_peer,-1,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&base_message[cur],56,specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 			cur += 56;
 		}
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{ // Peer public keys
 			obtain_specific_peer
-			getter_array(&base_message[cur],crypto_sign_PUBLICKEYBYTES,specific_peer,-1,-1,-1,offsetof(struct peer_list,peer_sign_pk));
+			getter_array(&base_message[cur],crypto_sign_PUBLICKEYBYTES,specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
 			cur += crypto_sign_PUBLICKEYBYTES;
 		}
 		if(invite_required)
 			for(uint32_t nn = 0 ; nn < peercount ; nn++)
 			{ // Inviter signatures of peeronions ( non-applicable to public groups )
 				obtain_specific_peer
-				getter_array(&base_message[cur],crypto_sign_BYTES,specific_peer,-1,-1,-1,offsetof(struct peer_list,invitation));
+				getter_array(&base_message[cur],crypto_sign_BYTES,specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
 				cur += crypto_sign_BYTES;
 			}
 	}
@@ -281,7 +281,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	{ // Onion[56] + ed25519_pk[32] + signed by invitor[64]
 		memcpy(base_message,onion_group_n,56);
 		crypto_sign_ed25519_sk_to_pk((unsigned char*)&base_message[56],sign_sk_group_n);
-		getter_array(&base_message[56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES,group_n,-1,-1,-1,offsetof(struct peer_list,invitation));
+		getter_array(&base_message[56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 	{ // Audited 2024/02/15 // GROUP_ID[32] + Peercount[4] + invite_required[1] { + GROUP_CTRL's onion + ed25519_pk[32] }
@@ -322,9 +322,9 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			memcpy(&base_message[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],invitation,crypto_sign_BYTES);
 			if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
 			{ // Append our group[g].invitation after (which we received from someone else when we joined the group)
-				getter_array(&base_message[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES,group_n,-1,-1,-1,offsetof(struct peer_list,invitation));
+				getter_array(&base_message[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
 				char peernick[56+1];
-				getter_array(&peernick,sizeof(peernick),target_n,-1,-1,-1,offsetof(struct peer_list,peernick));
+				getter_array(&peernick,sizeof(peernick),target_n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
 				if(group_add_peer(g,int_char->p,peernick,int_char->up,invitation) > -1) // we are working with two invitations... this is the correct one
 					error_simple(0,RED"Checkpoint New group peer! (message_prep)"RESET);
 				sodium_memzero(peernick,sizeof(peernick));
@@ -342,13 +342,13 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	if(signature_len)
 	{ // Sign message
 		unsigned char *sk;
-		const uint8_t owner_target = getter_uint8(target_n,-1,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner_target = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		unsigned char sign_sk_target_n[crypto_sign_SECRETKEYBYTES];
 		if(owner_target == ENUM_OWNER_GROUP_PEER)
 			sk = sign_sk_group_n;
 		else
 		{
-			getter_array(&sign_sk_target_n,sizeof(sign_sk_target_n),target_n,-1,-1,-1,offsetof(struct peer_list,sign_sk));
+			getter_array(&sign_sk_target_n,sizeof(sign_sk_target_n),target_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
 			sk = sign_sk_target_n;
 		}
 		if(date_len)
@@ -397,11 +397,11 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	uint8_t send_both = 0;
 	uint8_t v3auth;
 	if(skip_prep) // message resend, n is -1
-		v3auth = getter_uint8(target_n,-1,-1,-1,offsetof(struct peer_list,v3auth));
+		v3auth = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
 	else
 	{ // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
-		v3auth = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,v3auth));
-		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (protocol == ENUM_PROTOCOL_FILE_REQUEST && v3auth && getter_uint8(n,-1,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits)) > 0)));
+		v3auth = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
+		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (protocol == ENUM_PROTOCOL_FILE_REQUEST && v3auth && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
 	}
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
@@ -414,7 +414,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		fd_type = 1; // PIPE_AUTH is exclusively sent out on sendfd
 	else if(cycle == 0 && send_both)
 		fd_type = 1;
-	else if(v3auth && getter_uint8(target_n,-1,-1,-1,offsetof(struct peer_list,recvfd_connected)))
+	else if(v3auth && getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected)))
 		fd_type = 0; // put on recvfd for reliability & speed
 	else
 		fd_type = 1; // put on sendfd for safety (safer when not using v3auth, unless using authorized pipe)
@@ -444,7 +444,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		goto error;
 	}
 	// XXX Step 6: Iterate message
-	const int i = getter_int(target_n,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
+	const int i = getter_int(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
 	expand_message_struc(target_n,i);
 	torx_write(target_n) // XXX
 	peer[target_n].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
@@ -460,13 +460,13 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	{
 		int nnnn = target_n;
 		int iiii = i;
-		uint8_t owner_nnnn = getter_uint8(nnnn,-1,-1,-1,offsetof(struct peer_list,owner));
+		uint8_t owner_nnnn = getter_uint8(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		if(target_g > -1)
 		{ // This is for messages to all GROUP_PEER. "Public message"
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			nnnn = group[target_g].peerlist[cycle];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			if(nnnn < 0 || (owner_nnnn = getter_uint8(nnnn,-1,-1,-1,offsetof(struct peer_list,owner))) != ENUM_OWNER_GROUP_PEER)
+			if(nnnn < 0 || (owner_nnnn = getter_uint8(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) != ENUM_OWNER_GROUP_PEER)
 			{ // sanity check
 				error_printf(0,"Attempting to send group message on non-GROUP_PEER. Bailing. Report this. Details: nnnn: %d Owner: %u Protocol: %u Peercount: %u",nnnn,owner_nnnn,protocol,target_g_peercount);
 				breakpoint();
@@ -479,7 +479,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			char *local_message = peer[target_n].message[i].message;
 			torx_unlock(target_n) // XXX
 
-			iiii = getter_int(nnnn,-1,-1,-1,offsetof(struct peer_list,max_i)) + 1;
+			iiii = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
 			expand_message_struc(nnnn,iiii);
 			torx_write(nnnn) // XXX
 			peer[nnnn].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
@@ -554,7 +554,7 @@ int message_resend(const int n,const int i)
 { // Primarily for signed group_msg in private groups (both SENT and RECV), but also works on any type of OUTBOUND message. CAVEAT / LIMITATION: SENT can be spoofed (by original sender). We can modify our outbound message then re-send... hypothetically this could facilitate "recall" and "modify sent" in an unreliable way. (but currently we don't permit that. We just discard anything that fails message_insert)
 	int p_iter;
 	uint8_t owner;
-	if(n < 0 || i < 0 || (owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter))) < 0)
+	if(n < 0 || (owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter))) < 0)
 	{
 		error_simple(0,"message_resend failed sanity check. Coding error. Report this.");
 		breakpoint();
@@ -595,7 +595,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 { // To send a message to all members of a group, pass the group_n as target_n. The group_n will store the message but each peer will have copies of the time, protocol, status.
 	int p_iter;
 	uint8_t owner;
-	if(target_n < 0 || protocol < 1 || (owner = getter_uint8(target_n,-1,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = protocol_lookup(protocol)) < 0)
+	if(target_n < 0 || protocol < 1 || (owner = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = protocol_lookup(protocol)) < 0)
 	{
 		error_printf(0,"message_send failed sanity check: %d %u %u %d. Coding error. Report this.",target_n,protocol,owner,p_iter);
 		breakpoint();
@@ -638,7 +638,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		const struct int_int *int_int = (const struct int_int*) arg; // Casting passed struct
 		n = int_int->n;
 		f = int_int->i;
-		owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	}
 	else if(file_offer)
 		f = vptoi(arg);
@@ -661,11 +661,11 @@ void kill_code(const int n)
 { /* -1 (global) deletes all SING/MULT, cycles through CTRL list and add a kill_code on each */ // Does nothing for outgoing friend requests ("peer")
 	if(n == -1)
 	{ /* Global kill code */
-		for(int peer_index,nn = 0 ; (peer_index = getter_int(nn,-1,-1,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(nn,-1,-1,-1,offsetof(struct peer_list,onion)) != 0 ; nn++)
+		for(int peer_index,nn = 0 ; (peer_index = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(nn,INT_MIN,-1,-1,offsetof(struct peer_list,onion)) != 0 ; nn++)
 		{
 			if(peer_index < 0)
 				continue;
-			const uint8_t owner_nn = getter_uint8(nn,-1,-1,-1,offsetof(struct peer_list,owner));
+			const uint8_t owner_nn = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 			if(owner_nn == ENUM_OWNER_CTRL)
 			{ /* Saves the kill code message to message log even if logging is turned off, to survive reboot */
 				sql_delete_history(peer_index);
@@ -677,7 +677,7 @@ void kill_code(const int n)
 	}
 	else
 	{ // Specific peer
-		const int peer_index = getter_int(n,-1,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_delete_history(peer_index);
 		message_send(n,ENUM_PROTOCOL_KILL_CODE,NULL,0);
 	}
@@ -685,24 +685,24 @@ void kill_code(const int n)
 
 static inline int select_peer(const int group_n,const int f)
 { // Check: blacklist, online status, how much data they have. Determine which group peer to request file from // TODO enhance this function to select
-	const uint8_t owner = getter_uint8(group_n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_GROUP_CTRL)
 	{
 		error_simple(0,"Select_peer can only be called on GROUP_CTRL. Coding error. Report this.");
 		return -1;
 	}
-	const uint8_t splits = getter_uint8(group_n,-1,f,-1,offsetof(struct file_list,splits));
+	const uint8_t splits = getter_uint8(group_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	int o = 0;
 	int tentative_n = 0;
 	uint64_t tentative_progress = 0;
 	uint8_t tentative_section = 0; // TODO utilize, should probably pass it to message_send
-	for(int offerer_n ; (offerer_n = getter_int(group_n,-1,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
+	for(int offerer_n ; (offerer_n = getter_int(group_n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
 	{
-		const uint8_t sendfd_connected = getter_uint8(offerer_n,-1,-1,-1,offsetof(struct peer_list,sendfd_connected));
-		const uint8_t recvfd_connected = getter_uint8(offerer_n,-1,-1,-1,offsetof(struct peer_list,recvfd_connected));
+		const uint8_t sendfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+		const uint8_t recvfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
 		const uint8_t online = recvfd_connected + sendfd_connected;
-	//	const uint8_t utilized = getter_uint8(n,-1,f,o,offsetof(struct offer_list,utilized));
-		const uint8_t blacklisted = getter_uint8(offerer_n,-1,-1,-1,offsetof(struct peer_list,blacklisted));
+	//	const uint8_t utilized = getter_uint8(n,INT_MIN,f,o,offsetof(struct offer_list,utilized));
+		const uint8_t blacklisted = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,blacklisted));
 		if(/*utilized >= */!online || blacklisted) // check blacklist and online status
 		{
 		//	printf("Checkpoint o=%d already utilized or blacklisted (%u). %u >= %u\n",o,blacklisted,utilized,online);
@@ -744,7 +744,7 @@ static inline int select_peer(const int group_n,const int f)
 	//	peer[n].file[f].offer[o].utilized++; // TODO perhaps this should be later, not in this function, otherwise the message could fail and leave someone permanently utilized... but we also don't want to call it too late
 	//	printf("Checkpoint now utilized: %u\n",peer[n].file[f].offer[o].utilized);
 	//	torx_unlock(group_n) // XXX
-		if(getter_uint8(tentative_n,-1,-1,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
+		if(getter_uint8(tentative_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
 			error_simple(-1,"Tentative_n can only be GROUP_PEER. Coding error. Report this.");
 		return tentative_n;
 	}
@@ -792,8 +792,8 @@ void file_request_internal(const int n,const int f)
 { // Internal function only, do not call from UI. Use file_accept
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,-1,f,-1,offsetof(struct file_list,status));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
 	torx_read(n) // XXX
 	const char *file_path = peer[n].file[f].file_path;
 	torx_unlock(n) // XXX
@@ -805,7 +805,7 @@ void file_request_internal(const int n,const int f)
 	else if(owner == ENUM_OWNER_GROUP_PEER)
 	{ // has no file path, unless PM transfer
 		unsigned char checksum[CHECKSUM_BIN_LEN];
-		getter_array(&checksum,sizeof(checksum),n,-1,f,-1,offsetof(struct file_list,checksum));
+		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 		const int g_f = set_f(group_n,checksum,sizeof(checksum));
@@ -869,7 +869,7 @@ void file_accept(const int n,const int f)
 	if(status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_ACCEPTED)
 	{ // pause in/outbound transfer. Reciever can unpause it.  // Much redundancy in logic applies with file cancel
 		unsigned char checksum[CHECKSUM_BIN_LEN];
-		getter_array(&checksum,sizeof(checksum),n,-1,f,-1,offsetof(struct file_list,checksum));
+		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{ // Send pause to all peers sending us data and unclaim relevant sections.
 			torx_read(n) // XXX
@@ -900,7 +900,7 @@ void file_accept(const int n,const int f)
 		}
 		sodium_memzero(checksum,sizeof(checksum));
 		process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_PAUSE,ENUM_MESSAGE_FAIL); // set status and close file descriptors, must be set AFTER section_unclaim
-		const uint64_t last_transferred = getter_uint64(n,-1,f,-1,offsetof(struct file_list,last_transferred));
+		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
 		transfer_progress(n,f,last_transferred); // trigger a stall // TODO TODO TODO is this too early? should it be after process_pause_cancel?
 	}
 	else if(status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
@@ -908,13 +908,13 @@ void file_accept(const int n,const int f)
 		if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
 		{
 			status = ENUM_FILE_OUTBOUND_PENDING;
-			setter(n,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 		}
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
 			const int g = set_g(n,NULL);
 			const uint8_t invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-			const uint8_t splits = getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits));
+			const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 			if(invite_required)
 				message_send(n,ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,itovp(f),FILE_OFFER_GROUP_LEN);
 			else
@@ -949,22 +949,22 @@ void file_accept(const int n,const int f)
 			error_simple(0,"Cannot accept file. Have not set file path nor download directory.");
 			return;
 		}
-		const uint8_t v3auth = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,v3auth));
-		uint8_t splits = getter_uint8(n,-1,f,-1,offsetof(struct file_list,splits));
+		const uint8_t v3auth = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
+		uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 		torx_read(n) // XXX
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
 		torx_unlock(n) // XXX
 		if(v3auth && threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests) && splits == 0 && split_hashes == NULL)
 		{ // set splits to 1 if not already, but not on group files
 			splits = 1; // set default before split_read, which might overwrite it.
-			setter(n,-1,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
 		}
 		initialize_split_info(n,f); // calls split_read(n,f);
-		const uint64_t size = getter_uint64(n,-1,f,-1,offsetof(struct file_list,size));
+		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		if(calculate_transferred(n,f) < size)
 		{
 			status = ENUM_FILE_INBOUND_ACCEPTED;
-			setter(n,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 			file_request_internal(n,f);
 		}
 		else // Complete. Not checking if oversized or wrong hash.
@@ -973,7 +973,7 @@ void file_accept(const int n,const int f)
 			printf("Checkpoint %lu of %lu transferred\n",calculate_transferred(n,f),size);
 			breakpoint();
 			status = ENUM_FILE_INBOUND_COMPLETED;
-			setter(n,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 			transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 		}
 	}
@@ -988,10 +988,10 @@ void file_cancel(const int n,const int f)
 { // Much redundancy in logic applies with file pause
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,-1,f,-1,offsetof(struct file_list,status));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	getter_array(&checksum,sizeof(checksum),n,-1,f,-1,offsetof(struct file_list,checksum));
+	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 	if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_COMPLETED || status == ENUM_FILE_OUTBOUND_REJECTED)
 	{
 		const int is_inbound = is_inbound_transfer(status);
@@ -1033,7 +1033,7 @@ void file_cancel(const int n,const int f)
 			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
 			split_update(n,f,-1); // destroys split file and frees/nulls resources
 		}
-		const uint64_t last_transferred = getter_uint64(n,-1,f,-1,offsetof(struct file_list,last_transferred));
+		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
 		transfer_progress(n,f,last_transferred); // trigger a stall // TODO TODO TODO is this too early? should it be after process_pause_cancel?
 	}
 	else
@@ -1045,7 +1045,7 @@ static inline void *file_init(void *arg)
 	struct file_strc *file_strc = (struct file_strc*) arg; // Casting passed struct
 	const int n = file_strc->n;
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
-	const uint8_t owner = getter_uint8(n,-1,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	size_t size = 0;
 	uint8_t splits = 0;
@@ -1088,11 +1088,11 @@ static inline void *file_init(void *arg)
 	const int f = process_file_offer_outbound(n,checksum,splits,split_hashes_and_size,size,file_strc->modified,file_strc->path);
 //	printf("Checkpoint file_init n==%d f==%d size==%lu checksum==%s\n",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	sodium_memzero(checksum,sizeof(checksum));
-	uint8_t status = getter_uint8(n,-1,f,-1,offsetof(struct file_list,status));
+	uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
 	if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
 	{
 		status = ENUM_FILE_OUTBOUND_PENDING;
-		setter(n,-1,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+		setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
