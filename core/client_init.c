@@ -1054,6 +1054,7 @@ static inline void *file_init(void *arg)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Determine split count, allocate and populate split_hashes, generate hash of hashes
 		splits = UINT8_MAX;
+		printf("Checkpoint checking file size 1\n");
 		size = get_file_size(file_strc->path);
 		while(splits && size / splits < MINIMUM_SECTION_SIZE)
 			splits--;

@@ -302,7 +302,9 @@ struct packet_info {
 	uint16_t packet_len; // size of packet, or unsent size of packet if partial
 	int p_iter; // initialize at -1
 	int8_t fd_type; // -1 trash (ready for re-use??? but then out of order),0 recv, 1 send
-	uint64_t start; // TODO NEW TODO, replacing .transferred for outgoing counter. this is OPTIONAL (ie only for file pieces)
+	uint64_t start; // is set from .pos for non-file-piece, and is set from start position for file piece
+	time_t time; // time added to packet struct
+	time_t nstime; // time added to packet struct
 } packet[SIZE_PACKET_STRC]; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 
 
 struct protocol_info {

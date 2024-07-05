@@ -1313,7 +1313,7 @@ void set_time(time_t *time,time_t *nstime)
 { // Sets .time and .nstime for a given message, to current time. Should be unique even when threaded.
 	if(!time || !nstime || *time != 0 || *nstime != 0)
 	{ // This is a coding error. Sanity check.
-		error_simple(0,"set_time called on a message that already has time set. Report this.");
+		error_simple(0,"set_time called on a message that already has time set. Coding errror. Report this.");
 		breakpoint();
 		return;
 	}
@@ -3803,6 +3803,8 @@ void initial(void)
 			packet[o].p_iter = -1;
 			packet[o].fd_type = -1;
 			packet[o].start = 0;
+			packet[o].time = 0;
+			packet[o].nstime = 0;
 			pthread_rwlock_unlock(&mutex_packet);
 		}
 		const uint32_t count = (uint32_t)cpucount();

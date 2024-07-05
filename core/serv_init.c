@@ -182,7 +182,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 					prefix_len += 4;
 				}
 				else if(start >= message_len)
-					error_simple(-1,"Start >= message_len. Coding error. Report this."); // Added check 2024/05/04
+					error_printf(-1,"Start >= message_len: %u >= %u. Coding error. Report this.",start,message_len); // Added check 2024/05/04
 				if(prefix_len + message_len - start < PACKET_SIZE_MAX)
 					packet_len = (uint16_t)(prefix_len + message_len - start);
 				else // oversized message
@@ -223,9 +223,10 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
 			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where output_cb can (and will on some devices) trigger before we register packet
+
 			while(o < SIZE_PACKET_STRC && packet[o].n != -1) // find first re-usable or empty iter
 				o++;
-			if(o > highest_ever_o) // Debugging only, just for learning about what kind o levels we utilize. TODO delete before release
+			if(o > highest_ever_o)
 				highest_ever_o = o;
 			if(o >= SIZE_PACKET_STRC)
 			{
@@ -240,6 +241,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			packet[o].fd_type = fd_type;
 			packet[o].f_i = f_i;
 			packet[o].p_iter = p_iter; // set last, this is what we look for when reading
+			set_time(&packet[o].time,&packet[o].nstime); // should probably be here, *after mutex*
 			evbuffer_add(
 				output,
 				send_buffer,
