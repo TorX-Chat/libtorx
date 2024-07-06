@@ -1,3 +1,4 @@
+#define _FILE_OFFSET_BITS 64 // keep this before headers
 #include <stdio.h>
 #include <stdlib.h> 	// may be redundant. Included in main.h for running external tor binary.
 #include <unistd.h> 	// read, etc. Exec ( tor ) XXX does not exist in windows
