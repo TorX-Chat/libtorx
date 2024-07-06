@@ -3627,6 +3627,7 @@ int group_generate(const uint8_t invite_required,const char *name)
 void initial(void)
 { /* Note: Creates ~/.config/torx/ and all files will be created there by default (as it becomes current dir) */
 /* Preferred if this can remain safe to run multiple times so that it can be used to, for example, load the theme/language login page several times without logging in */
+	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 	if(sodium_init() < 0)
 	{
 		error_simple(-1,"Error initializing LibSodium library. Be sure to compile with -lsodium flag");
