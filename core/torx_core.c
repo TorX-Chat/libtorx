@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 8 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 9 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2993,7 +2993,7 @@ int set_last_message(int *nn,const int n,const int count_back)
 		if(!nn)
 		{
 			error_simple(0,"Set_last_message: nn must not be NULL. Coding error. Report this.");
-			return -1;
+			return INT_MIN;
 		}
 		const int g = set_g(n,NULL);
 		pthread_rwlock_rdlock(&mutex_expand_group);
@@ -3010,7 +3010,7 @@ int set_last_message(int *nn,const int n,const int count_back)
 			page = page->message_prior;
 		}
 		*nn = n;
-		return -1;
+		return INT_MIN;
 	}
 	else
 	{ // Last message for non-group

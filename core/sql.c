@@ -1097,7 +1097,6 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 						if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
 						{ // 2024/05/12 Setting transferred amount according to file size
 							torx_unlock(nn) // XXX
-							printf("Checkpoint checking file size 2\n");
 							const uint64_t size_on_disk = get_file_size(file_path);
 							torx_write(nn) // XXX
 							peer[nn].file[f].split_info[0] = size_on_disk;
