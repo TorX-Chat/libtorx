@@ -2141,7 +2141,6 @@ static inline void get_tor_version(void) // XXX Does not need locks for the same
 	else
 	{
 		sscanf(ret,"%*s %*s %u.%u.%u.%u",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
-		error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 		error_printf(0,"Tor Version: %u.%u.%u.%u",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
 		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
 		{ // tor version >0.4.6.1
@@ -3627,6 +3626,7 @@ int group_generate(const uint8_t invite_required,const char *name)
 void initial(void)
 { /* Note: Creates ~/.config/torx/ and all files will be created there by default (as it becomes current dir) */
 /* Preferred if this can remain safe to run multiple times so that it can be used to, for example, load the theme/language login page several times without logging in */
+	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 	if(sodium_init() < 0)
 	{
