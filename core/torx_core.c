@@ -15,7 +15,7 @@ TODO FIXME XXX Notes:
 
 /* Globally defined variables follow */
 const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 9 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { protocol_version , 0 , 9 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -38,6 +38,7 @@ char *torrc_content = {0}; // default is set in initial() or after initial() by 
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
 uint32_t tor_version[4] = {0}; // does not need rwlock because only modified once
+uint8_t sodium_initialized = 0; // 2024/07 Added to prevent SEVERE memory errors that are incredibly difficult to diagnose.
 uint8_t currently_changing_pass = 0; // TODO consider using mutex_sql_encrypted instead
 uint8_t first_run = 0; // TODO use for setting default torrc (ie, ask user). do not manually change this. This works and can be used as the basis for stuff (ex: an introduction or opening help in a GUI client)
 uint8_t destroy_input = 0; // 0 no, 1 yes. Destroy custom input file.
@@ -336,25 +337,21 @@ void error_printf(const int debug_level,const char *format,...)
 		has_newline = 1;
 	const int length = vsnprintf(NULL, 0, format, copy);
 	va_end(copy);
-	char *do_not_free_message = NULL;
 	if(length > 0)
 	{
-		do_not_free_message = torx_secure_malloc((size_t)length + 2 - has_newline);
-		if(do_not_free_message)
+		char *do_not_free_message = torx_secure_malloc((size_t)length + 2 - has_newline);
+		if(has_newline)
+			vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
+		else
 		{
-			if(has_newline)
-				vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
-			else
-			{
-				vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
-				if(do_not_free_message[length-1] != '\n')
-				{ // one last check, to see if a potential %c or %s (etc) added a newline
-					do_not_free_message[length] = '\n';
-					do_not_free_message[length+1] = '\0';
-				}
+			vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
+			if(do_not_free_message[length-1] != '\n')
+			{ // one last check, to see if a potential %c or %s (etc) added a newline
+				do_not_free_message[length] = '\n';
+				do_not_free_message[length+1] = '\0';
 			}
-			error_allocated_already(debug_level,do_not_free_message);
 		}
+		error_allocated_already(debug_level,do_not_free_message);
 	}
 	else
 		error_simple(0,"Invalid format or zero length passed to error_printf");
@@ -775,6 +772,16 @@ void *torx_secure_malloc(const size_t len)
 {
 	if(len < 1)
 		return NULL; // avoids some occassional very small memory leaks
+	else if(!sodium_initialized)
+	{ // Implemented to prevent SEVERE errors
+		if(sodium_init() < 0)
+		{
+			fprintf(stderr,"Error initializing LibSodium library. Be sure to compile with -lsodium flag\n"); // must be fprintf. This error is fatal.
+			exit(-1);
+		}
+		error_simple(0,"TorX function called before initial. Coding error. Report this.");
+		breakpoint();
+	}
 	size_t allocation_len;
 	void *allocation;
 	if(ENABLE_SECURE_MALLOC)
@@ -852,15 +859,16 @@ void torx_free(void **p)
 	void *real_ptr = (char *)(*p) - 8;
 	const uint32_t size = *((uint32_t *)real_ptr);
 	const uint32_t type = *((uint32_t *)real_ptr+1);
+	*((uint32_t *)real_ptr+1) = 1234567890; // Destroying the type. Note: This probably will never serve a useful purpose (of preventing double-free).
 	if(type == ENUM_MALLOC_TYPE_SECURE && ENABLE_SECURE_MALLOC)
-		sodium_free((char*)*p-8);
+		sodium_free(real_ptr);
 	else if(type == ENUM_MALLOC_TYPE_SECURE)
 	{
 		sodium_memzero(*p,size);
-		free((char*)*p-8);
+		free(real_ptr);
 	}
 	else if(type == ENUM_MALLOC_TYPE_INSECURE)
-		free((char*)*p-8);
+		free(real_ptr);
 	else
 	{
 		error_simple(0,"Called torx_free on a non-TorX malloc, resulting in an illegal read and failure to free.");
@@ -3626,13 +3634,12 @@ int group_generate(const uint8_t invite_required,const char *name)
 void initial(void)
 { /* Note: Creates ~/.config/torx/ and all files will be created there by default (as it becomes current dir) */
 /* Preferred if this can remain safe to run multiple times so that it can be used to, for example, load the theme/language login page several times without logging in */
-	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
-	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 	if(sodium_init() < 0)
-	{
-		error_simple(-1,"Error initializing LibSodium library. Be sure to compile with -lsodium flag");
-		return;
+	{ // XXX WARNING DO NOT PUT ANY ERROR_* BEFORE THIS OR IT WILL LEAD TO SEVERE MEMORY ERRORS AND CRASHES ON ANDROID XXX
+		fprintf(stderr,"Error initializing LibSodium library. Be sure to compile with -lsodium flag\n"); // must be fprintf. This error is fatal.
+		exit(-1);
 	}
+	sodium_initialized = 1;
 	#ifdef WIN32
 		evthread_use_windows_threads();
 	#else
@@ -3655,6 +3662,9 @@ void initial(void)
 
 	pthread_attr_init(&ATTR_DETACHED); // must be triggered before any use
 	pthread_attr_setdetachstate(&ATTR_DETACHED, PTHREAD_CREATE_DETACHED); // must be triggered before any use
+
+	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
+	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 
 	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations.
 	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
