@@ -593,8 +593,8 @@ int message_resend(const int n,const int i)
 
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len)
 { // To send a message to all members of a group, pass the group_n as target_n. The group_n will store the message but each peer will have copies of the time, protocol, status.
-	int p_iter;
-	uint8_t owner;
+	int p_iter = -1; // must initialize so long as we have the error_printf that could use it
+	uint8_t owner = 0; // must initialize so long as we have the error_printf that could use it
 	if(target_n < 0 || protocol < 1 || (owner = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = protocol_lookup(protocol)) < 0)
 	{
 		error_printf(0,"message_send failed sanity check: %d %u %u %d. Coding error. Report this.",target_n,protocol,owner,p_iter);

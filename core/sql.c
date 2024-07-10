@@ -794,7 +794,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
-	int val;
+	int val = -1;
 	torx_read(n) // XXX
 	const char *tmp_message = peer[n].message[i].message;
 	torx_unlock(n) // XXX
@@ -1000,7 +1000,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	torx_unlock(n) // XXX
 	sqlite3_stmt *stmt;
 	char command[512]; // size is somewhat arbitrary
-	int len;
+	int len = 0; // clang thinks this should be initialized, but I disagree.
 	uint8_t reverse;
 	if(tmp_message == NULL)
 	{ // On startup

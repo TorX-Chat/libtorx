@@ -38,7 +38,7 @@ char *torrc_content = {0}; // default is set in initial() or after initial() by 
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
 uint32_t tor_version[4] = {0}; // does not need rwlock because only modified once
-uint8_t sodium_initialized = 0; // 2024/07 Added to prevent SEVERE memory errors that are incredibly difficult to diagnose.
+uint8_t sodium_initialized = 0; // Do not add a rwlock. Must be fast. Added to prevent SEVERE memory errors that are incredibly difficult to diagnose.
 uint8_t currently_changing_pass = 0; // TODO consider using mutex_sql_encrypted instead
 uint8_t first_run = 0; // TODO use for setting default torrc (ie, ask user). do not manually change this. This works and can be used as the basis for stuff (ex: an introduction or opening help in a GUI client)
 uint8_t destroy_input = 0; // 0 no, 1 yes. Destroy custom input file.
@@ -70,7 +70,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 15000; // TODO set this to something low (like 25 to low hundreds) and ensure it works
+uint32_t show_log_messages = 15000; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -335,6 +335,10 @@ void error_printf(const int debug_level,const char *format,...)
 	uint8_t has_newline = 0;
 	if(format[strlen(format)-1] == '\n')
 		has_newline = 1;
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+	#pragma clang diagnostic push
+	#pragma clang diagnostic ignored "-Wformat-nonliteral"
 	const int length = vsnprintf(NULL, 0, format, copy);
 	va_end(copy);
 	if(length > 0)
@@ -356,6 +360,8 @@ void error_printf(const int debug_level,const char *format,...)
 	else
 		error_simple(0,"Invalid format or zero length passed to error_printf");
     	va_end(args);
+	#pragma clang diagnostic pop
+	#pragma GCC diagnostic pop
 }
 
 static inline int torx_pipe(int pipefd[2])
@@ -779,6 +785,7 @@ void *torx_secure_malloc(const size_t len)
 			fprintf(stderr,"Error initializing LibSodium library. Be sure to compile with -lsodium flag\n"); // must be fprintf. This error is fatal.
 			exit(-1);
 		}
+		sodium_initialized = 1;
 		error_simple(0,"TorX function called before initial. Coding error. Report this.");
 		breakpoint();
 	}

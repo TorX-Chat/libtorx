@@ -6,7 +6,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
 		return -1;
 	}
-	int f,i; // DO NOT INITIALIZE, we want the warnings... but our compiler is not playing nice so we have to
+	int f = -1, i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const char *name = protocols[p_iter].name;
