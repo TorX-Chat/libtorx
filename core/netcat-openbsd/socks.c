@@ -158,7 +158,7 @@ static size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_t fd, v
 
 int socks_connect(const char *host, const char *port)
 {
-	if(!port || atoi(port) < 1025)
+	if(!port || strtoll(port, NULL, 10) < 1025)
 	{
 		error_printf(0,"Attempted socks_connect to invalid port: %s. Report this.",port);
 		return -1;

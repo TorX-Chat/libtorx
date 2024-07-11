@@ -20,7 +20,7 @@ const uint16_t torx_library_version[4] = { protocol_version , 0 , 9 , 3 }; // ht
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
-uint8_t v3auth_enabled = 1; // global default // 0 (off), 1 (BEST: derived from onion). Should NOT make this user toggleable. For discussion on the safety of using onion derived ed25519 keys and converting to x25519: https://crypto.stackexchange.com/questions/3260/using-same-keypair-for-diffie-hellman-and-signing/3311#3311 
+uint8_t v3auth_enabled = 1; // global default // 0 (off), 1 (BEST: derived from onion). NOT user toggleable. For discussion on the safety of using onion derived ed25519 keys and converting to x25519: https://crypto.stackexchange.com/questions/3260/using-same-keypair-for-diffie-hellman-and-signing/3311#3311
 uint8_t reduced_memory = 0; // NOTE: increasing decreases RAM requirements *and* CPU cycles. 0 = 1024mb, 1 = 256mb, 2 = 64mb. More ram allocated will make startup ever-so-slightly slower, but significantly increase security against bruteforcing. Recommended to leave as default (0, 1024mb), but could crash some devices.
 int8_t debug = 0; //"0-5" default verbosity. Ensure that privacy related info is not printed before level 3.
 long long unsigned int crypto_pwhash_OPSLIMIT = 0;
@@ -1719,7 +1719,7 @@ static inline int pid_read(void)
 	char pid_string[21] = {0};
 	if(fgets(pid_string,sizeof(pid_string)-1,fp) == NULL)
 		return 0;
-	const int pid = atoi(pid_string);
+	const int pid = (int)strtoll(pid_string, NULL, 10);
 	fclose(fp); fp = NULL; // close append mode
 	return pid;
 }

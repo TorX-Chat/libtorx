@@ -623,7 +623,7 @@ void load_onion(const int n)
 		const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		if(local_v3auth_enabled == 1 && peerversion > 1)
 		{ // V3auth
-			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES] = {0}; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
+			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
 			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
 			char peeronion_uppercase[56+1] = {0};
 			baseencode_error_t err = {0}; // for base32
@@ -636,12 +636,14 @@ void load_onion(const int n)
 			if(crypto_sign_ed25519_pk_to_curve25519(x25519_pk, ed25519_pk) < 0)
 			{
 				error_simple(0,"Critical public key conversion issue.");
+				sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 				return;
 			}
 			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 			if(base32_encode((unsigned char*)incomingauthkey,x25519_pk,sizeof(ed25519_pk)) != 56)
 			{
 				error_simple(0,"Serious error in load_onion relating to incoming auth key. Report this");
+				sodium_memzero(x25519_pk,sizeof(x25519_pk));
 				return;
 			}
 			sodium_memzero(x25519_pk,sizeof(x25519_pk));
@@ -1391,13 +1393,13 @@ void sql_populate_setting(const int force_plaintext)
 				if(!strncmp(setting_name,"salt",4) && setting_value_len == sizeof(saltbuffer))
 					memcpy(saltbuffer,setting_value,sizeof(saltbuffer));
 				else if(!strncmp(setting_name,"crypto_pwhash_OPSLIMIT",22))
-					crypto_pwhash_OPSLIMIT = (long long unsigned int)atoll(setting_value);
+					crypto_pwhash_OPSLIMIT = strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"crypto_pwhash_MEMLIMIT",22))
-					crypto_pwhash_MEMLIMIT = (size_t)atol(setting_value);
+					crypto_pwhash_MEMLIMIT = strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"crypto_pwhash_ALG",17))
-					crypto_pwhash_ALG = atoi(setting_value);
+					crypto_pwhash_ALG = (int)strtoll(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"censored_region",10))
-					censored_region = (uint8_t)atoi(setting_value);
+					censored_region = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"decryption_key",14))
 				{
 					if(!keyed && setting_value_len > 0 && setting_value_len <= sizeof(decryption_key))
@@ -1447,41 +1449,41 @@ void sql_populate_setting(const int force_plaintext)
 					torrc_content[setting_value_len] = '\0';
 				}
 				else if(!strncmp(setting_name,"shorten_torxids",15))
-					shorten_torxids = (uint8_t)atoi(setting_value); // A bunch of casts here is not wonderful but should not be harmful either since we control
+					shorten_torxids = (uint8_t)strtoull(setting_value, NULL, 10); // A bunch of casts here is not wonderful but should not be harmful either since we control
 				else if(!strncmp(setting_name,"suffix_length",13))
-					suffix_length = (uint8_t)atoi(setting_value);
+					suffix_length = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"global_threads",14))
-					global_threads = (uint32_t)atoi(setting_value);
+					global_threads = (uint32_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"global_log_messages",19))
-					global_log_messages = (uint8_t)atoi(setting_value); // SIGNED
+					global_log_messages = (uint8_t)strtoull(setting_value, NULL, 10); // SIGNED
 				else if(!strncmp(setting_name,"sing_expiration_days",20))
-					sing_expiration_days = (uint32_t)atoi(setting_value);
+					sing_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"mult_expiration_days",20))
-					mult_expiration_days = (uint32_t)atoi(setting_value);
+					mult_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"auto_accept_mult",16))
-					auto_accept_mult = (uint8_t)atoi(setting_value);
+					auto_accept_mult = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"destroy_input",13))
-					destroy_input = (uint8_t)atoi(setting_value);
+					destroy_input = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"reduced_memory",14))
-					reduced_memory = (uint8_t)atoi(setting_value);
+					reduced_memory = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"auto_resume_inbound",19))
-					auto_resume_inbound = (uint8_t)atoi(setting_value);
+					auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"full_duplex_requests",20))
-					full_duplex_requests = (uint8_t)atoi(setting_value);
+					full_duplex_requests = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"log_last_seen",13))
-					log_last_seen = (uint8_t)atoi(setting_value);
+					log_last_seen = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"last_seen",9))
 				{
 					sanity_check
 					const int n = set_n(peer_index,NULL);
-					const time_t last_seen = atoi(setting_value);
+					const time_t last_seen = strtoll(setting_value, NULL, 10);
 					setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 				}
 				else if(!strncmp(setting_name,"logging",7))
 				{
 					sanity_check
 					const int n = set_n(peer_index,NULL);
-					const int8_t log_messages = (int8_t)atoi(setting_value);
+					const int8_t log_messages = (int8_t)strtoll(setting_value, NULL, 10);
 					setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,log_messages),&log_messages,sizeof(log_messages));
 				}
 				else if(!strncmp(setting_name,"group_id",8))
@@ -1507,7 +1509,7 @@ void sql_populate_setting(const int force_plaintext)
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
 					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
 					const int g = set_g(ctrl_n,NULL); // reserved
-					const uint8_t invite_required = (uint8_t)atoi(setting_value);
+					const uint8_t invite_required = (uint8_t)strtoull(setting_value, NULL, 10);
 					setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
 				}
 				else if(!strncmp(setting_name,"group_peer",10))
@@ -1517,7 +1519,7 @@ void sql_populate_setting(const int force_plaintext)
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
 					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
 					const int g = set_g(ctrl_n,NULL); // reserved
-					const int stripped_peer_index = atoi(&setting_name[10]);
+					const int stripped_peer_index = (int)strtoull(&setting_name[10], NULL, 10);
 					const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
 					pthread_rwlock_wrlock(&mutex_expand_group); // XXX
 					if(group[g].peerlist)
