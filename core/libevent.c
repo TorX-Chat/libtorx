@@ -283,7 +283,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 				error_printf(3,"Handshake occured. Peer saved as %s on pending list.",peeronion);
 				incoming_friend_request_cb(event_strc->fresh_n);
 			}
-			const uint8_t peerversion = getter_uint8(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+			const uint16_t peerversion = getter_uint16(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			char privkey[88+1];
 			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 			char peernick[56+1];
@@ -929,11 +929,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 						{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
-							const uint8_t new_peerversion = (uint8_t)be16toh(align_uint16((void*)&event_strc->buffer[0]));
+							const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
 							error_printf(0,"Successfully received an upgrade proposal: %u",new_peerversion); // NOTE: recently untested 2023/11/16
-							const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-							if(new_peerversion > peerversion)
-							{
+							const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+							if(new_peerversion != peerversion)
+							{ // Note: now facilitating downgrades
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
 								sql_update_peer(n);
 							}
@@ -1174,7 +1174,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			sodium_memzero(peernick,sizeof(peernick));
 			if(former_owner == ENUM_OWNER_SING) // XXX DO NOT USE N AFTER THIS or risk race conditon XXX
 				bufferevent_disable(bev, EV_READ); // this will cause onion to be deleted i think !!!
-			const uint8_t fresh_peerversion = (uint8_t)be16toh(align_uint16((void*)&buffer_ln[0]));
+			const uint16_t fresh_peerversion = be16toh(align_uint16((void*)&buffer_ln[0]));
 			char fresh_peeronion[56+1];
 			memcpy(fresh_peeronion,&buffer_ln[2],56);
 			fresh_peeronion[56] = '\0';
@@ -1293,9 +1293,8 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	torx_write(n) // XXX
 	peer[n].bev_recv = bev_recv;
 	torx_unlock(n) // XXX
-	const uint8_t v3auth = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
-	if(v3auth && owner == ENUM_OWNER_CTRL)
-	{ // this test is necessary. if no v3auth, another similar test triggers elsewhere
+	if(owner == ENUM_OWNER_CTRL)
+	{
 		const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 		const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 		for(int i = min_i; i <= max_i; i++)
@@ -1379,7 +1378,7 @@ void *torx_events(void *arg)
 			peer[n].bev_send = bev_send;
 			torx_unlock(n) // XXX
 			// TODO 0u92fj20f230fjw ... to here. TODO
-			const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+			const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			if(owner == ENUM_OWNER_CTRL && threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1 && peerversion == 0)
 				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,(void*)(intptr_t)htobe16(protocol_version),sizeof(protocol_version)); // DO NOT FREE

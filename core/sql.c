@@ -490,7 +490,7 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 	return 0;
 }
 
-int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint8_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
+int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
 { // Be very careful when modifying the logic of this function. It is incredibly important.
 	// Start of sanity checks
 	if((owner < 1 || owner > 6)
@@ -619,9 +619,7 @@ void load_onion(const int n)
 	{ /* Handle CTRL, which may have v3auth */
 		vport = CTRL_VPORT;
 		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-	//	printf("Checkpoint load_onion owner: %u v3: %d\n",owner,local_v3auth_enabled);
-		const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-		if(local_v3auth_enabled == 1 && peerversion > 1)
+		if(local_v3auth_enabled == 1 && getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion)) > 1)
 		{ // V3auth
 			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
 			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
@@ -652,9 +650,9 @@ void load_onion(const int n)
 			error_printf(3,"Incoming Auth: %s",incomingauthkey);
 		}
 		else if(!local_v3auth_enabled)
-			error_simple(2,"Warning: V3auth is not supported. Please upgrade Tor to >0.4.6.1 and exchange onionIDs again."); 
+			error_simple(0,"Warning: V3auth is not supported. Please upgrade Tor to >0.4.6.1 and exchange onionIDs again.");
 		else
-			error_simple(2,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1 and exchange onionIDs again."); 
+			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1 and exchange onionIDs again.");
 	}
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		vport = CTRL_VPORT;
@@ -668,11 +666,6 @@ void load_onion(const int n)
 	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 	const uint16_t tport = randport(0);
 	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
-	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
-	{
-		const uint8_t v3auth = 1; // XXX 2023/11/13 HIGHLY experimental. It isn't really v3auth but we use ENUM_PROTOCOL_PIPE_AUTH to simulate
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
-	}
 	if(owner == ENUM_OWNER_GROUP_PEER)
 		load_onion_events(n); // no recv on this to setup, so no need to tor_call
 	else
@@ -690,7 +683,7 @@ void load_onion(const int n)
 	}
 }
 
-int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint8_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
+int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
 { // not filling 'peer_sign_pk' and 'sign_sk', leaving them as NULL. Fill them during handshake with sql_update_peer.
 	char command[1024]; // size is arbitrary
 	snprintf(command,sizeof(command),"INSERT OR ABORT INTO peer (owner,status,peerversion,privkey,peeronion,peernick,expiration) VALUES (%u,%u,%u,'%s','%s',?,%d);",owner,status,peerversion,privkey,peeronion,expiration);
@@ -955,7 +948,7 @@ int sql_update_peer(const int n)
 	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-	const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+	const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 	char privkey[88+1];
 	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 	char peeronion[56+1];
@@ -1142,7 +1135,7 @@ int sql_populate_peer(void)
 		const int peer_index = sqlite3_column_int(stmt, 0);
 		const uint8_t owner = (uint8_t)sqlite3_column_int(stmt, 1);
 		const uint8_t status = (uint8_t)sqlite3_column_int(stmt, 2);
-		const uint8_t peerversion = (uint8_t)sqlite3_column_int(stmt, 3);
+		const uint16_t peerversion = (uint16_t)sqlite3_column_int(stmt, 3);
 		const char *privkey = (const char *)sqlite3_column_text(stmt, 4);
 		const char *peeronion = (const char *)sqlite3_column_text(stmt, 5);
 		const char *peernick = (const char *)sqlite3_column_text(stmt, 6);

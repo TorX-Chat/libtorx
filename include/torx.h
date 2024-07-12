@@ -207,12 +207,12 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	int peer_index; // For use with SQL functions only
 	char onion[56+1]; // our onion derrived from privkey, except for "peer", where it is peeronion, because this must ALWAYS exist
 	char torxid[52+1];
-	uint8_t peerversion;
+	uint16_t peerversion;
 	char peeronion[56+1];
 	char peernick[56+1]; // note: asian characters can be up to 4 char
 	int8_t log_messages; // -1 (override global), never log. 0 use global, 1 yes logging (override global)
 	time_t last_seen; // time. should be UTC.
-	uint8_t v3auth; // 0 no, 1 yes. Note: groups do not have v3auth, at all, but we set this on group peers when we have an authenticated pipe
+	uint8_t v3auth; // 0 no, 1 yes. Note: groups do not have v3auth, at all.
 	uint16_t vport; // externally visible on onion
 	uint16_t tport; // internal
 	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i.
@@ -709,7 +709,7 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 void broadcast_start(void);
 
 /* sql.c */
-int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint8_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
+int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
 void load_onion(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
@@ -717,7 +717,7 @@ int sql_exec(sqlite3** db,const char *command,const char *setting_value,const si
 int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len);
 int sql_insert_message(const int n,const int i);
 int sql_update_message(const int n,const int i);
-int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint8_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);
+int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);
 int sql_update_peer(const int n);
 int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages);
 int sql_populate_peer(void);

@@ -394,15 +394,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	const uint8_t stream = protocols[p_iter].stream;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols);
-	uint8_t send_both = 0;
-	uint8_t v3auth;
-	if(skip_prep) // message resend, n is -1
-		v3auth = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
-	else
-	{ // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
-		v3auth = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
-		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (protocol == ENUM_PROTOCOL_FILE_REQUEST && v3auth && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
-	}
+	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
+	if(!skip_prep) // message is NOT resend, n is > -1
+		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
 	other_fd: {} // NOTE: This is a totally new message, unlike messages that just get sent to all peers in a group (see while below)
@@ -414,7 +408,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		fd_type = 1; // PIPE_AUTH is exclusively sent out on sendfd
 	else if(cycle == 0 && send_both)
 		fd_type = 1;
-	else if(v3auth && getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected)))
+	else if(getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected)))
 		fd_type = 0; // put on recvfd for reliability & speed
 	else
 		fd_type = 1; // put on sendfd for safety (safer when not using v3auth, unless using authorized pipe)
@@ -949,12 +943,11 @@ void file_accept(const int n,const int f)
 			error_simple(0,"Cannot accept file. Have not set file path nor download directory.");
 			return;
 		}
-		const uint8_t v3auth = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth));
 		uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 		torx_read(n) // XXX
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
 		torx_unlock(n) // XXX
-		if(v3auth && threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests) && splits == 0 && split_hashes == NULL)
+		if(threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests) && splits == 0 && split_hashes == NULL)
 		{ // set splits to 1 if not already, but not on group files
 			splits = 1; // set default before split_read, which might overwrite it.
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));

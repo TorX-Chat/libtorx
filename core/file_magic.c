@@ -361,7 +361,7 @@ static inline void *peer_init(void *arg)
 					memcpy(peer_sign_pk,&buffer[2+56],sizeof(peer_sign_pk));
 					buffer[2+56] = '\0';// null terminate our expected onion, which corrupts our already removed peer_sign_pk
 					stripbuffer(buffer); // stripping invalid characters after we remove binary data
-					const uint8_t fresh_peerversion = (uint8_t)be16toh(align_uint16((void*)&buffer[0])); // TODO integer overflow potential
+					const uint16_t fresh_peerversion = be16toh(align_uint16((void*)&buffer[0]));
 					char fresh_peeronion[56+1];
 					memcpy(fresh_peeronion,&buffer[2],56);
 					fresh_peeronion[56] = '\0'; // necessary null termination
@@ -473,7 +473,7 @@ int peer_save(const char *arg1,const char *arg2) // peeronion, peernick.
 			break;
 		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // probably unnecessary, n should be the same as before?
 		const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-		const uint8_t peerversion = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		char privkey[88+1];
 		getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
 		char peeronion_local[56+1];
