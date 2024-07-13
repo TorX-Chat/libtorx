@@ -99,7 +99,6 @@ struct offsets offsets_peer[] = {
 	offsize(peer_list,peernick,"peernick"),
 	offsize(peer_list,log_messages,"log_messages"),
 	offsize(peer_list,last_seen,"last_seen"),
-	offsize(peer_list,v3auth,"v3auth"),
 	offsize(peer_list,vport,"vport"),
 	offsize(peer_list,tport,"tport"),
 	offsize(peer_list,socket_utilized,"socket_utilized"),

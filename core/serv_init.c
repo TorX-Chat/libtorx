@@ -366,6 +366,7 @@ static inline void *send_init(void *arg)
 			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 			event_strc->sockfd = socket;
+			event_strc->authenticated = 1; // this is sendfd. It is always authenticated.
 			event_strc->fd_type = 1; // sendfd
 			event_strc->n = n;
 			event_strc->fresh_n = -1;
@@ -425,8 +426,14 @@ void load_onion_events(const int n)
 			return;
 		}
 		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
+		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 		event_strc->sockfd = sock;
+		if(local_v3auth_enabled && peerversion > 1) // this is recvfd, we need to check.
+			event_strc->authenticated = 1;
+		else
+			event_strc->authenticated = 0;
 		event_strc->fd_type = 0; // recvfd
 		event_strc->n = n;
 		event_strc->fresh_n = -1;

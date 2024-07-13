@@ -212,7 +212,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	char peernick[56+1]; // note: asian characters can be up to 4 char
 	int8_t log_messages; // -1 (override global), never log. 0 use global, 1 yes logging (override global)
 	time_t last_seen; // time. should be UTC.
-	uint8_t v3auth; // 0 no, 1 yes. Note: groups do not have v3auth, at all.
 	uint16_t vport; // externally visible on onion
 	uint16_t tport; // internal
 	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i.
@@ -464,6 +463,7 @@ struct pass_strc { // XXX Do not sodium_malloc structs unless they contain sensi
 };
 struct event_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	evutil_socket_t sockfd;
+	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
 	int8_t fd_type; // 0 recvfd, 1 sendfd
 	int n;
 	int fresh_n; // for SING/MULT to pass internally

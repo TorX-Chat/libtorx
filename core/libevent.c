@@ -77,10 +77,27 @@ static inline void pipe_auth_and_request_peerlist(const int n)
 	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
 	sodium_memzero(peeronion,sizeof(peeronion));
-	const int g = set_g(n,NULL);
-	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-	const uint32_t trash = htobe32(peercount);
-	message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	if(owner == ENUM_OWNER_GROUP_PEER)
+	{ // sanity check, more or less.
+		const int g = set_g(n,NULL);
+		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t trash = htobe32(peercount);
+		message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
+	}
+	else
+		printf(RED"Checkpoint pipe_auth_and_request_peerlist CTRL\n"RESET);
+}
+
+static inline int pipe_auth_inbound(const int n,const int8_t fd_type,const char *buffer,const uint32_t buffer_len)
+{ // Handle Inbound ENUM_PROTOCOL_PIPE_AUTH. Returns n if valid, or -1 if invalid. Relies on message being signed.
+	int ret = -1;
+	char onion_group_n[56+1];
+	getter_array(&onion_group_n,sizeof(onion_group_n),n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+	if(fd_type == 0 && buffer_len == PIPE_AUTH_LEN + crypto_sign_BYTES && !memcmp(onion_group_n,buffer,56))
+		ret = n;
+	sodium_memzero(onion_group_n,sizeof(onion_group_n));
+	return ret;
 }
 
 static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
@@ -210,7 +227,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 							error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 							error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-								pipe_auth_and_request_peerlist(n); // this will trigger cascade
+								pipe_auth_and_request_peerlist(n); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 							else
 							{
 								const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -226,7 +243,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 						}
 						else if(pos > message_len)
 						{ // 2024/05/04 This is happening when massive amounts of sticker requests come in on same peer. Unknown reason. Possibly caused by race on deleted (stream) i.
-							error_printf(0,PINK"output_cb reported message pos > message_len: %u > %u. Likely will corrupt message. Packet len was %u. Coding error. Report this."RESET,pos,message_len,packet_len);
+							error_printf(0,PINK"output_cb reported message pos > message_len: %u > %u. Protocol: %s. Likely will corrupt message. Packet len was %u. Coding error. Report this."RESET,pos,message_len,name,packet_len);
 						//	breakpoint(); // not breaking because it can annoyingly lock up UI because GTK sucks
 							goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
 						}
@@ -431,6 +448,32 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				breakpoint();
 				return;
 			}
+			if(owner == ENUM_OWNER_CTRL && fd_type == 0 && event_strc->authenticated == 0 && protocol != ENUM_PROTOCOL_PIPE_AUTH)
+			{
+				error_printf(0,"Unexpected protocol received on ctrl before PIPE_AUTH: %u. Closing.",protocol);
+			/*	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+				if(local_v3auth_enabled == 0) // propose downgrade
+				{
+					const uint16_t trash_version = htobe16(1);
+					message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+				} */
+				sodium_memzero(read_buffer,packet_len);
+				bufferevent_free(bev); // close a connection and await a new accept_conn
+				return;
+			}
+			else if(owner == ENUM_OWNER_GROUP_CTRL)
+			{ // TODO decomplexify this sanity check. make it less expensive/redundant
+				const int g = set_g(n,NULL);
+				const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
+				if((g_invite_required == 1 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST))
+				|| (g_invite_required == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)))
+				{
+					error_printf(0,"Unexpected protocol received on group ctrl before PIPE_AUTH: %u. Closing.",protocol);
+					sodium_memzero(read_buffer,packet_len);
+					bufferevent_free(bev); // close a connection and await a new accept_conn
+					return;
+				}
+			}
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{ // Received Message type: Raw File data // TODO we do too much processing here. this might get CPU intensive.
 				int nn = n;
@@ -611,19 +654,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						event_strc->buffer = torx_secure_malloc(event_strc->buffer_len + (packet_len - cur));
 					memcpy(&event_strc->buffer[event_strc->buffer_len],&read_buffer[cur],packet_len - cur); // TODO segfault on 2023/10/26 twice. send a 1 byte file to replicate. segfaulted on 2023/11/22 also, on larger file
 					event_strc->buffer_len += packet_len - cur;
-					if(owner == ENUM_OWNER_GROUP_CTRL)
-					{ // TODO decomplexify this sanity check. make it less expensive/redundant
-						const int g = set_g(n,NULL);
-						const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-						if((g_invite_required == 1 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST))
-						|| (g_invite_required == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)))
-						{
-							error_printf(0,"Unexpected protocol received on group ctrl before PIPE_AUTH: %u. Closing.",protocol);
-							sodium_memzero(read_buffer,packet_len);
-							bufferevent_free(bev); // close a connection and await a new accept_conn
-							return;
-						}
-					}
 					if(complete) // XXX XXX XXX NOTE: All SIGNED messages must be in the COMPLETE area. XXX XXX XXX
 					{ // This has to be after the file struct is loaded (? what?)
 						if(event_strc->buffer_len < null_terminated_len + date_len + signature_len)
@@ -644,35 +674,29 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									continue; // Disgard if not signed by someone in group TODO notify user? print anonymous message?
 								if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
 								{ // After receiving this, we should be able to process unsigned messages as having known receiver, on this connection.
-									char onion_group_n[56+1];
-									getter_array(&onion_group_n,sizeof(onion_group_n),group_ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
-									if(owner == ENUM_OWNER_GROUP_CTRL && fd_type == 0 && event_strc->buffer_len == PIPE_AUTH_LEN + /*sizeof(uint16_t) +*/ crypto_sign_BYTES && !memcmp(onion_group_n,event_strc->buffer,56))
-									{ // Validated authenticated pipe, set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
-										sodium_memzero(onion_group_n,sizeof(onion_group_n));
-										torx_read(n) // XXX Do not mess with this block. (below)
-										struct bufferevent *bev_recv = peer[n].bev_recv;
-										torx_unlock(n) // XXX
-										torx_write(group_peer_n) // XXX
-										peer[group_peer_n].bev_recv = bev_recv; // 1st, order important
-										torx_unlock(group_peer_n) // XXX
-										torx_write(n) // XXX
-										peer[n].bev_recv = NULL; // 2nd, order important. do not free.
-										torx_unlock(n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
-										n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
-										owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // should 100% be ENUM_OWNER_GROUP_PEER ?
-										setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
-										const uint8_t recvfd_connected = 1; // important
-										setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-										event_strc->n = n; // important
-									}
-									else
-									{ // Fail
-										sodium_memzero(onion_group_n,sizeof(onion_group_n));
-										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH: fd_type=%d owner=%d len=%u",fd_type,owner,event_strc->buffer_len); // TODO 2024/03/23 Triggers on private group handshake. wrong fd_type could result from peer improperly queuing message?
+									if(owner != ENUM_OWNER_GROUP_CTRL || pipe_auth_inbound(group_ctrl_n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
+									{
+										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on GROUP_CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
 										sodium_memzero(read_buffer,packet_len);
 										bufferevent_free(bev); // close a connection and await a new accept_conn
-										return;
+										return; // Invalid. Might not hit this because we close buffer.
 									}
+									// Success. Set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
+									torx_read(n) // XXX Do not mess with this block. (below)
+									struct bufferevent *bev_recv = peer[n].bev_recv;
+									torx_unlock(n) // XXX
+									torx_write(group_peer_n) // XXX
+									peer[group_peer_n].bev_recv = bev_recv; // 1st, order important
+									torx_unlock(group_peer_n) // XXX
+									torx_write(n) // XXX
+									peer[n].bev_recv = NULL; // 2nd, order important. do not free.
+									torx_unlock(n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
+									n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
+									owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // should 100% be ENUM_OWNER_GROUP_PEER ?
+									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
+									const uint8_t recvfd_connected = 1; // important
+									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+									event_strc->n = n; // important
 								} // no need to return here, can carry on evaluating further data in buffer. could continue to avoid storing ENUM_PROTOCOL_PIPE_AUTH in ram
 								else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 								{
@@ -775,6 +799,19 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 								torx_free((void*)&prefixed_message);
+
+								if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
+								{
+									if(pipe_auth_inbound(n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
+									{
+										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
+										sodium_memzero(read_buffer,packet_len);
+										bufferevent_free(bev); // close a connection and await a new accept_conn
+										return; // Invalid. Might not hit this because we close buffer.
+									}
+									event_strc->authenticated = 1;
+									printf(RED"Checkpoint authed a CTRL\n"RESET);
+								}
 							}
 						}
 						int nn;
@@ -932,10 +969,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
 							error_printf(0,"Successfully received an upgrade proposal: %u",new_peerversion); // NOTE: recently untested 2023/11/16
 							const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-							if(new_peerversion != peerversion)
-							{ // Note: now facilitating downgrades
+							if(new_peerversion > peerversion)
+							{ // Note: currently not facilitating downgrades because we would have to take down sendfd
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
 								sql_update_peer(n);
+							/*	if(fd_type == 0 && new_peerversion < 2)
+									event_strc->authenticated = 0; */
 							}
 						}
 						else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
@@ -1209,7 +1248,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			if(!threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled))
 				trash = htobe16(1);
 			else
-				trash = htobe16(protocol_version);
+				trash = htobe16(torx_library_version[0]);
 			memcpy(&buffer_ln[0],&trash,sizeof(uint16_t));
 			getter_array(&buffer_ln[2],56,fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
 			memcpy(&buffer_ln[2+56],ed25519_pk,sizeof(ed25519_pk));
@@ -1380,8 +1419,15 @@ void *torx_events(void *arg)
 			// TODO 0u92fj20f230fjw ... to here. TODO
 			const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
-			if(owner == ENUM_OWNER_CTRL && threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1 && peerversion == 0)
-				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,(void*)(intptr_t)htobe16(protocol_version),sizeof(protocol_version)); // DO NOT FREE
+			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+printf(PINK"Checkpoint owner=%u global_v3auth=%u peerversion=%u\n"RESET,owner,local_v3auth_enabled,peerversion);
+			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion == 0))
+				pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
+			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion == 0)
+			{ // propose upgrade
+				const uint16_t trash_version = htobe16(torx_library_version[0]);
+				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+			}
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
@@ -1399,7 +1445,7 @@ void *torx_events(void *arg)
 					}
 				}
 				if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
-					pipe_auth_and_request_peerlist(n);
+					pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
 			}
 			peer_online(n); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 		}

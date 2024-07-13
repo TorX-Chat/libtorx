@@ -645,14 +645,10 @@ void load_onion(const int n)
 				return;
 			}
 			sodium_memzero(x25519_pk,sizeof(x25519_pk));
-			const uint8_t v3auth = 1;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&v3auth,sizeof(v3auth));
 			error_printf(3,"Incoming Auth: %s",incomingauthkey);
 		}
-		else if(!local_v3auth_enabled)
-			error_simple(0,"Warning: V3auth is not supported. Please upgrade Tor to >0.4.6.1 and exchange onionIDs again.");
-		else
-			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1 and exchange onionIDs again.");
+		else if(local_v3auth_enabled)
+			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1.");
 	}
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		vport = CTRL_VPORT;

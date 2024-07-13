@@ -336,7 +336,7 @@ static inline void *peer_init(void *arg)
 	if(!threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled))
 		trash = htobe16(1);
 	else
-		trash = htobe16(protocol_version);
+		trash = htobe16(torx_library_version[0]);
 	memcpy(&buffer[0],&trash,sizeof(uint16_t));
 	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
 	memcpy(&buffer[2+56],ed25519_pk,sizeof(ed25519_pk));

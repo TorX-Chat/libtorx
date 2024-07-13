@@ -14,8 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t protocol_version = 2; // 0-99 max. 00 is no auth, 01 is auth by default. If the handshake, PACKET_SIZE_MAX, and chat protocols don't become incompatible, this doesn't change.
-const uint16_t torx_library_version[4] = { protocol_version , 0 , 9 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 10 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -1872,7 +1871,6 @@ void zero_n(const int n) // XXX do not put locks in here
 	memset(peer[n].peernick,'0',sizeof(peer[n].peernick)-1);
 	peer[n].log_messages = 0;
 	peer[n].last_seen = 0;
-	peer[n].v3auth = 0;
 	peer[n].vport = 0;
 	peer[n].tport = 0;
 	peer[n].socket_utilized[0] = -1;
@@ -2359,6 +2357,7 @@ static inline void *start_tor_threaded(void *arg)
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_start_tor)
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	get_tor_version();
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	const char *tor_location_local = tor_location;
 	pthread_rwlock_unlock(&mutex_global_variable);
@@ -2680,7 +2679,6 @@ void initial_keyed(void)
 		tor_location = which("tor");
 	if(tor_location == NULL)
 		error_simple(-1,"Tor could not be located. Please install Tor or report this bug.");
-	get_tor_version();
 	/* Generate Tor Control Password and Start Tor */
 	random_string(control_password_clear,sizeof(control_password_clear));
 	hash_password(control_password_clear);
@@ -2775,7 +2773,6 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	sodium_memzero(peer[n].peernick,sizeof(peer[n].peernick)); // peer[n].peernick[0] = '\0';
 	peer[n].log_messages = 0;
 	peer[n].last_seen = 0;
-	peer[n].v3auth = 0;
 	peer[n].vport = 0;
 	peer[n].tport = 0;
 	peer[n].socket_utilized[0] = -1;

@@ -411,7 +411,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	else if(getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected)))
 		fd_type = 0; // put on recvfd for reliability & speed
 	else
-		fd_type = 1; // put on sendfd for safety (safer when not using v3auth, unless using authorized pipe)
+		fd_type = 1; // put on sendfd
 	// XXX Step 5: Build base message
 	char *message;
 	uint32_t message_len;
