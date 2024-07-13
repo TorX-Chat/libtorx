@@ -804,6 +804,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										return; // Invalid. Might not hit this because we close buffer.
 									}
 									event_strc->authenticated = 1;
+									if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
+									{ // propose upgrade
+										printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2\n"RESET);
+										const uint16_t trash_version = htobe16(torx_library_version[0]);
+										message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+									}
 									printf(RED"Checkpoint authed a CTRL\n"RESET);
 								}
 							}
@@ -1401,11 +1407,11 @@ void *torx_events(void *arg)
 			const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-printf(PINK"Checkpoint owner=%u global_v3auth=%u peerversion=%u\n"RESET,owner,local_v3auth_enabled,peerversion);
-			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion == 0))
+			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion < 2))
 				pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
-			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion == 0)
-			{ // propose upgrade
+			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion < torx_library_version[0])
+			{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
+				printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1\n"RESET);
 				const uint16_t trash_version = htobe16(torx_library_version[0]);
 				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
 			}
