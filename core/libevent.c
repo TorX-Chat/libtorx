@@ -449,14 +449,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				return;
 			}
 			if(owner == ENUM_OWNER_CTRL && fd_type == 0 && event_strc->authenticated == 0 && protocol != ENUM_PROTOCOL_PIPE_AUTH)
-			{
+			{ // NOTE: Do not ever attempt downgrades here or elsewhere. There are many reasons why it is a bad idea.
 				error_printf(0,"Unexpected protocol received on ctrl before PIPE_AUTH: %u. Closing.",protocol);
-			/*	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-				if(local_v3auth_enabled == 0) // propose downgrade
-				{
-					const uint16_t trash_version = htobe16(1);
-					message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
-				} */
 				sodium_memzero(read_buffer,packet_len);
 				bufferevent_free(bev); // close a connection and await a new accept_conn
 				return;
@@ -1308,27 +1302,14 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		const uint8_t recvfd_connected = 1;
 		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 	}
-	else /* if(fd_type == 1) */ // XXX should never trigger in accept_conn
-	{
-		error_simple(0,"Accept_conn occurred on sendfd. Report this.");
-		breakpoint();
-		const uint8_t sendfd_connected = 1;
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
-	}
+	else
+		error_simple(-1,"Accept_conn occurred on sendfd. Coding error. Report this.");
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
-	{
 		error_simple(1,"Existing Peer has connected to us.");
-//		bufferevent_disable(peer[n].bev_recv,EV_WRITE); // XXX ENABLED BY DEFAULT, TESTING DISABLED XXX
-		bufferevent_enable(bev_recv, EV_READ/*|EV_ET|EV_PERSIST*/);//EV_ET|EV_PERSIST|BEV_OPT_UNLOCK_CALLBACKS); XXX do not use BEV_OPT_DEFER_CALLBACKS (it causes some short packets not to be read immediately)
-	}
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
-	{
 		error_simple(1,"New potential peer has connected.");
-		bufferevent_enable(bev_recv, EV_READ); // XXX DO NOT ADD EV_WRITE because it triggers write_finished() immediately on connect, which has invalid fresh_n, segfault.
-	}
-	else
-		breakpoint(); // TODO If this never triggers, get rid of the above checks and just put bufferevent_enable(bev_recv, EV_READ);
+	bufferevent_enable(bev_recv, EV_READ); // XXX DO NOT ADD EV_WRITE because it triggers write_finished() immediately on connect, which has invalid fresh_n, segfault.
 	torx_write(n) // XXX
 	peer[n].bev_recv = bev_recv;
 	torx_unlock(n) // XXX
