@@ -36,7 +36,7 @@ char control_password_hash[61+1] = {0}; // does not need rwlock because only mod
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
-uint32_t tor_version[4] = {0}; // does not need rwlock because only modified once
+uint32_t tor_version[4] = {0};
 uint8_t sodium_initialized = 0; // Do not add a rwlock. Must be fast. Added to prevent SEVERE memory errors that are incredibly difficult to diagnose.
 uint8_t currently_changing_pass = 0; // TODO consider using mutex_sql_encrypted instead
 uint8_t first_run = 0; // TODO use for setting default torrc (ie, ask user). do not manually change this. This works and can be used as the basis for stuff (ex: an introduction or opening help in a GUI client)
@@ -2138,7 +2138,7 @@ static inline void hash_password(const char *password) // XXX Does not need lock
 	torx_free((void*)&ret);
 }
 
-static inline void get_tor_version(void) // XXX Does not need locks for the same reason intial_keyed doesn't.
+static inline void get_tor_version(void)
 { /* Sets the tor_version, decides v3auth_enabled */
 	if(!tor_location)
 		return;
@@ -2153,18 +2153,22 @@ static inline void get_tor_version(void) // XXX Does not need locks for the same
 		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location);
 	else
 	{
-		sscanf(ret,"%*s %*s %u.%u.%u.%u",&tor_version[0],&tor_version[1],&tor_version[2],&tor_version[3]);
-		error_printf(0,"Tor Version: %u.%u.%u.%u",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
-		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
-		{ // tor version >0.4.6.1
-			error_simple(0,"V3Auth is enabled by default.");
-			v3auth_enabled = 1;
-		}
+		uint32_t one,two,three,four;
+		sscanf(ret,"%*s %*s %u.%u.%u.%u",&one,&two,&three,&four);
+		error_printf(0,"Tor Version: %u.%u.%u.%u",one,two,three,four);
+		uint8_t local_v3auth_enabled;
+		if((one > 0 || two > 4 ) || (two == 4 && three > 6) || (two == 4 && three == 6 && four > 0 ))
+			local_v3auth_enabled = 1; // tor version >0.4.6.0
 		else // Disable v3auth if tor version <0.4.6.1
-		{
-			error_simple(0,"V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
-			v3auth_enabled = 0;
-		}
+			local_v3auth_enabled = 0;
+		error_simple(0,local_v3auth_enabled ? "V3Auth is enabled by default." : "V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		v3auth_enabled = local_v3auth_enabled;
+		tor_version[0] = one;
+		tor_version[1] = two;
+		tor_version[2] = three;
+		tor_version[3] = four;
+		pthread_rwlock_unlock(&mutex_global_variable);
 	}
 	torx_free((void*)&ret);
 }
