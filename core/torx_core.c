@@ -3691,7 +3691,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,0); // must NOT be stream (because must save). Must NOT be swappable.
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,1);
+	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,1);
 	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 //	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_NONE,1,1,0); // not in use

@@ -434,6 +434,7 @@ void load_onion_events(const int n)
 			event_strc->authenticated = 1;
 		else
 			event_strc->authenticated = 0;
+printf("Checkpoint loading: %u %u --> %d\n",local_v3auth_enabled,peerversion,event_strc->authenticated);
 		event_strc->fd_type = 0; // recvfd
 		event_strc->n = n;
 		event_strc->fresh_n = -1;

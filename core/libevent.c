@@ -100,6 +100,26 @@ static inline int pipe_auth_inbound(const int n,const int8_t fd_type,const char 
 	return ret;
 }
 
+static inline void begin_cascade_recv(const int n)
+{
+	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = min_i; i <= max_i; i++)
+	{
+		const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
+		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+		if(p_iter > -1)
+		{ // important check, to snuff out deleted messages
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint8_t stream = protocols[p_iter].stream;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if(stat == ENUM_MESSAGE_FAIL && stream == 0)
+				if(!send_prep(n,i,p_iter,0)) // Will do nothing if there are no messages to send
+					break; // allow cascading effect in output_cb
+		}
+	}
+}
+
 static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
 {
 	size_t drained = 0;
@@ -448,7 +468,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				breakpoint();
 				return;
 			}
-			if(owner == ENUM_OWNER_CTRL && fd_type == 0 && event_strc->authenticated == 0 && protocol != ENUM_PROTOCOL_PIPE_AUTH)
+			if(owner == ENUM_OWNER_CTRL && fd_type == 0 && event_strc->authenticated == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE))
 			{ // NOTE: Do not ever attempt downgrades here or elsewhere. There are many reasons why it is a bad idea.
 				error_printf(0,"Unexpected protocol received on ctrl before PIPE_AUTH: %u. Closing.",protocol);
 				sodium_memzero(read_buffer,packet_len);
@@ -971,10 +991,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 						{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
 							const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
-							error_printf(0,"Successfully received an upgrade proposal: %u",new_peerversion); // NOTE: recently untested 2023/11/16
 							const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 							if(new_peerversion > peerversion)
 							{ // Note: currently not facilitating downgrades because we would have to take down sendfd
+								error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
 								sql_update_peer(n);
 							/*	if(fd_type == 0 && new_peerversion < 2)
@@ -1282,33 +1302,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	}
 }
 
-static inline void begin_cascade_recv(const int n)
-{
-	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
-	for(int i = min_i; i <= max_i; i++)
-	{
-		const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
-		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-		if(p_iter > -1)
-		{ // important check, to snuff out deleted messages
-			pthread_rwlock_rdlock(&mutex_protocols);
-			const uint8_t stream = protocols[p_iter].stream;
-			pthread_rwlock_unlock(&mutex_protocols);
-			if(stat == ENUM_MESSAGE_FAIL && stream == 0)
-				if(!send_prep(n,i,p_iter,fd_type)) // Will do nothing if there are no messages to send
-					break; // allow cascading effect in output_cb
-		}
-	}
-}
-
 static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd, struct sockaddr *address, int socklen, void *ctx)
 { /* We got a new inbound connection! Set up a bufferevent for it. */
 	(void) address; // not using it, this just suppresses -Wextra warning
 	(void) socklen; // not using it, this just suppresses -Wextra warning
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
 	const int n = event_strc->n;
-	const int8_t fd_type = event_strc->fd_type;
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND) // Disconnect if anything other than status 1
 	{
@@ -1318,43 +1317,51 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		return;
 	}
 	torx_read(n) // XXX
-	struct event_strc *event_strc_existing = peer[n].bev_recv;
+	struct bufferevent *bev_recv_existing = peer[n].bev_recv;
 	torx_unlock(n) // XXX
-	if(event_strc_existing == NULL)
-	{
-		struct event_base *base = evconnlistener_get_base(listener);
-		struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
-
-		// event_strc_unique for use with bufferevent_setcb(), being a total copy of event_strc. Will set authenticated_pipe_n in read_conn.
-		struct event_strc *event_strc_unique = torx_insecure_malloc(sizeof(struct event_strc));
-		memcpy(event_strc_unique,event_strc,sizeof(struct event_strc));
-
-		evbuffer_enable_locking(bufferevent_get_output(bev_recv),NULL); // 2023/08/11 Necessary for full-duplex. Will lock and unlock automatically, no need to manually evbuffer_lock/evbuffer_unlock.
-		bufferevent_setcb(bev_recv, read_conn, write_finished, close_conn, event_strc_unique);
-		bufferevent_enable(bev_recv, EV_READ); // XXX DO NOT ADD EV_WRITE because it triggers write_finished() immediately on connect, which has invalid fresh_n, segfault.
-		torx_write(n) // XXX
-		peer[n].bev_recv = bev_recv; // 2024/07/13 TODO TODO TODO XXX Maybe this should have a null check before we replace bev_recv.
+	if(bev_recv_existing != NULL)
+	{ // TODO 2024/07/13 figure out how to free/destroy the old one (though we seemed fine not doing so up until now?)
+		error_simple(0,"There is already an existing bev_recv. Replacing it might have unintended consequences if we don't free/destroy the old one. Replacing regardless."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
+	/*	torx_write(n) // XXX
+		bufferevent_free(peer[n].bev_recv);
 		torx_unlock(n) // XXX
-
-		if(event_strc->authenticated)
-		{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
-			const uint8_t recvfd_connected = 1;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-
-			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-			if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
-				error_simple(1,"Existing Peer has connected to us.");
-			else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
-				error_simple(1,"New potential peer has connected.");
-
-			if(owner == ENUM_OWNER_CTRL)
-				begin_cascade_recv(n);
-			if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
-				peer_online(n); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
-		}
+		peer[n].bev_recv = NULL; */ // DO NOT DELETE THIS BLOCK. We probably have to make it work.
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+		if(owner == ENUM_OWNER_CTRL && (!local_v3auth_enabled || peerversion < 2))
+			event_strc->authenticated = 0; // must de-authenticate because we have no idea who is connecting in this case
 	}
-	else // IF we hit this, then it means we need to disable the existing check, but only when peerversion > 1 and ENUM_OWNER_CTRL and v3auth_enabled
-		error_simple(0,"There is already an existing event_strc. Permitting a replacement would be dangerous without v3auth. Report this.");
+	struct event_base *base = evconnlistener_get_base(listener);
+	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
+
+	// event_strc_unique for use with bufferevent_setcb(), being a total copy of event_strc. Will set authenticated_pipe_n in read_conn.
+	struct event_strc *event_strc_unique = torx_insecure_malloc(sizeof(struct event_strc));
+	memcpy(event_strc_unique,event_strc,sizeof(struct event_strc));
+
+	evbuffer_enable_locking(bufferevent_get_output(bev_recv),NULL); // 2023/08/11 Necessary for full-duplex. Will lock and unlock automatically, no need to manually evbuffer_lock/evbuffer_unlock.
+	bufferevent_setcb(bev_recv, read_conn, write_finished, close_conn, event_strc_unique);
+	bufferevent_enable(bev_recv, EV_READ); // XXX DO NOT ADD EV_WRITE because it triggers write_finished() immediately on connect, which has invalid fresh_n, segfault.
+	torx_write(n) // XXX
+	peer[n].bev_recv = bev_recv; // 2024/07/13 TODO TODO TODO XXX Maybe this should have a null check before we replace bev_recv.
+	torx_unlock(n) // XXX
+
+	if(event_strc->authenticated)
+	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
+		const uint8_t recvfd_connected = 1;
+		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
+			error_simple(1,"Existing Peer has connected to us.");
+		else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
+			error_simple(1,"New potential peer has connected.");
+
+		if(owner == ENUM_OWNER_CTRL)
+			begin_cascade_recv(n);
+		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
+			peer_online(n); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
+	}
 }
 
 static void error_conn(struct evconnlistener *listener, void *ctx)
@@ -1424,11 +1431,11 @@ void *torx_events(void *arg)
 			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion < 2))
 				pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
-			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion < torx_library_version[0])
+			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1/* && peerversion < torx_library_version[0]*/)
 			{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
 				printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1\n"RESET);
 				const uint16_t trash_version = htobe16(torx_library_version[0]);
-				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version)); // TODO this will fail 100% of the time because its STREAM
 			}
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
