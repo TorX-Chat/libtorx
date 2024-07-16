@@ -107,7 +107,7 @@ typedef u_short in_port_t;
 #define TOR_CTRL_IP "127.0.0.1" // note: in *nix, we could use unix sockets.
 #define SPLIT_DELAY 1 // 0 is writing checkpoint every packet, 1 is every 120kb, 2 is every 240kb, ... Recommend 1+. XXX 0 may cause divide by zero errors/crash?
 #define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
-
+#define MAX_INVITEES 4096
 #define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently. Set by the file offerer exlusively.
 
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
@@ -285,6 +285,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 struct group_list { // XXX NOTE: individual peers will be in peer struct but peer[n].owner != CTRL so they won't appear in peer list or show online notifications XXX
 	unsigned char id[GROUP_ID_SIZE]; // x25519_sk key, 32 bytes decoded, crypto_scalarmult_base to get _pk. PROBABLY SHOULD NOT CLEAR THIS WHEN DELETING (??? what)
 	int n; // n of our GROUP_CTRL
+	int invitees[MAX_INVITEES];
 	uint32_t hash; // only relevant to groups with 0 peers that we are broadcasting for
 	uint32_t peercount; // This is CONFIRMED PEERS, not reported by offers. Does NOT include us. DO NOT SET PEERCOUNT except with ++ or horrible things will happen.
 	uint32_t msg_count;
@@ -670,6 +671,8 @@ void *torx_realloc(void *arg,const size_t len_new);
 void zero_n(const int n);
 void zero_i(const int n,const int i);
 void zero_g(const int g);
+void invitee_add(const int g,const int n);
+int invitee_remove(const int g,const int n);
 char *mit_strcasestr(char *dumpster,const char *diver);
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search); // free required
 size_t stripbuffer(char *buffer);

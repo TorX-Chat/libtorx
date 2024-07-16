@@ -468,6 +468,11 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 				}
 			}
 		}
+		else if((protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST) && stat != ENUM_MESSAGE_RECV)
+		{ // Outbound group offer. Must add target peer to invitees.
+			const int g = set_g(-1,tmp_message);
+			invitee_add(g,n);
+		}
 	}
 	int i;
 	if(reverse)

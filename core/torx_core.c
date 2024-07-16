@@ -1902,6 +1902,8 @@ void zero_g(const int g)
 	pthread_rwlock_wrlock(&mutex_expand_group);
 	memset(group[g].id,'0',GROUP_ID_SIZE);
 	group[g].n = -1;
+	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
+		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
 	group[g].hash = 0; // please don't initialize as -1
 	group[g].peercount = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
@@ -1977,6 +1979,44 @@ static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
 		sorted_n[remaining-1] = highest_n;
 		sorted_n[highIndex] = temp_n;
 	}
+}
+
+void invitee_add(const int g,const int n)
+{
+	int invitee = 0;
+	pthread_rwlock_wrlock(&mutex_expand_group);
+	for(int first_negative_one = -1; invitee < MAX_INVITEES ; invitee++)
+	{
+		if(group[g].invitees[invitee] == -1 && first_negative_one < 0)
+			first_negative_one = invitee;
+		else if(group[g].invitees[invitee] == n)
+			break; // Already added
+		else if(group[g].invitees[invitee] == -2)
+		{ // Not in list
+			if(first_negative_one > -1) // Fill a gap
+				group[g].invitees[first_negative_one] = n;
+			else
+				group[g].invitees[invitee] = n;
+			break;
+		}
+	}
+	pthread_rwlock_unlock(&mutex_expand_group);
+	if(invitee == MAX_INVITEES)
+		error_simple(0,"Hit MAX_INVITEES in invitee_add. Report this.");
+}
+
+int invitee_remove(const int g,const int n)
+{
+	pthread_rwlock_wrlock(&mutex_expand_group);
+	for(int invitee = 0; invitee < MAX_INVITEES && group[g].invitees[invitee] != -2 ; invitee++)
+		if(group[g].invitees[invitee] == n)
+		{
+			group[g].invitees[invitee] = -1;
+			pthread_rwlock_unlock(&mutex_expand_group);
+			return 0;
+		}
+	pthread_rwlock_unlock(&mutex_expand_group);
+	return -1;
 }
 
 char *mit_strcasestr(char *dumpster,const char *diver)
@@ -2817,6 +2857,8 @@ static void initialize_g(const int g) // XXX do not put locks in here
 { // initalize an iter of the group struc
 	sodium_memzero(group[g].id,GROUP_ID_SIZE);
 	group[g].n = -1;
+	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
+		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
 	group[g].hash = 0; // please don't initialize as -1
 	group[g].peercount = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1

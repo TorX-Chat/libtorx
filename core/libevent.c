@@ -1062,6 +1062,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								//	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
 								//		message_send(n,ENUM_PROTOCOL_GROUP_PEERLIST,itoa(g)); // send a peerlist because this person doesn't have one
 								//	group_add_peer(g,group_peeronion,peer[n].peernick,group_peer_ed25519_pk,invitation); // note: was in message_send, moving up instead
+									if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY && invitee_remove(g,n))
+									{
+										error_simple(0,"Peer requested invitation into a group we have no record of inviting them into, or requested multiple invites. Refusing.");
+										continue;
+									}
 									struct int_char int_char;
 									int_char.i = g;
 									int_char.p = &event_strc->buffer[GROUP_ID_SIZE]; // group_peeronion;
