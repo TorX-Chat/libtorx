@@ -536,7 +536,7 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 		snprintf(peer[n].peernick,56+1,"%s",peernick);
 	if(owner == ENUM_OWNER_PEER)
 		random_string(peer[n].privkey,88+1);
-	else if(peer [n]. privkey != privkey) // checking to avoid "Source and destination overlap"
+	else if(peer[n].privkey != privkey) // checking to avoid "Source and destination overlap"
 		snprintf(peer[n].privkey,88+1,"%s",privkey);
 	if(sign_sk != NULL)
 		memcpy(peer[n].sign_sk,sign_sk,crypto_sign_SECRETKEYBYTES);

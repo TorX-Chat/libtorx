@@ -23,6 +23,38 @@ struct serv_strc { // Sodium malloc this struct due to sensitive arrays
 	int8_t in_pthread;
 };
 
+void generate_onion_simple(char onion[56+1],char privkey[88+1])
+{ // Simple utility function.
+	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd when sensitive
+	unsigned char ed25519_sk[crypto_sign_SECRETKEYBYTES]; // zero'd when sensitive
+	unsigned char expanded_sk[crypto_hash_sha512_BYTES]; // zero'd when sensitive
+	crypto_sign_keypair(ed25519_pk,ed25519_sk);
+	char *p;
+	if(onion)
+	{
+		if((p = onion_from_ed25519_pk(ed25519_pk)))
+		{
+			memcpy(onion,p,56+1);
+			torx_free((void*)&p);
+		}
+	}
+	if(privkey)
+	{
+		crypto_hash_sha512(expanded_sk,ed25519_sk,32);
+		expanded_sk[0] &= 248;
+		expanded_sk[31] &= 63;
+		expanded_sk[31] |= 64;
+		if((p = b64_encode(expanded_sk,crypto_hash_sha512_BYTES)))
+		{
+			memcpy(privkey,p,88+1);
+			torx_free((void*)&p);
+		}
+	}
+	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
+	sodium_memzero(expanded_sk,sizeof(expanded_sk));
+}
+
 /* static void increment(unsigned char *array,const size_t size)
 { // not using sodium_increment because it does something else. This function is tested and true. XXX do not delete until perfecting Method 2
 	for(size_t reverse = 1; reverse <= size; reverse++)

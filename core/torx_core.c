@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 10 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 11 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -79,7 +79,7 @@ uint32_t global_threads = 1; // for onion_gen(), cpu threads.
 uint32_t threads_max = 0; // max as detected by cpu_count()
 uint8_t auto_resume_inbound = 1; // automatically request resumption of inbound file transfers NOTE: only works on full_duplex transfers (relies on .split) TODO disabling this might be untested
 uint8_t full_duplex_requests = 1; // Requested files should utlize full duplex (split == 1), assuminng v3auth. Can interfere with receiving messages due to messages being added to end of buffer. // If 0, allowed for individual transfers to override this (from 0 to 1) for example if they are small and quick.
-uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if zero, just block and keep history)
+uint8_t kill_delete = 0; // delete peer and history when receiving kill code (if zero, just block and keep history)
 uint8_t hide_blocked_group_peer_messages = 0; // Note: blocking would require re-sorting, if hide is toggled
 uint8_t log_pm_according_to_group_setting = 1; // toggles whether or not PM logging should follow the logging settings of the group (useful to UI devs who might want to control group PM logging per-peer)
 double file_progress_delay = 1000000000; // nanoseconds (*1 billionth of a second)
@@ -3696,7 +3696,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,1);
-	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 //	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_NONE,1,1,0); // not in use
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);

@@ -233,7 +233,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 								sql_update_message(n,i);
 								print_message_cb(n,i,2);
 								if(protocol == ENUM_PROTOCOL_KILL_CODE)
-								{
+								{ // Sent Kill Code
 									error_simple(1,"Successfully sent a kill code. Deleting peer.");
 									const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 									takedown_onion(peer_index,1);
@@ -983,20 +983,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							const uint64_t last_transferred = getter_uint64(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[n].file[f].last_transferred;
 							transfer_progress(relevant_n,f,last_transferred); // triggering a stall
 						}
-						else if(protocol == ENUM_PROTOCOL_KILL_CODE)
-						{ // Receive Kill Code
-							error_simple(1,"Successfully received a kill code. Deleting peer.");
-							if(threadsafe_read_uint8(&mutex_global_variable,&kill_delete))
-							{
-								const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-								takedown_onion(peer_index,1);
-							}
-							else // just block, dont delete user and history (BAD IDEA)
-								block_peer(n);
-							disconnect_forever(bev,ctx);
-							error_simple(0,"TODO should probably return here to avoid actions on deleted n.2");
-							continue; // TODO added 2023/10/27 without testing TODO 
-						}
 						else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 						{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
 							const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
@@ -1171,6 +1157,36 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						{ // certain protocols discarded after processing, others stream_cb to UI
 							if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
 								stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len);
+						}
+						else if(protocol == ENUM_PROTOCOL_KILL_CODE)
+						{ // Receive Kill Code (note: it is here, not above, because we want the utf8_valid check) NOTE: Will not be saved, like stream.
+							if(threadsafe_read_uint8(&mutex_global_variable,&kill_delete))
+							{
+								error_printf(0,"Received a kill code with reason: %s. Deleting peer.",event_strc->buffer);
+								const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+								takedown_onion(peer_index,1);
+							}
+							else // just block, dont delete user and history (BAD IDEA)
+							{ // Generate fake privkey, onion, peeronion. They look real.
+								error_printf(0,"Received a kill code with reason: %s. Generating junk data and blocking peer.",event_strc->buffer);
+								char onion[56+1];
+								char privkey[88+1];
+								char peeronion[56+1];
+								generate_onion_simple(onion,privkey);
+								generate_onion_simple(peeronion,NULL);
+								torx_write(n) // XXX
+								memcpy(peer[n].onion,onion,sizeof(onion));
+								memcpy(peer[n].privkey,privkey,sizeof(privkey));
+								memcpy(peer[n].peeronion,peeronion,sizeof(peeronion));
+								torx_unlock(n) // XXX
+								sodium_memzero(onion,sizeof(onion));
+								sodium_memzero(privkey,sizeof(privkey));
+								sodium_memzero(peeronion,sizeof(peeronion));
+								block_peer(n); // this calls sql_update_peer, so no need to call again.
+							}
+							disconnect_forever(bev,ctx);
+							error_simple(0,"TODO should probably return here to avoid actions on deleted n.2");
+							continue; // TODO added 2023/10/27 without testing TODO 
 						}
 						else
 						{

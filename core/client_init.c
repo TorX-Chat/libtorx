@@ -651,8 +651,14 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	return 0; // could also return i
 }
 
-void kill_code(const int n)
+void kill_code(const int n,const char *explanation)
 { /* -1 (global) deletes all SING/MULT, cycles through CTRL list and add a kill_code on each */ // Does nothing for outgoing friend requests ("peer")
+	const char *explanation_local;
+	if(explanation)
+		explanation_local = explanation;
+	else
+		explanation_local = "None";
+	const uint32_t explanation_len = (uint32_t) strlen(explanation_local);
 	if(n == -1)
 	{ /* Global kill code */
 		for(int peer_index,nn = 0 ; (peer_index = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(nn,INT_MIN,-1,-1,offsetof(struct peer_list,onion)) != 0 ; nn++)
@@ -663,7 +669,7 @@ void kill_code(const int n)
 			if(owner_nn == ENUM_OWNER_CTRL)
 			{ /* Saves the kill code message to message log even if logging is turned off, to survive reboot */
 				sql_delete_history(peer_index);
-				message_send(nn,ENUM_PROTOCOL_KILL_CODE,NULL,0);
+				message_send(nn,ENUM_PROTOCOL_KILL_CODE,explanation_local,explanation_len);
 			}
 			else if(owner_nn == ENUM_OWNER_SING || owner_nn == ENUM_OWNER_MULT)
 				takedown_onion(peer_index,1);
@@ -673,7 +679,7 @@ void kill_code(const int n)
 	{ // Specific peer
 		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_delete_history(peer_index);
-		message_send(n,ENUM_PROTOCOL_KILL_CODE,NULL,0);
+		message_send(n,ENUM_PROTOCOL_KILL_CODE,explanation_local,explanation_len);
 	}
 }
 

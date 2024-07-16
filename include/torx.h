@@ -752,7 +752,7 @@ void DisableNagle(const int sendfd);
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
 int message_resend(const int n,const int i);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
-void kill_code(const int n); // must accept -1
+void kill_code(const int n,const char *explanation); // must accept -1
 void file_request_internal(const int n,const int f);
 void file_set_path(const int n,const int f,const char *path);
 void file_accept(const int n,const int f);
@@ -766,6 +766,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type);
 void *torx_events(void *arg);
 
 /* onion_gen.c */
+void generate_onion_simple(char onion[56+1],char privkey[88+1]);
 void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519_pk);
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
 
