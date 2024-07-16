@@ -455,6 +455,7 @@ struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensi
 	int n;
 	char *path;
 	time_t modified;
+	size_t size;
 };
 struct pass_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	char *password_old;

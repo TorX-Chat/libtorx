@@ -1047,7 +1047,7 @@ static inline void *file_init(void *arg)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Determine split count, allocate and populate split_hashes, generate hash of hashes
 		splits = UINT8_MAX;
-		size = get_file_size(file_strc->path);
+		size = file_strc->size;
 		while(splits && size / splits < MINIMUM_SECTION_SIZE)
 			splits--;
 		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
@@ -1111,7 +1111,7 @@ int file_send(const int n,const char *path)
 { // Caller is responsible for freeing *path
 	if(n < 0 || path == NULL || path[0] == '\0')
 		return -1;
-	struct stat file_stat = {0}; // TODO st_size is available but is limited to 4gb/int32_t. if it could be used, we could depreciate get_file_size() https://unix.stackexchange.com/questions/621157/why-is-the-type-of-stat-st-size-not-unsigned-int
+	struct stat file_stat = {0};
 	if(stat(path, &file_stat) < 0)
 	{
 		error_simple(0,"File seems to not exist. Cannot send.");
@@ -1119,6 +1119,7 @@ int file_send(const int n,const char *path)
 	}
 	struct file_strc *file_strc = torx_insecure_malloc(sizeof(struct file_strc));
 	file_strc->modified = file_stat.st_mtime;
+	file_strc->size = (size_t)file_stat.st_size;
 	file_strc->n = n;
 	const size_t path_len = strlen(path);
 	file_strc->path = torx_secure_malloc(path_len+1);

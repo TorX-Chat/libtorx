@@ -936,6 +936,23 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				sodium_memzero(checksum,sizeof(checksum));
 				sodium_memzero(checksum_complete,sizeof(checksum_complete));
 			}
+			struct timeval new_times[2] = {0};		// Set the desired access and modification times
+			new_times[0].tv_sec = time(NULL);		// Access time (epoch time)
+			new_times[0].tv_usec = 0;			// Microseconds part of access time
+			torx_read(n) // XXX
+			new_times[1].tv_sec = peer[n].file[f].modified;	// Modification time (epoch time)
+			torx_unlock(n) // XXX
+			new_times[1].tv_usec = 0;			// Microseconds part of modification time
+			if(utimes(file_path, new_times))
+			{ // Failed to set modification time (this is fine)
+				struct stat file_stat = {0};
+				if(!stat(file_path, &file_stat))
+				{ // Read modification time from disk instead
+					torx_write(n) // XXX
+					peer[n].file[f].modified = file_stat.st_mtime;
+					torx_unlock(n) // XXX
+				}
+			}
 			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 		}

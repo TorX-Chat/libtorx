@@ -892,6 +892,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								printf("Checkpoint path: %s\n",file_path);
 								continue;
 							}
+							if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
+							{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
+								struct stat file_stat = {0};
+								if(stat(file_path, &file_stat) || file_stat.st_mtime != getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified)))
+								{ // File cannot be accessed or has an unexpected modification time
+									error_simple(0,"Requested file cannot be accessed or has been modified since offer. Try re-offering it.");
+									continue;
+								}
+							}
 							// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
 							torx_write(nn) // XXX
 							peer[nn].file[f].outbound_start[fd_type] = requested_start;
