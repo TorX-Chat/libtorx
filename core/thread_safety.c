@@ -54,6 +54,15 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 				memcpy(string,peer[n].file[f].file_path,len);
 			}
 		}
+		else if(offset == offsetof(struct file_list,split_path))
+		{
+			if(peer[n].file[f].split_path)
+			{
+				len = (uint32_t)strlen(peer[n].file[f].split_path) + 1;
+				string = torx_secure_malloc(len);
+				memcpy(string,peer[n].file[f].split_path,len);
+			}
+		}
 		else
 			error_printf(-1,"Invalid offset passed to getter_string2: %lu. Coding error. Report this.",offset);
 	}

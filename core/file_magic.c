@@ -663,17 +663,12 @@ static void set_split_path(const int n,const int f)
 
 static inline int split_read(const int n,const int f)
 { // File is in binary format. Checksum,nos,split_info
-	torx_read(n) // XXX
-	const char *split_path = peer[n].file[f].split_path;
-	torx_unlock(n) // XXX
+	char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(!split_path)
-	{
 		set_split_path(n,f);
-		torx_read(n) // XXX
-		split_path = peer[n].file[f].split_path;
-		torx_unlock(n) // XXX
-	}
+	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
+	torx_free((void*)&split_path);
 	uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	if(fp)
 	{
@@ -744,14 +739,9 @@ int initialize_split_info(const int n,const int f)
 	char *split_path = peer[n].file[f].split_path;
 	torx_unlock(n) // XXX
 	if(split_path == NULL)
-	{
 		set_split_path(n,f);
-		torx_read(n) // XXX
-		split_path = peer[n].file[f].split_path;
-		torx_unlock(n) // XXX
-	}
 	torx_read(n) // XXX
-	uint64_t *split_info = peer[n].file[f].split_info;
+	const uint64_t *split_info = peer[n].file[f].split_info;
 	torx_unlock(n) // XXX
 	if(split_info == NULL)
 	{ // Initialize if not already
@@ -759,10 +749,10 @@ int initialize_split_info(const int n,const int f)
 		struct stat file_stat = {0};
 		torx_read(n) // XXX
 		const int stat_file = stat(peer[n].file[f].file_path, &file_stat);
-		split_info = peer[n].file[f].split_info;
 		torx_unlock(n) // XXX
 		const uint8_t local_full_duplex_requests = threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests);
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 		if(local_full_duplex_requests && stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
 			printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
@@ -787,23 +777,28 @@ int initialize_split_info(const int n,const int f)
 			if((fp = fopen(split_path,"w+")) == NULL)
 			{ // BAD, permissions issue, cannot create file
 				error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
+				torx_free((void*)&split_path);
 				return -1;
 			}
+			torx_free((void*)&split_path);
 			unsigned char checksum[CHECKSUM_BIN_LEN];
 			getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
 			sodium_memzero(checksum,sizeof(checksum));
+			uint64_t relevant_split_info[splits+1];
+			torx_read(n) // XXX
+			memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
+			torx_unlock(n) // XXX
 			fwrite(&splits,1,sizeof(splits),fp);
-			fwrite(split_info,1,sizeof(uint64_t)*(splits+1),fp);
+			fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
 			fclose(fp); fp = NULL;
 		}
 		else if(local_full_duplex_requests == 0 && stat_file == 0)
 		{ // Read half-duplex
 			printf("Checkpoint initializing a half-duplex\n");
-			torx_read(n) // XXX
-			const char *file_path = peer[n].file[f].file_path;
-			torx_unlock(n) // XXX
+			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 			const uint64_t file_size = get_file_size(file_path);
+			torx_free((void*)&file_path);
 			if(file_size)
 			{
 				if(file_size > size)
@@ -838,16 +833,17 @@ void split_update(const int n,const int f,const int section)
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
 	const char *split_path = peer[n].file[f].split_path;
-	const uint64_t *split_info = peer[n].file[f].split_info;
 	torx_unlock(n) // XXX
 	if(splits == 0 || split_path == NULL)
 		return;
 	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(status == ENUM_FILE_INBOUND_COMPLETED || status == ENUM_FILE_INBOUND_REJECTED || status == ENUM_FILE_INBOUND_CANCELLED) // || section == -1
 	{ //  destroying split file in case of ENUM_FILE_INBOUND_CANCELLED would be bad in group chats.
 	//	peer[n].file[f]. splits = 0;
 	//	printf("Checkpoint split_update DELETING\n"); 
 		destroy_file(split_path);
+		torx_free((void*)&split_path);
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].split_path);
 //		free(peer[n].file[f].split_info); peer[n].file[f].split_info = NULL;
@@ -863,10 +859,15 @@ void split_update(const int n,const int f,const int section)
 			if((fp=fopen(split_path,"w+")) == NULL)
 			{
 				error_printf(0,"Check permissions. Cannot open split file2: %s",split_path);
+				torx_free((void*)&split_path);
 				return;
 			}
+		torx_free((void*)&split_path);
+		torx_read(n) // XXX
+		const uint64_t relevant_split_info = peer[n].file[f].split_info[section];
+		torx_unlock(n) // XXX
 		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits TODO might be +1 byte off
-		fwrite(&split_info[section],1,sizeof(uint64_t)*1,fp); // write contents
+		fwrite(&relevant_split_info,1,sizeof(relevant_split_info),fp); // write contents
 		fclose(fp); fp = NULL;
 	}
 }
@@ -887,21 +888,19 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		else /* if(fd_type == 1) */ // sendfd, inbound
 			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-		torx_read(n) // XXX
-		const char *file_path = peer[n].file[f].file_path;
-		torx_unlock(n) // XXX
+		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{ // Run checksum on the group file's individual section
 			const uint64_t start = calculate_section_start(size,splits,section);
 			const uint64_t end = calculate_section_start(size,splits,section+1)-1;
 			const uint64_t len = end-start+1;
 			unsigned char checksum[CHECKSUM_BIN_LEN];
+			const uint64_t ret1 = b3sum_bin(checksum,file_path,NULL,start,len);
 			torx_read(n) // XXX
-			unsigned char *split_hashes = peer[n].file[f].split_hashes;
+			const int ret2 = memcmp(checksum,&peer[n].file[f].split_hashes[CHECKSUM_BIN_LEN*section],CHECKSUM_BIN_LEN);
 			torx_unlock(n) // XXX
-			uint64_t ret1 = 0;
-			int ret2 = 0;
-			if((ret1 = b3sum_bin(checksum,file_path,NULL,start,len)) == 0 || (ret2 = memcmp(checksum,&split_hashes[CHECKSUM_BIN_LEN*section],CHECKSUM_BIN_LEN)))
+			sodium_memzero(checksum,sizeof(checksum));
+			if(ret1 == 0 || ret2)
 			{ // TODO Untested
 				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete.");
 				printf("Checkpoint bad section: %lu %d\n",ret1,ret2);
@@ -956,6 +955,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 		}
+		torx_free((void*)&file_path);
 		file_request_internal(n,f);
 		split_update(n,f,section); // should usually occur when a section is finished, ie == Writes may go slightly beyond a section. This might be OK (with non-malicious peers) because it will just incur minor overwrites later, since that overwrite area will still be requested again, but would be bad from a malicious peer TODO
 	}

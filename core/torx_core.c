@@ -1087,7 +1087,9 @@ void message_sort(const int g)
 	if(peerlist && peercount > 0)
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{ // Warning: use peer_n not nn
-			const int peer_n = peerlist[nn];
+			pthread_rwlock_rdlock(&mutex_expand_group);
+			const int peer_n = group[g].peerlist[nn];
+			pthread_rwlock_unlock(&mutex_expand_group);
 			torx_read(peer_n) // XXX
 			const uint8_t status = peer[peer_n].status;
 			const int max_i = peer[peer_n].max_i;

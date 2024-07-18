@@ -192,7 +192,9 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				trash = htobe16(protocol);
 				memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
 				/* XXX sanity check start */
+				torx_read(n) // XXX
 				const size_t allocated = torx_allocation_len(peer[n].message[i].message);
+				torx_unlock(n) // XXX
 				const size_t reading = start + (size_t)packet_len - prefix_len;
 				if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
 					error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);

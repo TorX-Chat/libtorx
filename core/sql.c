@@ -453,18 +453,16 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 					const int g = set_g(n,NULL);
 					const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 					const int f = set_f(group_n,(const unsigned char*)message,CHECKSUM_BIN_LEN);
-					torx_read(group_n) // XXX
-					const char *file_path = peer[group_n].file[f].file_path;
-					torx_unlock(group_n) // XXX
+					char *file_path = getter_string(NULL,group_n,INT_MIN,f,offsetof(struct file_list,file_path));
 					process_file_offer_outbound(group_n,(const unsigned char*)message,splits,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)])),file_path);
+					torx_free((void*)&file_path);
 				}
 				else
 				{
 					const int f = set_f(n,(const unsigned char*)message,CHECKSUM_BIN_LEN);
-					torx_read(n) // XXX
-					const char *file_path = peer[n].file[f].file_path;
-					torx_unlock(n) // XXX
+					char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 					process_file_offer_outbound(n,(const unsigned char*)message,0,NULL,be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN+sizeof(uint64_t)])),file_path);
+					torx_free((void*)&file_path);
 				}
 			}
 		}
@@ -789,48 +787,47 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
-	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
 	int val = -1;
-	torx_read(n) // XXX
-	const char *tmp_message = peer[n].message[i].message;
-	torx_unlock(n) // XXX
+	uint32_t message_len;
+	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));;
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 		val = sql_exec(&db_messages,command,NULL,0); // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
-	else if(null_terminated_len == 0 && tmp_message)
+	else if(null_terminated_len == 0 && message)
 	{ // Prevent update_blob from triggering on outbound group_public messages, even if binary only
 		val = sql_exec(&db_messages,command,NULL,0);
 		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,tmp_message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
+		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
 	}
-	else if(null_terminated_len && tmp_message)
-		val = sql_exec(&db_messages,command,tmp_message,strlen(tmp_message)); // TODO 2024/07/03 segfaulted on strlen heres
+	else if(null_terminated_len && message)
+		val = sql_exec(&db_messages,command,message,strlen(message)); // TODO 2024/07/03 segfaulted on strlen heres
 	else
-		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,tmp_message ? 1 : 0);
+		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,message ? 1 : 0);
+	torx_free((void*)&message);
 	return val;
 }
-
 
 /* TODO this triggers far more often than necessary. Triggers once for every outbound file request, which occurs for every split. Ideally should just trigger upon first and then again after unpause perhaps... */
 #define sql_message_tail_section \
 	if(signature_len) /* Update signature (only) */ \
-		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&tmp_message[message_len-crypto_sign_BYTES],crypto_sign_BYTES); \
+		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES); \
 	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV) \
 	{ /* save file_path as extraneous */ /* goat */ \
 		int nn = n; \
-		int f = set_f(nn,(const unsigned char *)tmp_message,CHECKSUM_BIN_LEN-1); \
+		int f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1); \
 		if(f > -1) \
 		{ \
-			torx_read(nn) \
-			const char *file_path = peer[nn].file[f].file_path; \
-			torx_unlock(nn) \
+			char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path)); \
 			if(file_path) /* not always true */ \
+			{ \
 				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path)); \
+				torx_free((void*)&file_path); \
+			} \
 		} \
 		else \
 		{ /* not pm/p2p, must be group transfer */ \
 			const int g = set_g(n,NULL); \
 			nn = getter_group_int(g,offsetof(struct group_list,n)); \
-			f = set_f(nn,(const unsigned char *)tmp_message,CHECKSUM_BIN_LEN); \
+			f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
 		} \
 	}
 
@@ -870,10 +867,9 @@ int sql_insert_message(const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(logged == 0 || !log_check(n,group_pm))
 		return 0; // do not log these
-	torx_read(n) // XXX
-	const char *tmp_message = peer[n].message[i].message;
-	torx_unlock(n) // XXX
-	if(!tmp_message)
+	uint32_t message_len;
+	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
+	if(!message)
 	{
 		error_printf(0,"Null message passed to sql_insert_message. Not saving. Report this. Protocol: %u",protocol);
 		breakpoint();
@@ -885,7 +881,6 @@ int sql_insert_message(const int n,const int i)
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
-	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 	{ // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
 		char command[512]; // size is somewhat arbitrary
@@ -901,6 +896,7 @@ int sql_insert_message(const int n,const int i)
 		sodium_memzero(command,sizeof(command));
 		sql_message_tail_section // XXX
 	}
+	torx_free((void*)&message);
 	return val;
 }
 
@@ -926,15 +922,15 @@ int sql_update_message(const int n,const int i)
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
-	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
+
 	char command[512]; // size is somewhat arbitrary
 	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET (stat,protocol,message_txt) = (%d,%d,?) WHERE time = %ld AND nstime = %ld AND peer_index = %d;",stat,protocol,time,nstime,peer_index);
 	const int val = sql_exec_msg(n,i,command); // Update message
 	sodium_memzero(command,sizeof(command));
-	torx_read(n) // XXX
-	const char *tmp_message = peer[n].message[i].message;
-	torx_unlock(n) // XXX
+	uint32_t message_len;
+	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
 	sql_message_tail_section // XXX
+	torx_free((void*)&message);
 	return val;
 }
 
@@ -992,13 +988,13 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	const int min_i = peer[n].min_i;
 	const time_t earliest_time = peer[n].message[min_i].time;
 	const time_t earliest_nstime = peer[n].message[min_i].nstime;
-	const char *tmp_message = peer[n].message[0].message;
+	const char *zero_message = peer[n].message[0].message;
 	torx_unlock(n) // XXX
 	sqlite3_stmt *stmt;
 	char command[512]; // size is somewhat arbitrary
 	int len = 0; // clang thinks this should be initialized, but I disagree.
 	uint8_t reverse;
-	if(tmp_message == NULL)
+	if(zero_message == NULL)
 	{ // On startup
 		reverse = 0;
 		if(days)
@@ -1029,8 +1025,6 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const time_t nstime = (time_t)sqlite3_column_int(stmt, 1);
 		const uint8_t message_stat = (uint8_t)sqlite3_column_int(stmt, 3);
 		const uint16_t protocol = (uint16_t)sqlite3_column_int(stmt, 4);
-		const char *message;
-		uint32_t message_len;
 		int column;
 		const int p_iter = protocol_lookup(protocol);
 		pthread_rwlock_rdlock(&mutex_protocols);
@@ -1043,8 +1037,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			column = 6;
 		else
 			column = 5;
-		message = (const char *)sqlite3_column_text(stmt, column);
-		message_len = (uint32_t)sqlite3_column_bytes(stmt, column);
+		const char *message = (const char *)sqlite3_column_text(stmt, column);
+		uint32_t message_len = (uint32_t)sqlite3_column_bytes(stmt, column);
 		const unsigned char *signature = sqlite3_column_blob(stmt, 7);
 		const size_t signature_length = (size_t)sqlite3_column_bytes(stmt, 7);
 		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
@@ -1603,8 +1597,7 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 		}
 	}
 	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %ld AND nstime = %ld;",peer_index,time,nstime);
-	int val = sql_exec(&db_messages,command,NULL,0);
-	return val;
+	return sql_exec(&db_messages,command,NULL,0);
 }
 
 int sql_delete_history(const int peer_index)
@@ -1633,8 +1626,7 @@ int sql_delete_history(const int peer_index)
 		}
 	}
 	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index);
-	int val = sql_exec(&db_messages,command,NULL,0);
-	return val;
+	return sql_exec(&db_messages,command,NULL,0);
 }
 
 int sql_delete_peer(const int peer_index)

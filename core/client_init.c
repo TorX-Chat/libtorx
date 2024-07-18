@@ -176,7 +176,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
 			torx_read(n) // XXX
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
-			error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[n].file[f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
+		//	error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[n].file[f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
 			torx_unlock(n) // XXX
 		}
 
@@ -229,8 +229,8 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			error_simple(0,"Presently no support for requesting 1 and 0 byte length files.");
 			goto error; // abandoning attempts to support until we abolish message_send cycles
 		}
-		torx_write(n) // XXX
 		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,section,target_n,fd_type);
+		torx_write(n) // XXX
 		peer[n].file[f].split_status[section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 		peer[n].file[f].split_status_fd[section] = fd_type;
 		torx_unlock(n) // XXX
@@ -573,16 +573,17 @@ int message_resend(const int n,const int i)
 	}
 	time_t time = 0;
 	time_t nstime = 0;
-	torx_read(n) // XXX
-	const char *message = peer[n].message[i].message;
-	const uint32_t message_len = peer[n].message[i].message_len;
 	if(target_g > -1 && date_len && signature_len)
 	{ // Keep the existing times (ie, resend only) only if its a group using signed && dated messages (ie private groups)
+		torx_read(n) // XXX
 		time = peer[n].message[i].time;
 		nstime = peer[n].message[i].nstime;
+		torx_unlock(n) // XXX
 	}
-	torx_unlock(n) // XXX
+	uint32_t message_len;
+	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
 	message_distribute(1,-1,owner,n,-1,-1,target_g,target_g_peercount,p_iter,message,message_len,time,nstime);
+	torx_free((void*)&message);
 	return 0;	
 }
 
@@ -711,23 +712,18 @@ static inline int select_peer(const int group_n,const int f)
 		}
 		int utilized = 0;
 		for(uint8_t section = 0; section <= splits; section++)
-		{ // Loop through all peers looking for the largest (most complete) section... literally any section.
+		{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 			torx_read(group_n) // XXX
 			const uint64_t offerer_progress = peer[group_n].file[f].offer[o].offer_info[section];
+			const int split_status_n = peer[group_n].file[f].split_status[section];
+			const uint64_t relevant_progress = peer[group_n].file[f].split_info[section];
 			torx_unlock(group_n) // XXX
-
-			// TODO TODO TODO TODO
-			// 	continue if we have completed this section or if it is already being requested from someone else
-			if(peer[group_n].file[f].split_status[section] == offerer_n)
+			if(split_status_n == offerer_n)
 				utilized++;
 			if(utilized >= online)
 				break;
-			if(peer[group_n].file[f].split_status[section] != -1)
+			if(split_status_n != -1 || relevant_progress >= offerer_progress)
 				continue;
-			if(peer[group_n].file[f].split_info[section] >= offerer_progress)
-				continue;
-			// TODO TODO TODO TODO
-
 			if(offerer_progress >= tentative_progress)
 			{ // >= should result in the largest most recent offer being selected
 				tentative_n = offerer_n;
@@ -1027,10 +1023,9 @@ void file_cancel(const int n,const int f)
 		process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL); // set status and close file descriptors, must be set AFTER section_unclaim
 		if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED)
 		{ // these are old statuses, which would have been changed by process_pause_cancel, so be aware not to read fresh here
-			torx_read(n) // XXX
-			const char *file_path = peer[n].file[f].file_path;
-			torx_unlock(n) // XXX
+			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
+			torx_free((void*)&file_path);
 			split_update(n,f,-1); // destroys split file and frees/nulls resources
 		}
 		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
