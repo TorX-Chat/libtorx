@@ -3041,7 +3041,7 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 }
 
 int set_last_message(int *nn,const int n,const int count_back)
-{ /* Helper to determine the last message worth displaying in peer list. UI can use this or an alternative. */ // WARNING: May return -1;
+{ /* Helper to determine the last message worth displaying in peer list. UI can use this or an alternative. */ // WARNING: May return INT_MIN;
 	int finalized_count_back = count_back;
 	int current_count_back = 0;
 	if(finalized_count_back < 1) // non-fatal sanity check
@@ -3076,7 +3076,7 @@ int set_last_message(int *nn,const int n,const int count_back)
 		const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 		const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 		int i = max_i;
-		if(i > min_i - 1)
+		if(i >= min_i)
 		{ // Critical check
 		//	for(int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)); threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) == 0 ; p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)))
 		//		if(--i == -1) // do NOT modify. this should be --i, not i++
@@ -3084,10 +3084,17 @@ int set_last_message(int *nn,const int n,const int count_back)
 			while(1)
 			{ // DO NOT CHANGE ORDER OR LOGIC. The logic is complex
 				const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-				if((p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back) || --i < min_i)
+				if((p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back))
 					break;
+				else if(--i < min_i)
+				{
+					i = INT_MIN;
+					break;
+				}
 			}
 		}
+		else
+			i = INT_MIN;
 		if(nn)
 			*nn = n;
 		return i;
