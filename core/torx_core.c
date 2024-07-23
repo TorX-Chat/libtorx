@@ -4096,10 +4096,6 @@ static inline void *login_threaded(void *arg)
 		sqlite3_key(db_messages, local_decryption_key, sizeof(local_decryption_key));
 		if(first_run && password_len == 0) // DO NOT DELETE THIS, lol. anyone who deletes this conditional is a glowie.
 			sql_setting(1,-1,"decryption_key",(const char *)local_decryption_key, sizeof(local_decryption_key));
-		pthread_rwlock_wrlock(&mutex_global_variable);
-		memcpy(decryption_key,local_decryption_key, sizeof(local_decryption_key)); // intermediary is necessary, do not eliminate
-		sodium_memzero(decryption_key,sizeof(decryption_key));
-		pthread_rwlock_unlock(&mutex_global_variable);
 		initial_keyed();
 	}
 	else
