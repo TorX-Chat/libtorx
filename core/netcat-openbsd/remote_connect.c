@@ -43,7 +43,7 @@ static const int Oflag = SOCKET_SO_SNDBUF;	//TorX mod		/* TCP send buffer size *
 static const int Sflag = 1;			//TorX mod		/* TCP MD5 signature option */ // unsure if this does anything for us
 static const int TCP_MD5SIG_ignore = 1;				// unknown. Default was 0 but seems to work with 1 so lets enable it for lulz https://man.openbsd.org/tcp https://blog.habets.se/2019/11/TCP-MD5.html
 
-static void set_common_sockopts(evutil_socket_t proxyfd)
+static inline void set_common_sockopts(evutil_socket_t proxyfd)
 { // TODO 2024/03/03 SO_RCVBUF/SO_SNDBUF are overwritten by Disable_nagle and set to SOCKET_SO_SNDBUF, so setting them here is pointless.
 	const int x = 1;
 	if(Sflag)
@@ -59,14 +59,23 @@ static void set_common_sockopts(evutil_socket_t proxyfd)
 
 static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr *name, socklen_t namelen)
 {
+	#ifdef WIN32
+	WSAPOLLFD pfd = {0};
+	#else
 	struct pollfd pfd = {0};
+	#endif
 	int optval = 0;
 	int ret;
 	if((ret = connect(proxyfd, name, namelen)) != 0) // && errno == EINPROGRESS
 	{
 		pfd.fd = proxyfd;
 		pfd.events = POLLOUT;
-		if((ret = poll(&pfd, 1, MESSAGE_TIMEOUT)) == 1) 
+		#ifdef WIN32
+		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT)
+		#else
+		ret = poll(&pfd, 1, MESSAGE_TIMEOUT);
+		#endif
+		if(ret == 1)
 		{
 			socklen_t optlen = sizeof(optval);
 			if((ret = getsockopt(proxyfd, SOL_SOCKET, SO_ERROR, (char *) &optval, &optlen)) == 0) // This occurs on startup with optval == 0, if connections get attempted before sockets are up. Not a big deal. // errno = optval;

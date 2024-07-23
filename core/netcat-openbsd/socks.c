@@ -70,7 +70,7 @@
 /*
  *Error strings taken almost directly from RFC 1928.
  *//*
-static const char *socks5_strerror(int e)
+static inline const char *socks5_strerror(int e)
 {
 	switch (e) 
 	{
@@ -97,7 +97,7 @@ static const char *socks5_strerror(int e)
 	}
 } */
 
-static int decode_addrport(const char *h, const char *p, struct sockaddr *addr, socklen_t addrlen, int numeric)
+static inline int decode_addrport(const char *h, const char *p, struct sockaddr *addr, socklen_t addrlen, int numeric)
 {
 	struct addrinfo hints, *res = {0};
 	memset(&hints, 0, sizeof(hints));
@@ -125,19 +125,32 @@ static int decode_addrport(const char *h, const char *p, struct sockaddr *addr, 
 /*
  *ensure all of data on socket comes through. f==read || f==vwrite
  */
-static size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_t fd, void *_s, size_t n)
+static inline size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_t fd, void *_s, size_t n)
 {
 	char *s = _s;
 	size_t pos = 0;
+	#ifdef WIN32
+	WSAPOLLFD pfd = {0};
+	#else
 	struct pollfd pfd = {0};
+	#endif
 	pfd.fd = fd;
 	pfd.events = f == read ? POLLIN : POLLOUT;
 	while (n > pos)
 	{
-		ssize_t res = (f) (fd, s + pos, n - pos);
+		const ssize_t res = (f) (fd, s + pos, n - pos);
 		switch (res)
 		{
 			case -1:
+				#ifdef WIN32
+				if (WSAGetLastError() == WSAEINTR)
+					continue;
+				if ((WSAGetLastError() == WSAEWOULDBLOCK) || (WSAGetLastError() == WSAENOBUFS))
+				{
+					(void)WSAPoll(&pfd, 1, -1);
+					continue;
+				}
+				#else
 				if(errno == EINTR)
 					continue;
 				if((errno == EAGAIN) || (errno == ENOBUFS))
@@ -145,9 +158,14 @@ static size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_t fd, v
 					(void)poll(&pfd, 1, -1);
 					continue;
 				}
+				#endif
 				return 0;
 			case 0:
+				#ifdef WIN32
+				WSASetLastError(WSAESHUTDOWN);
+				#else
 				errno = EPIPE;
+				#endif
 				return pos;
 			default:
 				pos += (size_t)res;

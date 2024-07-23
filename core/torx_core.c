@@ -364,7 +364,7 @@ void error_printf(const int debug_level,const char *format,...)
 }
 
 static inline int torx_pipe(int pipefd[2])
-{ // If this is issues, windows offers CreatePipe
+{ // If this is issues, windows offers CreatePipe // TODO eliminate (just use pipe()). we don't use this on windows anyway.
 	#ifdef WIN32
 	return _pipe(pipefd,4096,_O_TEXT); // alt: _O_BINARY // TODO possibly increase this cache?
 	#else
@@ -3701,6 +3701,9 @@ void initial(void)
 	sodium_initialized = 1;
 	#ifdef WIN32
 		evthread_use_windows_threads();
+		WSADATA wsaData;
+		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+			error_printf(-1,"WSAStartup failed: %d", iResult);
 	#else
 		evthread_use_pthreads();
 		signal(SIGBUS, cleanup_cb);
@@ -4133,6 +4136,7 @@ void login_start(const char *arg)
 void cleanup_lib(const int sig_num)
 { // Cleanup process: cleanup_cb() saves UI settings, calls cleanup_lib() to save library settings and close databases, then UI exits
 	#ifdef WIN32
+	WSACleanup(); // TODO this might need to be later
 	#define kill_tor_successfully TerminateProcess(tor_fd_stdout,0) != 0
 	#else
 	#define kill_tor_successfully kill(tor_pid,SIGTERM) == 0

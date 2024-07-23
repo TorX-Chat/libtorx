@@ -28,6 +28,8 @@
 #ifdef WIN32 // XXX
 #define pid_t int // currently used for run_binary
 typedef u_short in_port_t;
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
 //#include <windows.h>
 //#include <winsock.h> // for windows. should cover all network related stuff?
 #include <shlobj.h> // for SHGetKnownFolderPath
