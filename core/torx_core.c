@@ -363,15 +363,6 @@ void error_printf(const int debug_level,const char *format,...)
 	#pragma GCC diagnostic pop
 }
 
-static inline int torx_pipe(int pipefd[2])
-{ // If this is issues, windows offers CreatePipe // TODO eliminate (just use pipe()). we don't use this on windows anyway.
-	#ifdef WIN32
-	return _pipe(pipefd,4096,_O_TEXT); // alt: _O_BINARY // TODO possibly increase this cache?
-	#else
-	return pipe(pipefd);
-	#endif
-}
-
 void initialize_n_cb(const int n)
 {
 	if(initialize_n_registered)
@@ -1244,9 +1235,9 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	#define FAILURE_STRING "zSHJNckXURsy82aYoX9KPNR18oGExraN" // can be anything not reasonably likely to be returned by a binary
 	int link1[2];
 	int link2[2];
-	if(torx_pipe(link1) == -1)
+	if(pipe(link1) == -1)
 		error_simple(-1,"Pipe failure 1 in run_binary");
-	if(torx_pipe(link2) == -1)
+	if(pipe(link2) == -1)
 		error_simple(-1,"Pipe failure 2 in run_binary");
 	pid_t pid;
 	if((pid = fork()) == -1)
