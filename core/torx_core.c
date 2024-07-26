@@ -1783,7 +1783,7 @@ char *torrc_verify(const char *torrc_content_local)
 }
 
 char *which(const char *binary) 
-{ // Locates a binary from PATH and returns the path, or a NULL pointer if it does not exist in path. This could be converted into a function that can call any binary in $PATH with args and return the output. Therefore it could replace get_tor_version, etc
+{ // Locates a binary from PATH and returns the path, falls back to check current directory, or a NULL pointer if it does not exist in path/current directory.
 	if(!binary)
 		return NULL;
 	#ifdef WIN32
@@ -1794,7 +1794,27 @@ char *which(const char *binary)
 	char binary_array[1024];
 	snprintf(binary_array,sizeof(binary_array),"%s",binary);
 	char* const args_cmd[] = {searcher,binary_array,NULL};
-	return run_binary(NULL,NULL,NULL,args_cmd,NULL);
+	char *location = run_binary(NULL,NULL,NULL,args_cmd,NULL);
+	if(location)
+		return location;
+	else if(get_file_size(binary) > 0)
+	{ // Not in path, so checking current directory.
+		char path[PATH_MAX];
+		if(getcwd(path,PATH_MAX))
+		{ // if we can get cwd, get its path and prefix it
+			size_t len = strlen(path);
+			snprintf(&path[len],PATH_MAX-len,"%c%s",platform_slash,binary);
+			len = strlen(path);
+			char *full_path = torx_insecure_malloc(len+1);
+			memcpy(full_path,path,len+1);
+			return full_path;
+		}
+		const size_t len = strlen(binary);
+		char *relative_path = torx_insecure_malloc(len+1);
+		memcpy(relative_path,binary,len+1);
+		return relative_path;
+	}
+	return NULL;
 }
 
 void zero_i(const int n,const int i) // XXX do not put locks in here (except mutex_global_variable + mutex_protocols)
