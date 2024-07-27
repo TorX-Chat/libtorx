@@ -231,7 +231,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 								const uint8_t stat = ENUM_MESSAGE_SENT;
 								setter(n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 								sql_update_message(n,i);
-								print_message_cb(n,i,2);
+								print_message_cb(n,i,2); // PENGUINS ARE PROBLEMS
 								if(protocol == ENUM_PROTOCOL_KILL_CODE)
 								{ // Sent Kill Code
 									error_simple(1,"Successfully sent a kill code. Deleting peer.");

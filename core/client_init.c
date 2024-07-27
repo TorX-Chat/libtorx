@@ -486,23 +486,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			peer[nnnn].message[iiii].p_iter = p_iter;
 			torx_unlock(nnnn) // XXX
 		}
-		int ret;
-		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1)
-		{ // Unclaim section due to failure to immediately send, and delete the message TODO would be nice to prevent creating the message instead
-			torx_write(nnnn) // XXX
-			zero_i(nnnn,iiii);
-			torx_unlock(nnnn) // XXX
-			section_unclaim(n,f,nnnn,fd_type);
-		}
-		else if(ret == -1 && stream)
-		{ // delete unsuccessful stream message
-			torx_write(nnnn) // XXX
-			zero_i(nnnn,iiii);
-			torx_unlock(nnnn) // XXX
-			if(target_g < 0)
-				return -1; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
-		}
-		else if(!stream)
+		if(!stream)
 		{ // Save non-stream message to peer struct and potentially disk
 			if(cycle == 0)
 			{
@@ -517,13 +501,32 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				}
 				if(!repeated)
 				{ // unique same time/nstime, so print and save
-					print_message_cb(target_n,i,1); // GUI Callback
+					print_message_cb(target_n,i,1);
 					sql_insert_message(target_n,i); // This should go before setting .all_sent = 0, to ensure that it happens before send (which will trigger :sent: write)
 				}
 			}
 			if(!repeated && target_g > -1) // MUST go after the first sql_insert_message call (which saves the message initially to GROUP_CTRL)
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
+		int ret;
+		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1)
+		{ // Unclaim section due to failure to immediately send, and delete the message. TODO TODO TODO inefficient, would be nice to prevent creating the message instead
+			const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			sql_delete_message(peer_index,time,nstime);
+			torx_write(nnnn) // XXX
+			zero_i(nnnn,iiii);
+			torx_unlock(nnnn) // XXX
+			section_unclaim(n,f,nnnn,fd_type);
+		}
+		else if(ret == -1 && stream)
+		{ // delete unsuccessful stream message
+			torx_write(nnnn) // XXX
+			zero_i(nnnn,iiii);
+			torx_unlock(nnnn) // XXX
+			if(target_g < 0)
+				return -1; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
+		}
+
 		if(cycle == 0 && send_both)
 		{ // must send start point on each respective fd. 
 			cycle++;
