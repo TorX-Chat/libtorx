@@ -636,7 +636,9 @@ void (*tor_log_registered)(char *message); // torx_secure_free required
 void (*error_registered)(char *error_message); // torx_secure_free required
 void (*fatal_registered)(char *error_message); // torx_secure_free required
 void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext); // torx_secure_free required
-void (*print_message_registered)(const int n,const int i,const int scroll);
+void (*message_new_registered)(const int n,const int i);
+void (*message_modified_registered)(const int n,const int i);
+void (*message_deleted_registered)(const int n,const int i);
 void (*login_registered)(const int value);
 void (*peer_loaded_registered)(const int n);
 void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
@@ -663,7 +665,9 @@ void tor_log_setter(void (*callback)(char*));
 void error_setter(void (*callback)(char*));
 void fatal_setter(void (*callback)(char*));
 void custom_setting_setter(void (*callback)(int,char*,char*,size_t,int));
-void print_message_setter(void (*callback)(int,int,int));
+void message_new_setter(void (*callback)(int,int));
+void message_modified_setter(void (*callback)(int,int));
+void message_deleted_setter(void (*callback)(int,int));
 void login_setter(void (*callback)(int));
 void peer_loaded_setter(void (*callback)(int));
 void cleanup_setter(void (*callback)(int));
@@ -690,7 +694,9 @@ void tor_log_cb(char *message);
 void error_cb(char *error_message);
 void fatal_cb(char *error_message);
 void custom_setting_cb(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
-void print_message_cb(const int n,const int i,const int scroll);
+void message_new_cb(const int n,const int i);
+void message_modified_cb(const int n,const int i);
+void message_deleted_cb(const int n,const int i);
 void login_cb(const int value);
 void peer_loaded_cb(const int n);
 void cleanup_cb(const int sig_num);

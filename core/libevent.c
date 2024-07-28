@@ -231,7 +231,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 								const uint8_t stat = ENUM_MESSAGE_SENT;
 								setter(n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 								sql_update_message(n,i);
-								print_message_cb(n,i,2); // PENGUINS ARE PROBLEMS
+								message_modified_cb(n,i);
 								if(protocol == ENUM_PROTOCOL_KILL_CODE)
 								{ // Sent Kill Code
 									error_simple(1,"Successfully sent a kill code. Deleting peer.");
@@ -1240,7 +1240,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							}
 							else
 							{ // unique same time/nstime
-								print_message_cb(nn,i,1); // GUI CALLBACK
+								message_new_cb(nn,i);
 								sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
 							}
 						}

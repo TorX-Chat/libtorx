@@ -501,7 +501,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				}
 				if(!repeated)
 				{ // unique same time/nstime, so print and save
-					print_message_cb(target_n,i,1);
+					message_new_cb(target_n,i);
 					sql_insert_message(target_n,i); // This should go before setting .all_sent = 0, to ensure that it happens before send (which will trigger :sent: write)
 				}
 			}

@@ -506,10 +506,20 @@ void custom_setting_cb(const int n,char *setting_name,char *setting_value,const 
 	if(custom_setting_registered)
 		custom_setting_registered(n,setting_name,setting_value,setting_value_len,plaintext);
 }
-void print_message_cb(const int n,const int i,const int scroll)
+void message_new_cb(const int n,const int i)
 {
-	if(print_message_registered)
-		print_message_registered(n,i,scroll);
+	if(message_new_registered)
+		message_new_registered(n,i);
+}
+void message_modified_cb(const int n,const int i)
+{
+	if(message_modified_registered)
+		message_modified_registered(n,i);
+}
+void message_deleted_cb(const int n,const int i)
+{
+	if(message_deleted_registered)
+		message_deleted_registered(n,i);
 }
 void login_cb(const int value)
 {
@@ -654,10 +664,22 @@ void custom_setting_setter(void (*callback)(int,char*,char*,size_t,int))
 		custom_setting_registered = callback;
 }
 
-void print_message_setter(void (*callback)(int,int,int))
+void message_new_setter(void (*callback)(int,int))
 {
-	if(print_message_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
-		print_message_registered = callback;
+	if(message_new_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		message_new_registered = callback;
+}
+
+void message_modified_setter(void (*callback)(int,int))
+{
+	if(message_modified_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		message_modified_registered = callback;
+}
+
+void message_deleted_setter(void (*callback)(int,int))
+{
+	if(message_deleted_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		message_deleted_registered = callback;
 }
 
 void login_setter(void (*callback)(int))

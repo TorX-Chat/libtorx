@@ -52,7 +52,7 @@ void delete_log(const int n)
 					torx_write(peer_n) // XXX
 					zero_i(peer_n,i);
 					torx_unlock(peer_n) // XXX
-					print_message_cb(peer_n,i,2); // optional
+					message_deleted_cb(peer_n,i); // optional
 				}
 			}
 			torx_write(peer_n) // XXX
@@ -73,7 +73,7 @@ void delete_log(const int n)
 		torx_write(n) // XXX
 		zero_i(n,i);
 		torx_unlock(n) // XXX
-		print_message_cb(n,i,2); // optional
+		message_deleted_cb(n,i); // optional
 	}
 	torx_write(n) // XXX
 	peer[n].max_i = -1;
@@ -111,7 +111,7 @@ int message_edit(const int n,const int i,const char *message)
 			torx_free((void*)&message_old);
 			torx_unlock(n) // XXX
 			sql_update_message(n,i);
-			print_message_cb(n,i,3);
+			message_modified_cb(n,i);
 		}
 		else if(signature_len)
 		{
@@ -162,7 +162,7 @@ int message_edit(const int n,const int i,const char *message)
 				torx_free((void*)&message_old);
 				torx_unlock(n) // XXX
 				sql_update_message(n,i);
-				print_message_cb(n,i,3);
+				message_modified_cb(n,i);
 			}
 		}
 		else
@@ -215,7 +215,7 @@ int message_edit(const int n,const int i,const char *message)
 			max_i--;
 			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
 		}
-		print_message_cb(n,i,2); // deleted just must be not 0
+		message_deleted_cb(n,i);
 	}
 	return 0;
 }
