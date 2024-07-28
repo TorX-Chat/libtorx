@@ -86,7 +86,7 @@ typedef u_short in_port_t;
 #define PINK	"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
 #define RESET   "\x1b[0m"
 
-//#define LLTEST
+// #define LLTEST
 
 #define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
 #define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common
@@ -140,6 +140,22 @@ typedef u_short in_port_t;
 #define DATE_SIGN_LEN			sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES // time + nstime + sig
 
 /* Macros for wrapping access to peer struct, especially where not accessing an integer */
+#ifdef LLTEST
+#define torx_read(torx_peer) \
+{ \
+	pthread_rwlock_rdlock(&torx_peer->mutex_page); \
+}
+
+#define torx_write(torx_peer) \
+{ \
+	pthread_rwlock_wrlock(&torx_peer->mutex_page); \
+}
+
+#define torx_unlock(torx_peer) \
+{ \
+	pthread_rwlock_unlock(&torx_peer->mutex_page); \
+}
+#else
 #define torx_read(n) \
 { \
 	pthread_rwlock_rdlock(&mutex_expand); \
@@ -157,6 +173,7 @@ typedef u_short in_port_t;
 	pthread_rwlock_unlock(&peer[n].mutex_page); \
 	pthread_rwlock_unlock(&mutex_expand); \
 }
+#endif
 /* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. TODO TODO TODO currently holding page locks because simplicity (but will hang on io error/delay) 
 	Need to localize file descriptors ( .fd_ ) and then stop holding page locks */
 #define torx_fd_lock(n,f) \
@@ -736,9 +753,15 @@ uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg);
 /* torx_core.c */
 int protocol_lookup(const uint16_t protocol);
 int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
+#ifdef LLTEST
+void torx_fn_read(struct torx_peer *torx_peer);
+void torx_fn_write(struct torx_peer *torx_peer);
+void torx_fn_unlock(struct torx_peer *torx_peer);
+#else
 void torx_fn_read(const int n);
 void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);
+#endif
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
 unsigned char *read_bytes(size_t *data_len,const char *path);

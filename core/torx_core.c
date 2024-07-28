@@ -48,8 +48,10 @@ pid_t tor_pid = -1;
 int highest_ever_o = 0;
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
+#ifndef LLTEST
 int max_group = 0; // Should not be used except to constrain expand_message_struc
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
+#endif
 time_t startup_time = 0;
 #ifdef WIN32
 HANDLE tor_fd_stdout = {0};
@@ -261,6 +263,26 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 	return -1;
 }
 
+#ifdef LLTEST
+void torx_fn_read(struct torx_peer *torx_peer)
+{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
+	if(!torx_peer)
+		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
+	torx_read(torx_peer)
+}
+void torx_fn_write(struct torx_peer *torx_peer)
+{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
+	if(!torx_peer)
+		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
+	torx_write(torx_peer)
+}
+void torx_fn_unlock(struct torx_peer *torx_peer)
+{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
+	if(!torx_peer)
+		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read occurred. Coding error. Report this.");
+	torx_unlock(torx_peer)
+}
+#else
 void torx_fn_read(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
 	if(n < 0)
@@ -275,10 +297,11 @@ void torx_fn_write(const int n)
 }
 void torx_fn_unlock(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
-	torx_unlock(n)
 	if(n < 0)
 		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read occurred. Coding error. Report this.");
+	torx_unlock(n)
 }
+#endif
 
 static inline void write_debug_file(const char *message)
 {
@@ -363,6 +386,9 @@ void error_printf(const int debug_level,const char *format,...)
 	#pragma GCC diagnostic pop
 }
 
+#ifdef LLTEST
+// TODO, see ll.c for notes
+#else
 void initialize_n_cb(const int n)
 {
 	if(initialize_n_registered)
@@ -403,11 +429,22 @@ void expand_group_struc_cb(const int g)
 	if(expand_group_struc_registered)
 		expand_group_struc_registered(g);
 }
+#endif
+
+#ifdef LLTEST // TODO should this really be torx_file or the unique identifier for the file?
+void transfer_progress_cb(struct torx_file,const uint64_t transferred)
+{
+	if(transfer_progress_registered)
+		transfer_progress_registered(n,f,transferred);
+}
+#else
 void transfer_progress_cb(const int n,const int f,const uint64_t transferred)
 {
 	if(transfer_progress_registered)
 		transfer_progress_registered(n,f,transferred);
 }
+#endif
+
 void change_password_cb(const int value)
 {
 	if(change_password_registered)

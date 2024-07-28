@@ -1,6 +1,8 @@
 /* TODO:
-	Step 1:	Need to provide access to sub-elements of an element
-
+	Step 1:	Provide access to sub-elements of an element
+	Step 2: Eliminate _expand functions and their callbacks
+	Step 3: Replace usage of initialize_n/i/f/g_cb functions.
+		They cannot be directly replaced unless we use a totally random unique identifier, as they occur too early to have peer_index, time, etc
 */
 
 /* XXX
@@ -39,5 +41,5 @@ Solution 1:
 	Create a unique message identifier from time/nstime in the library, then in the UI we would have to iterate through a list until finding a match. However, that is inefficient.
 
 Solution 2:
-	???
+	Create a unique identifier for each peer/message/file/group by simple global ++ then iterate through list.
 */
