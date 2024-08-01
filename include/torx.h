@@ -713,51 +713,51 @@ void stream_cb(const int n,const int p_iter,char *data,const uint32_t len);
 void breakpoint(void) __attribute__((optimize("O0")));
 #pragma clang diagnostic pop
 #pragma GCC diagnostic pop
-char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset);
-unsigned char *getter_group_id(const int g);
-void *group_access(const int g,const size_t offset);
-void *group_get_next(int *n,int *i,const void *arg);
-void *group_get_prior(int *n,int *i,const void *arg);
+char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
+unsigned char *getter_group_id(const int g)__attribute__((warn_unused_result));
+void *group_access(const int g,const size_t offset)__attribute__((warn_unused_result));
+void *group_get_next(int *n,int *i,const void *arg)__attribute__((warn_unused_result));
+void *group_get_prior(int *n,int *i,const void *arg)__attribute__((warn_unused_result));
 void group_get_index(int *n,int *i,const int g,const uint32_t index);
-void *protocol_access(const int p_iter,const size_t offset);
-size_t getter_size(const char *parent,const char *member);
-size_t getter_offset(const char *parent,const char *member);
+void *protocol_access(const int p_iter,const size_t offset)__attribute__((warn_unused_result));
+size_t getter_size(const char *parent,const char *member)__attribute__((warn_unused_result));
+size_t getter_offset(const char *parent,const char *member)__attribute__((warn_unused_result));
 void setter(const int n,const int i,const int f,const int o,const size_t offset,const void *value,const size_t len);
 char getter_byte(const int n,const int i,const int f,const int o,const size_t offset);
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const int o,const size_t offset);
-int8_t getter_int8(const int n,const int i,const int f,const int o,const size_t offset);
-int16_t getter_int16(const int n,const int i,const int f,const int o,const size_t offset);
-int32_t getter_int32(const int n,const int i,const int f,const int o,const size_t offset);
-int64_t getter_int64(const int n,const int i,const int f,const int o,const size_t offset);
-uint8_t getter_uint8(const int n,const int i,const int f,const int o,const size_t offset);
-uint16_t getter_uint16(const int n,const int i,const int f,const int o,const size_t offset);
-uint32_t getter_uint32(const int n,const int i,const int f,const int o,const size_t offset);
-uint64_t getter_uint64(const int n,const int i,const int f,const int o,const size_t offset);
-int getter_int(const int n,const int i,const int f,const int o,const size_t offset);
-time_t getter_time(const int n,const int i,const int f,const int o,const size_t offset);
+int8_t getter_int8(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+int16_t getter_int16(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+int32_t getter_int32(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+int64_t getter_int64(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+uint8_t getter_uint8(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+uint16_t getter_uint16(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+uint32_t getter_uint32(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+uint64_t getter_uint64(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+int getter_int(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
+time_t getter_time(const int n,const int i,const int f,const int o,const size_t offset)__attribute__((warn_unused_result));
 void setter_group(const int g,const size_t offset,const void *value,const size_t len);
-int8_t getter_group_int8(const int g,const size_t offset);
-int16_t getter_group_int16(const int g,const size_t offset);
-int32_t getter_group_int32(const int g,const size_t offset);
-int64_t getter_group_int64(const int g,const size_t offset);
-uint8_t getter_group_uint8(const int g,const size_t offset);
-uint16_t getter_group_uint16(const int g,const size_t offset);
-uint32_t getter_group_uint32(const int g,const size_t offset);
-uint64_t getter_group_uint64(const int g,const size_t offset);
-int getter_group_int(const int g,const size_t offset);
+int8_t getter_group_int8(const int g,const size_t offset)__attribute__((warn_unused_result));
+int16_t getter_group_int16(const int g,const size_t offset)__attribute__((warn_unused_result));
+int32_t getter_group_int32(const int g,const size_t offset)__attribute__((warn_unused_result));
+int64_t getter_group_int64(const int g,const size_t offset)__attribute__((warn_unused_result));
+uint8_t getter_group_uint8(const int g,const size_t offset)__attribute__((warn_unused_result));
+uint16_t getter_group_uint16(const int g,const size_t offset)__attribute__((warn_unused_result));
+uint32_t getter_group_uint32(const int g,const size_t offset)__attribute__((warn_unused_result));
+uint64_t getter_group_uint64(const int g,const size_t offset)__attribute__((warn_unused_result));
+int getter_group_int(const int g,const size_t offset)__attribute__((warn_unused_result));
 /* The following are ONLY SAFE ON packet struct or global variables because of their fixed size / location. To prevent data races, not race conditions. */
 void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *source,const size_t len);
-int8_t threadsafe_read_int8(pthread_rwlock_t *mutex,const int8_t *arg);
-int16_t threadsafe_read_int16(pthread_rwlock_t *mutex,const int16_t *arg);
-int32_t threadsafe_read_int32(pthread_rwlock_t *mutex,const int32_t *arg);
-int64_t threadsafe_read_int64(pthread_rwlock_t *mutex,const int64_t *arg);
-uint8_t threadsafe_read_uint8(pthread_rwlock_t *mutex,const uint8_t *arg);
-uint16_t threadsafe_read_uint16(pthread_rwlock_t *mutex,const uint16_t *arg);
-uint32_t threadsafe_read_uint32(pthread_rwlock_t *mutex,const uint32_t *arg);
-uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg);
+int8_t threadsafe_read_int8(pthread_rwlock_t *mutex,const int8_t *arg)__attribute__((warn_unused_result));
+int16_t threadsafe_read_int16(pthread_rwlock_t *mutex,const int16_t *arg)__attribute__((warn_unused_result));
+int32_t threadsafe_read_int32(pthread_rwlock_t *mutex,const int32_t *arg)__attribute__((warn_unused_result));
+int64_t threadsafe_read_int64(pthread_rwlock_t *mutex,const int64_t *arg)__attribute__((warn_unused_result));
+uint8_t threadsafe_read_uint8(pthread_rwlock_t *mutex,const uint8_t *arg)__attribute__((warn_unused_result));
+uint16_t threadsafe_read_uint16(pthread_rwlock_t *mutex,const uint16_t *arg)__attribute__((warn_unused_result));
+uint32_t threadsafe_read_uint32(pthread_rwlock_t *mutex,const uint32_t *arg)__attribute__((warn_unused_result));
+uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg)__attribute__((warn_unused_result));
 
 /* torx_core.c */
-int protocol_lookup(const uint16_t protocol);
+int protocol_lookup(const uint16_t protocol)__attribute__((warn_unused_result));
 int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
 #ifdef LLTEST
 void torx_fn_read(struct torx_peer *torx_peer);
@@ -770,16 +770,16 @@ void torx_fn_unlock(const int n);
 #endif
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
-unsigned char *read_bytes(size_t *data_len,const char *path);
+unsigned char *read_bytes(size_t *data_len,const char *path)__attribute__((warn_unused_result));
 void zero_pthread(void *thrd);
 void setcanceltype(int type,int *arg);
 int8_t torx_debug_level(const int8_t level);
-uint16_t align_uint16(const void *ptr);
-uint32_t align_uint32(const void *ptr);
-uint64_t align_uint64(const void *ptr);
-int is_null(const void* arg,const size_t size);
-void *torx_insecure_malloc(const size_t len);
-void *torx_secure_malloc(const size_t len);
+uint16_t align_uint16(const void *ptr)__attribute__((warn_unused_result));
+uint32_t align_uint32(const void *ptr)__attribute__((warn_unused_result));
+uint64_t align_uint64(const void *ptr)__attribute__((warn_unused_result));
+int is_null(const void* arg,const size_t size)__attribute__((warn_unused_result));
+void *torx_insecure_malloc(const size_t len)__attribute__((warn_unused_result));
+void *torx_secure_malloc(const size_t len)__attribute__((warn_unused_result));
 void torx_free_simple(void *p);
 void torx_free(void **p);
 int message_insert(const int g,const int n,const int i);
@@ -787,50 +787,50 @@ void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input);
 void set_time(time_t *time,time_t *nstime);
-char *message_time_string(const int n,const int i);
-char *file_progress_string(const int n,const int f);
+char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
+char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
 void transfer_progress(const int n,const int f,const uint64_t transferred);
-char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len);
-char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len);
-uint64_t calculate_transferred(const int n,const int f);
-uint64_t calculate_section_start(const uint64_t size,const uint8_t splits,const int section);
-int vptoi(const void* arg);
-void *itovp(const int i);
-int set_n(const int peer_index,const char *onion);
-int set_g(const int n,const void *arg);
-int set_f(const int n,const unsigned char *checksum,const size_t checksum_len);
-int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i);
-int set_f_from_i(const int n,const int i);
-int set_o(const int n,const int f,const int passed_offerer_n);
+char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
+char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
+uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
+uint64_t calculate_section_start(const uint64_t size,const uint8_t splits,const int section)__attribute__((warn_unused_result));
+int vptoi(const void* arg)__attribute__((warn_unused_result));
+void *itovp(const int i)__attribute__((warn_unused_result));
+int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_result));
+int set_g(const int n,const void *arg)__attribute__((warn_unused_result));
+int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)__attribute__((warn_unused_result));
+int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)__attribute__((warn_unused_result));
+int set_f_from_i(const int n,const int i)__attribute__((warn_unused_result));
+int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
 void random_string(char *destination,const unsigned int destination_size);
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
-char *onion_from_ed25519_pk(const unsigned char *ed25519_pk);
+char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
 void torrc_save(const char *torrc_content_local);
-char *torrc_verify(const char *torrc_content_local);
-char *which(const char *binary);
-size_t torx_allocation_len(const void *arg);
-void *torx_realloc(void *arg,const size_t len_new);
+char *torrc_verify(const char *torrc_content_local)__attribute__((warn_unused_result));
+char *which(const char *binary)__attribute__((warn_unused_result));
+size_t torx_allocation_len(const void *arg)__attribute__((warn_unused_result));
+void *torx_realloc(void *arg,const size_t len_new)__attribute__((warn_unused_result));
 void zero_n(const int n);
 void zero_i(const int n,const int i);
 void zero_g(const int g);
 void invitee_add(const int g,const int n);
 int invitee_remove(const int g,const int n);
 char *mit_strcasestr(char *dumpster,const char *diver);
-int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search); // free required
+int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
 size_t stripbuffer(char *buffer);
 void peer_offline(const int n,const int8_t fd_type);
 uint16_t randport(const uint16_t arg);
-char *replace_substring(const char *source,const char *search,const char *replace);
+char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
 void start_tor(void);
-size_t b64_decoded_size(const char *in);
+size_t b64_decoded_size(const char *in)__attribute__((warn_unused_result));
 size_t b64_decode(unsigned char *out,const size_t destination_size,const char *in); // caller must allocate space
-char *b64_encode(const void *in,const size_t len); // torx_free required
+char *b64_encode(const void *in,const size_t len)__attribute__((warn_unused_result)); // torx_free required
 void initial_keyed(void);
 void re_expand_callbacks(void);
 void expand_message_struc(const int n,const int i);
-int set_last_message(int *nn,const int n,const int count_back);
-int group_online(const int g);
-int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix);
+int set_last_message(int *nn,const int n,const int count_back)__attribute__((warn_unused_result));
+int group_online(const int g)__attribute__((warn_unused_result));
+int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)__attribute__((warn_unused_result));
 int group_add_peer(const int g,const char *group_peeronion,const char *group_peernick,const unsigned char *group_peer_ed25519_pk,const unsigned char *inviter_signature);
 int group_join(const int inviter_n,const unsigned char *group_id,const char *group_name,const char *creator_onion,const unsigned char *creator_ed25519_pk);
 int group_join_from_i(const int n,const int i);
@@ -843,9 +843,9 @@ void xstrupr(char *string);
 void xstrlwr(char *string);
 void load_onion_events(const int n);
 int tor_call(void (*callback)(int),const int n,const char *msg);
-char *onion_from_privkey(const char *privkey);
-char *torxid_from_onion(const char *onion);
-char *onion_from_torxid(const char *torxid);
+char *onion_from_privkey(const char *privkey)__attribute__((warn_unused_result));
+char *torxid_from_onion(const char *onion)__attribute__((warn_unused_result));
+char *onion_from_torxid(const char *torxid)__attribute__((warn_unused_result));
 int custom_input(const uint8_t owner,const char *identifier,const char *privkey);
 
 /* broadcast.c */
@@ -875,14 +875,14 @@ int sql_delete_setting(const int force_plaintext,const int peer_index,const char
 int sql_delete_peer(const int peer_index);
 
 /* file_magic.c */
-int is_inbound_transfer(const uint8_t file_status); // !is_outbound_transfer
+int is_inbound_transfer(const uint8_t file_status)__attribute__((warn_unused_result)); // !is_outbound_transfer
 void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
 int peer_save(const char *arg1,const char *arg2);
 void peer_accept(const int n);
 void change_nick(const int n,const char *freshpeernick);
-uint64_t get_file_size(const char *file_path);
+uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
 void destroy_file(const char *file_path); // do not use directly for deleting history
 int initialize_split_info(const int n,const int f);
 void split_update(const int n,const int f,const int section);
@@ -920,14 +920,14 @@ int remote_connect(const char *host, const char *port, struct addrinfo hints);
 int socks_connect(const char *host, const char *port);
 
 /* cpucount.c */
-int cpucount(void);
+int cpucount(void)__attribute__((warn_unused_result));
 
 /* sha3.c */
 #define DIGEST 32 // 256-bit digest in bytes.
 void sha3_hash(uint8_t digest[DIGEST], const uint64_t len, const uint8_t data[len]);
 
 /* utf-validate.c */
-uint8_t utf8_valid(const void *const src,const size_t len);
+uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_unused_result));
 
 /* base32.c */
 typedef enum _baseencode_errno {
@@ -940,7 +940,7 @@ typedef enum _baseencode_errno {
 	MEMORY_ALLOCATION = 6,
 } baseencode_error_t;
 size_t base32_encode(unsigned char *encoded_data,const unsigned char *user_data,const size_t data_len);
-unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err);
+unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err)__attribute__((warn_unused_result));
 
 #ifdef SECURE_MALLOC	// TODO implement this conditional in library and CMakeLists.txt // https://imtech.imt.fr/en/2019/01/22/stack-canaries-software-protection/
 	#define ENABLE_SECURE_MALLOC 1
@@ -959,9 +959,9 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 		size_t multiplier;
 		size_t size_allocated;
 	};
-	struct qr_data *qr_bool(const char *text,const size_t multiplier);
-	char *qr_utf8(const struct qr_data *arg);
-	void *return_png(size_t *size_ptr,const struct qr_data *arg);
+	struct qr_data *qr_bool(const char *text,const size_t multiplier)__attribute__((warn_unused_result));
+	char *qr_utf8(const struct qr_data *arg)__attribute__((warn_unused_result));
+	void *return_png(size_t *size_ptr,const struct qr_data *arg)__attribute__((warn_unused_result));
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
 	#include "../torx_qr.c"
 #endif

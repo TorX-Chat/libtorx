@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 11 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 12 , 3 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -71,7 +71,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 15000; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
+uint32_t show_log_messages = 15; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -866,7 +866,14 @@ size_t torx_allocation_len(const void *arg)
 	if(arg)
 	{
 		const void *real_ptr = (const char *)arg - 8;
-		len = *((const uint32_t *)real_ptr);
+		const uint32_t type = *((const uint32_t *)real_ptr+1);
+		if(type != ENUM_MALLOC_TYPE_SECURE && type != ENUM_MALLOC_TYPE_INSECURE)
+		{
+			error_simple(0,"Called torx_allocation_len on a non-TorX malloc, resulting in an illegal read and failure.");
+			breakpoint();
+		}
+		else
+			len = *((const uint32_t *)real_ptr);
 	}
 	return len;
 }
@@ -891,8 +898,8 @@ void *torx_realloc(void *arg,const size_t len_new)
 		}
 		if(len_new < len_old)
 		{ // should work but probably an error which could lead to illegal reads etc
-			error_printf(0,"Reducing size in torx_secure_realloc is probably a coding error. Report this. %lu < %lu",len_new,len_old);
-			breakpoint();
+			error_printf(0,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
+		//	breakpoint();
 			memcpy(allocation,arg,len_new); 
 		}
 		else
@@ -2863,6 +2870,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 
 static void initialize_i(const int n,const int i) // XXX do not put locks in here
 { // initalize an iter of the messages struc
+	printf("Checkpoint initialize_i n=%d i=%i\n",n,i);
 	peer[n].message[i].time = 0;
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].p_iter = -1;
@@ -2912,8 +2920,8 @@ static void initialize_n(const int n) // XXX do not put locks in here
 
 	initialize_n_cb(n); // must be before initialize_i/f
 
-	peer[n].message = torx_secure_malloc(sizeof(struct message_list) *11);
-	for(int j = 0; j < 11; j++)
+	peer[n].message = (struct message_list *)torx_secure_malloc(sizeof(struct message_list) *21) + 10; // XXX Note the +10
+	for(int j = -10; j < 11; j++)
 		initialize_i(n,j);
 
 	peer[n].file = torx_secure_malloc(sizeof(struct file_list) *11);
@@ -3009,7 +3017,8 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 	if(offerer_n == -1 && f%10 == 0)
 	{ // Safe to cast f as size_t because > -1
 		torx_write(n) // XXX
-		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,/*sizeof(struct offer_list)*((size_t)o+1),*/ sizeof(struct offer_list)*((size_t)o+1) + sizeof(struct offer_list) *10);
+		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
+		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,current_allocation_size + sizeof(struct offer_list) *10);
 		// callback unnecessary, not doing
 		for(int j = o+10; j > o; j--)
 			initialize_offer(n,f,j);
@@ -3029,13 +3038,22 @@ static inline void expand_file_struc(const int n,const int f)
 	if(is_null(checksum,CHECKSUM_BIN_LEN) && f%10 == 0) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
 	{ // Safe to cast f as size_t because > -1
 		torx_write(n) // XXX
-		peer[n].file = torx_realloc(peer[n].file, sizeof(struct file_list)*((size_t)f+1) + sizeof(struct file_list) *10);
+		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
+		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
 		expand_file_struc_cb(n,f);
 		for(int j = f+10; j > f; j--)
 			initialize_f(n,j);
 		torx_unlock(n) // XXX
 	}
 	sodium_memzero(checksum,sizeof(checksum));
+}
+
+static inline int find_message_struc_pointer(const int min_i)
+{ // Note: returns negative
+	const int multiple_of_10 = (min_i / 10) * 10;
+	if (min_i <= multiple_of_10)
+		return multiple_of_10 - 10;
+	return -10;
 }
 
 void expand_message_struc(const int n,const int i)
@@ -3051,25 +3069,30 @@ void expand_message_struc(const int n,const int i)
 	const int min_i = peer[n].min_i;
 	const int p_iter = peer[n].message[i].p_iter;
 	torx_unlock(n) // XXX
-	if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
+	if(p_iter == -1 && i%10 == 0 && (i+10 > max_i + 1 || i-10 < min_i - 1))
 	{ // i > -1
+	//	const int pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
+		int pointer_location;
+		int current_shift = 0;
+		if(i < 0)
+		{
+			current_shift = -10;
+			pointer_location = i; // Note: should already be the same as find_message_struc_pointer(min_i)
+		}
+		else
+			pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
 		torx_write(n) // XXX
-		peer[n].message = torx_realloc(peer[n].message - abs(min_i), sizeof(struct message_list)*((size_t)(i+abs(min_i)+1)) + sizeof(struct message_list) *10);
-		peer[n].message = peer[n].message + abs(min_i);
+		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
+		peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10) - pointer_location - current_shift;
 		expand_message_struc_cb(n,i);
-		for(int j = i+10; j > i; j--)
-			initialize_i(n,j);
+		if(i < 0) // Expanding down
+			for(int j = i-10; j < i; j++)
+				initialize_i(n,j);
+		else // Expanding up
+			for(int j = i+10; j > i; j--)
+				initialize_i(n,j);
 		torx_unlock(n) // XXX
-	}
-	else if(p_iter == -1 && i%10 == 0 && i-10 < min_i - 1)
-	{ // i < 0
-		torx_write(n) // XXX
-		peer[n].message = torx_realloc(peer[n].message - abs(min_i), sizeof(struct message_list)*((size_t)(max_i+abs(i)+1)) + sizeof(struct message_list) *10);
-		peer[n].message = peer[n].message + abs(min_i);
-		expand_message_struc_cb(n,i);
-		for(int j = i-10; j < i; j++)
-			initialize_i(n,j);
-		torx_unlock(n) // XXX
+printf("Checkpoint realloc LIB i=%d cas=%lu\n",i,current_allocation_size);
 	}
 }
 
@@ -3085,7 +3108,8 @@ static inline void expand_peer_struc(const int n)
 	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) < 0 && n%10 == 0 && n+10 > max_peer)
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
-		peer = torx_realloc(peer, sizeof(struct peer_list)*((size_t)n+1) + sizeof(struct peer_list) *10);
+		const size_t current_allocation_size = torx_allocation_len(peer);
+		peer = torx_realloc(peer,current_allocation_size + sizeof(struct peer_list) *10);
 		expand_peer_struc_cb(n);
 		for(int j = n+10; j > n; j--)
 			initialize_n(j);
@@ -3103,7 +3127,8 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 	}
 	if(is_null(group[g].id,GROUP_ID_SIZE) && g%10 == 0 && g+10 > max_group)
 	{ // Safe to cast g as size_t because > -1
-		group = torx_realloc(group,sizeof(struct group_list)*((size_t)g+1) + sizeof(struct group_list) *10);
+		const size_t current_allocation_size = torx_allocation_len(group);
+		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
 		expand_group_struc_cb(g);
 		for(int j = g+10; j > g; j--)
 			initialize_g(j);
@@ -4263,7 +4288,8 @@ void cleanup_lib(const int sig_num)
 		thread_kill(peer[n].thrd_send); // must go before zero_n
 		thread_kill(peer[n].thrd_recv); // must go before zero_n
 		zero_n(n); // XXX INCLUDES LOCKS in zero_i on protocol struct (mutex_protocols)
-		torx_free((void*)&peer[n].message); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
+		const int pointer_location = find_message_struc_pointer(peer[n].min_i); // Note: returns negative
+		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
 		torx_free((void*)&peer[n].file);
 	}
 	pthread_rwlock_wrlock(&mutex_protocols);

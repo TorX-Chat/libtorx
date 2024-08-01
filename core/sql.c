@@ -490,6 +490,7 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 	peer[n].message[i].message = tmp_message;
 	peer[n].message[i].message_len = message_len;
 	torx_unlock(n) // XXX
+printf("Checkpoint load_message_struc n=%d i=%d\n",n,i);
 	return 0;
 }
 
@@ -988,13 +989,12 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	const int min_i = peer[n].min_i;
 	const time_t earliest_time = peer[n].message[min_i].time;
 	const time_t earliest_nstime = peer[n].message[min_i].nstime;
-	const char *zero_message = peer[n].message[0].message;
 	torx_unlock(n) // XXX
 	sqlite3_stmt *stmt;
 	char command[512]; // size is somewhat arbitrary
 	int len = 0; // clang thinks this should be initialized, but I disagree.
 	uint8_t reverse;
-	if(zero_message == NULL)
+	if(!messages_loaded)
 	{ // On startup
 		reverse = 0;
 		if(days)
@@ -1008,7 +1008,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		if(days)
 			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time - 60*60*24*days,earliest_time,peer_index,earliest_time,earliest_nstime);
 		if(messages)
-			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time,peer_index,earliest_time,earliest_nstime);
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,earliest_time,peer_index,earliest_time,earliest_nstime,messages);
 	}
 	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
@@ -1487,7 +1487,8 @@ void sql_populate_setting(const int force_plaintext)
 					const int ctrl_n = set_n(peer_index,NULL);
 					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
 					setter(ctrl_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
-			/*int g = */	set_g(ctrl_n,id); // just for reserving
+			/*int g = */	const int g = set_g(ctrl_n,id); // just for reserving
+					(void)g;
 					sodium_memzero(id,GROUP_ID_SIZE);
 				}
 				else if(!strncmp(setting_name,"invite_required",15))
