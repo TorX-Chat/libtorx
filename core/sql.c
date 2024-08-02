@@ -490,7 +490,6 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 	peer[n].message[i].message = tmp_message;
 	peer[n].message[i].message_len = message_len;
 	torx_unlock(n) // XXX
-printf("Checkpoint load_message_struc n=%d i=%d\n",n,i);
 	return 0;
 }
 

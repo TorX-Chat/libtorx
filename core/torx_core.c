@@ -2885,7 +2885,6 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 
 static void initialize_i(const int n,const int i) // XXX do not put locks in here
 { // initalize an iter of the messages struc
-	printf("Checkpoint initialize_i n=%d i=%i\n",n,i);
 	peer[n].message[i].time = 0;
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].p_iter = -1;
@@ -3110,7 +3109,6 @@ void expand_message_struc(const int n,const int i)
 			for(int j = i+10; j > i; j--)
 				initialize_i(n,j);
 		torx_unlock(n) // XXX
-printf("Checkpoint realloc LIB i=%d cas=%lu\n",i,current_allocation_size);
 	}
 }
 
