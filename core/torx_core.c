@@ -878,8 +878,8 @@ size_t torx_allocation_len(const void *arg)
 	return len;
 }
 
-void *torx_realloc(void *arg,const size_t len_new)
-{
+void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)
+{ // Pass 0 as shift_data_forwards for normal operation
 	void *allocation = NULL;
 	if(arg)
 	{
@@ -896,14 +896,24 @@ void *torx_realloc(void *arg,const size_t len_new)
 			breakpoint();
 			return NULL;
 		}
+		char *new = allocation;
+		char *old = arg;
+		const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
 		if(len_new < len_old)
-		{ // should work but probably an error which could lead to illegal reads etc
+		{ // Shrink
 			error_printf(0,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
-		//	breakpoint();
-			memcpy(allocation,arg,len_new); 
+			if(shift_data_forwards) // Cause loss of start data, instead of end data.
+				memcpy(allocation,&old[diff],len_new);
+			else
+				memcpy(allocation,arg,len_new);
 		}
 		else
-			memcpy(allocation,arg,len_old); // could +1 for nullptr? no, old len should include.
+		{ // Expand
+			if(shift_data_forwards) // Leaves uninitialized data at the start, instead of the end
+				memcpy(&new[diff],arg,len_old);
+			else
+				memcpy(allocation,arg,len_old);
+		}
 		torx_free(&arg);
 	}
 	else
@@ -913,6 +923,11 @@ void *torx_realloc(void *arg,const size_t len_new)
 		allocation = torx_secure_malloc(len_new);
 	}
 	return allocation;
+}
+
+void *torx_realloc(void *arg,const size_t len_new)
+{
+	return torx_realloc_shift(arg,len_new,0);
 }
 
 void torx_free(void **p)
@@ -1936,7 +1951,7 @@ void zero_n(const int n) // XXX do not put locks in here
 		zero_i(n,i);
 	for(int f = 0 ; !is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN) ; f++)
 		zero_f(n,f);
-//	torx_free((void*)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup.
+//	torx_free((void*)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup. NOTE: 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
 	peer[n].max_i = -1; // must be after zero_i
 	peer[n].min_i = 0; // must be after zero_i
 	peer[n].owner = 0;
@@ -3083,7 +3098,10 @@ void expand_message_struc(const int n,const int i)
 			pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
 		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
-		peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10) - pointer_location - current_shift;
+		if(i < 0)
+			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10,1) - pointer_location - current_shift;
+		else
+			peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10) - pointer_location;
 		expand_message_struc_cb(n,i);
 		if(i < 0) // Expanding down
 			for(int j = i-10; j < i; j++)

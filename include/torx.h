@@ -363,7 +363,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint32_t message_len; // includes (where applicable only) applicable null terminator, date, untrusted protocol, signature
 		uint32_t pos; // amount sent TODO utilize for amount received also
 		time_t nstime; // nanoseconds (essentially after a decimal point of time)
-	} *message; // TODO keep signed in case we want to go into negatives when loading more messages
+	} *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
 	struct file_list { // variables contained within structs are called "Members"
 		unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
 		char *filename;
@@ -809,6 +809,7 @@ void torrc_save(const char *torrc_content_local);
 char *torrc_verify(const char *torrc_content_local)__attribute__((warn_unused_result));
 char *which(const char *binary)__attribute__((warn_unused_result));
 size_t torx_allocation_len(const void *arg)__attribute__((warn_unused_result));
+void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)__attribute__((warn_unused_result));
 void *torx_realloc(void *arg,const size_t len_new)__attribute__((warn_unused_result));
 void zero_n(const int n);
 void zero_i(const int n,const int i);
