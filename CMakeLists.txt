@@ -327,6 +327,22 @@ target_include_directories(
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 )
 add_compile_definitions(SQLITE_HAS_CODEC QR_GENERATOR SECURE_MALLOC)
+
+if(WIN32)
+target_link_libraries(
+	${PROJECT_NAME}
+	PUBLIC # not sure if necessary. not really sure what PUBLIC/PRIVATE does. something about "link interface"
+		Ws2_32
+		sodium
+	#	event
+		event_core
+	#	event_pthreads
+		png
+#		openssl
+# 		zlib
+		sqlcipher
+)
+else()
 target_link_libraries(
 	${PROJECT_NAME}
 	PUBLIC # not sure if necessary. not really sure what PUBLIC/PRIVATE does. something about "link interface"
@@ -339,3 +355,4 @@ target_link_libraries(
 # 		zlib
 		sqlcipher
 )
+endif()

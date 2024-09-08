@@ -65,7 +65,7 @@
 #define SOCKS_IPV4	1
 #define SOCKS_DOMAIN	3
 
-#define vwrite (ssize_t (*)(int, void *, size_t))write
+//#define vwrite (ssize_t (*)(int, void *, size_t))write
 
 /*
  *Error strings taken almost directly from RFC 1928.
@@ -125,7 +125,7 @@ static inline int decode_addrport(const char *h, const char *p, struct sockaddr 
 /*
  *ensure all of data on socket comes through. f==read || f==vwrite
  */
-static inline size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_t fd, void *_s, size_t n)
+static inline size_t atomicio(const short int pollin_or_pollout, evutil_socket_t fd, void *_s, size_t n)
 {
 	char *s = _s;
 	size_t pos = 0;
@@ -135,10 +135,19 @@ static inline size_t atomicio(ssize_t (*f) (int, void *, size_t), evutil_socket_
 	struct pollfd pfd = {0};
 	#endif
 	pfd.fd = fd;
-	pfd.events = f == read ? POLLIN : POLLOUT;
+	pfd.events = pollin_or_pollout;
 	while (n > pos)
 	{
-		const ssize_t res = (f) (fd, s + pos, n - pos);
+		ssize_t res;
+		if(pollin_or_pollout == POLLIN)
+			res = read(fd, s + pos, n - pos);
+		else if(pollin_or_pollout == POLLOUT)
+			res = write(fd, s + pos, n - pos);
+		else
+		{
+			error_simple(-1,"Coding error in atomicio. Report this.");
+			return 0;
+		}
 		switch (res)
 		{
 			case -1:
@@ -211,7 +220,7 @@ int socks_connect(const char *host, const char *port)
 	buf[0] = SOCKS_V5;
 	buf[1] = 1;
 	buf[2] = SOCKS_NOAUTH;
-	size_t cnt = atomicio(vwrite, proxyfd, buf, 3);
+	size_t cnt = atomicio(POLLOUT, proxyfd, buf, 3);
 	if(cnt != 3)
 	{ // TODO 2023/05 Seems to occur when a tor instance is running but not being killed (ie, after a crash + deletion of pid file) TODO
 		if(evutil_closesocket(proxyfd) == -1)
@@ -220,7 +229,7 @@ int socks_connect(const char *host, const char *port)
 			error_simple(0,"Bingo. 124125");
 		return -1;
 	}
-	cnt = atomicio(read, proxyfd, buf, 2);
+	cnt = atomicio(POLLIN, proxyfd, buf, 2);
 	if(cnt != 2)
 	{
 		error_simple(0,"socks_connect error: read failed1");
@@ -252,7 +261,7 @@ int socks_connect(const char *host, const char *port)
 	memcpy(buf + 5, host, hlen);
 	memcpy(buf + 5 + hlen, &serverport, sizeof serverport);
 	wlen = 7 + hlen;
-	cnt = atomicio(vwrite, proxyfd, buf, wlen);
+	cnt = atomicio(POLLOUT, proxyfd, buf, wlen);
 	if(cnt != wlen)
 	{
 		error_simple(0,"socks_connect error: write failed2");
@@ -260,7 +269,7 @@ int socks_connect(const char *host, const char *port)
 			error_simple(0,"Failed to close socket. 3526323");
 		return -1;
 	}
-	cnt = atomicio(read, proxyfd, buf, 4);
+	cnt = atomicio(POLLIN, proxyfd, buf, 4);
 	if(cnt != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed
 	{ // All good, we hit this all the time on shutdown
 	//	error_simple(0,"Read failed, probably due to tor being killed, or we are starting too fast.");
@@ -271,7 +280,7 @@ int socks_connect(const char *host, const char *port)
 	switch (buf[3]) 
 	{
 		case SOCKS_IPV4:
-			cnt = atomicio(read, proxyfd, buf + 4, 6);
+			cnt = atomicio(POLLIN, proxyfd, buf + 4, 6);
 			if(cnt != 6)
 			{ // Occured on 2024/02/21 when taking down a group peer
 				error_simple(0,"read failed, this will probably never occur because we don't use ipv6");

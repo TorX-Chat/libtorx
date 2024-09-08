@@ -1189,6 +1189,9 @@ void message_sort(const int g)
 
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)
 { // Check return_pid > -1 to verify successful run of binary. Note: in Unix, fd_stdin/out is int, and in Windows it is HANDLE (void*). NOTE: The reason this returns char* and needs to be torx_free'd instead of returning pid is because double pointers are annoying in some languages and this is UI exposed.
+// XXX LIMITATION / WARNING ON LINUX: If fd_stdout is passed, *return_pid WILL BE > 0, even in case of failure.
+// XXX LIMITATION / WARNING: If fd_stdout is NOT passed, and the successfully running binary does NOT close, it WILL hang forever. (Win + Linux)
+// There are workarounds to the second limitation, but they could result in false positives, so we have not implemented them. Ex: if(output[len-1] == '\n') break;
 #ifdef WIN32
 	HANDLE g_hChildStd_IN_Rd = NULL;
 	HANDLE g_hChildStd_IN_Wr = NULL;
@@ -1290,7 +1293,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		char buffer[4096];
 		DWORD bytesRead;
 		while(ReadFile(g_hChildStd_OUT_Rd, buffer, sizeof(buffer), &bytesRead, NULL) && bytesRead)
-		{
+		{ // TODO WARNING: Will hang forever if no STDOUT. See limitations.
 			if(output)
 				output = torx_realloc(output, len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
 			else
@@ -1357,7 +1360,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		size_t len = 0;
 		ssize_t bytesRead;
 		while((bytesRead = read(link1[0], buffer, sizeof(buffer) - 1)) > 0)
-		{
+		{ // TODO WARNING: Will hang forever if no STDOUT. See limitations.
 			if(output)
 				output = torx_realloc(output, len + (size_t)bytesRead + 1); // we +1 for the null pointer we'll add at the end
 			else
@@ -2564,9 +2567,9 @@ static inline void *start_tor_threaded(void *arg)
 		}
 	}
 	#ifdef WIN32
-	HANDLE fd_stdout;
+	HANDLE fd_stdout = {0};
 	#else
-	int fd_stdout;
+	int fd_stdout = -1;
 	#endif
 	pid_t pid;
 	char arg1[] = "-f";
@@ -3814,7 +3817,7 @@ void initial(void)
 		evthread_use_windows_threads();
 		WSADATA wsaData;
 		if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-			error_printf(-1,"WSAStartup failed: %d", iResult);
+			error_simple(-1,"WSAStartup failed");
 	#else
 		evthread_use_pthreads();
 		signal(SIGBUS, cleanup_cb);

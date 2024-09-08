@@ -12,6 +12,7 @@
 //#include <threads.h>	// C11 threads.
 #include <pthread.h>
 #include <libgen.h>	// used ONLY for "dirname" though we could also get basename from it (rather than the one we use)
+#include <utime.h>
 
 /* Libevent related */
 #include <errno.h>
@@ -53,7 +54,6 @@ typedef u_short in_port_t;
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netdb.h> 	// dns lookup gethostbyname,
-#include <netinet/in.h> //unknown, came with client
 #include <netinet/tcp.h> // for DisableNagle
 #include <poll.h>	// required by remote_connect.c
 #define OPTVAL_CAST

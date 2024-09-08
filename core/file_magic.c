@@ -935,14 +935,12 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				sodium_memzero(checksum,sizeof(checksum));
 				sodium_memzero(checksum_complete,sizeof(checksum_complete));
 			}
-			struct timeval new_times[2] = {0};		// Set the desired access and modification times
-			new_times[0].tv_sec = time(NULL);		// Access time (epoch time)
-			new_times[0].tv_usec = 0;			// Microseconds part of access time
+			struct utimbuf new_times;
+			new_times.actime = time(NULL); // set access time to current time
 			torx_read(n) // XXX
-			new_times[1].tv_sec = peer[n].file[f].modified;	// Modification time (epoch time)
+			new_times.modtime = peer[n].file[f].modified; // set modification time
 			torx_unlock(n) // XXX
-			new_times[1].tv_usec = 0;			// Microseconds part of modification time
-			if(utimes(file_path, new_times))
+			if(utime(file_path, &new_times))
 			{ // Failed to set modification time (this is fine)
 				struct stat file_stat = {0};
 				if(!stat(file_path, &file_stat))

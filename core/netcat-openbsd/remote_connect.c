@@ -71,7 +71,7 @@ static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr
 		pfd.fd = proxyfd;
 		pfd.events = POLLOUT;
 		#ifdef WIN32
-		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT)
+		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT);
 		#else
 		ret = poll(&pfd, 1, MESSAGE_TIMEOUT);
 		#endif
