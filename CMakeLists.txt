@@ -234,6 +234,7 @@ if(BUILD_TORX_DEPS)
 		event
 		GIT_REPOSITORY ${REPO_EVENT}
 		GIT_TAG master # release-2.2.1-alpha
+		UPDATE_DISCONNECTED TRUE
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(event)
@@ -241,6 +242,7 @@ if(BUILD_TORX_DEPS)
 		png
 		GIT_REPOSITORY ${REPO_PNG}
 		GIT_TAG c22ef3b2e342bdfe3140b7e94879996d0e18c95b # DO NOT GO TO MASTER. They broke android builds somewhere after this commit.
+		UPDATE_DISCONNECTED TRUE
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(png)
