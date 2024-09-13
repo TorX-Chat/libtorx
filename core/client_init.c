@@ -1,8 +1,8 @@
 
-void DisableNagle(const int sendfd)
+void DisableNagle(const evutil_socket_t sendfd)
 { // Might slightly reduce latency. As far as we can see, it is having no effect at all, because the OS or something is still implementing Nagle.
 	const int on = 1;
-	if(setsockopt(sendfd, IPPROTO_TCP, TCP_NODELAY, OPTVAL_CAST &on, sizeof(on)) == -1) 
+	if(setsockopt(SOCKET_CAST_OUT sendfd, IPPROTO_TCP, TCP_NODELAY, OPTVAL_CAST &on, sizeof(on)) == -1)
 	{
 		error_simple(0,"Error in DisableNagle setting TCP_NODELAY. Report this.");
 		perror("getsockopt");
@@ -10,13 +10,13 @@ void DisableNagle(const int sendfd)
 	const int sndbuf_size = SOCKET_SO_SNDBUF;
 	const int recvbuf_size = SOCKET_SO_RCVBUF;
 	if(sndbuf_size)
-		if(setsockopt(sendfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &sndbuf_size, sizeof(sndbuf_size)) == -1)
+		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &sndbuf_size, sizeof(sndbuf_size)) == -1)
 		{ // set socket recv buff size (operating system)
 			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
 			perror("getsockopt");
 		}
 	if(recvbuf_size)
-		if(setsockopt(sendfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &recvbuf_size, sizeof(recvbuf_size)) == -1)
+		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &recvbuf_size, sizeof(recvbuf_size)) == -1)
 		{ // set socket recv buff size (operating system)
 			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
 			perror("getsockopt");
@@ -739,7 +739,7 @@ static inline int select_peer(const int group_n,const int f)
 	{
 		o--; // THIS IS CRITICAL, do not remove
 	//	torx_write(group_n) // XXX
-		printf("Choosing group_n=%d n=%d o=%d with progress=%lu on section=%u\n",group_n,tentative_n,o,tentative_progress,tentative_section);
+		printf("Choosing group_n=%d n=%d o=%d with progress=%"PRIu64" on section=%u\n",group_n,tentative_n,o,tentative_progress,tentative_section);
 	//	printf("Choosing n=%d o=%d with progress=%lu on section=%u utilized=%u\n",tentative_n,o,tentative_progress,tentative_section,peer[n].file[f].offer[o].utilized);
 	//	peer[n].file[f].offer[o].utilized++; // TODO perhaps this should be later, not in this function, otherwise the message could fail and leave someone permanently utilized... but we also don't want to call it too late
 	//	printf("Checkpoint now utilized: %u\n",peer[n].file[f].offer[o].utilized);
@@ -969,7 +969,7 @@ void file_accept(const int n,const int f)
 		else // Complete. Not checking if oversized or wrong hash.
 		{ // XXX This should NEVER trigger because the .split file should have been deleted if transferred == .size, unless split_read() is redesigned to check file size
 			error_simple(0,"This code should never execute. If it executes, the split file hasn't been deleted but should have been. Report this.");
-			printf("Checkpoint %lu of %lu transferred\n",calculate_transferred(n,f),size);
+			printf("Checkpoint %"PRIu64" of %"PRIu64" transferred\n",calculate_transferred(n,f),size);
 			breakpoint();
 			status = ENUM_FILE_INBOUND_COMPLETED;
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
@@ -1069,7 +1069,7 @@ static inline void *file_init(void *arg)
 		if(size != size_total)
 		{
 			error_simple(0,"Coding or IO error. File size != sum of sections");
-			printf("Checkpoint %lu != %lu\n",size,size_total);
+			printf("Checkpoint %zu != %zu\n",size,size_total);
 			goto error;
 		}
 		const uint64_t trash = htobe64(size);

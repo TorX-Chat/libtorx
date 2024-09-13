@@ -32,7 +32,7 @@ static void peer_online(const int n)
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
-		snprintf(p1,sizeof(p1),"%ld",last_seen);
+		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
 		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
@@ -379,7 +379,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		const size_t to_drain = evbuffer_get_length(output);
 		if(to_drain)
 		{ // Note: there is an infinately small chance of a race condition by calling packet_removal before ev_buffer_drain. Unavoidable unless we use evbuffer locks.
-			printf("Checkpoint draining up to n=%d bytes=%lu\n",n,to_drain);
+			printf("Checkpoint draining up to n=%d bytes=%zu\n",n,to_drain);
 			const size_t to_actually_drain = packet_removal(n,fd_type,to_drain);
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
@@ -753,7 +753,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									if(!g_peercount || expected_len + DATE_SIGN_LEN != event_strc->buffer_len)
 									{ // Prevent illegal reads from malicious message
 										error_simple(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing.");
-										printf("Checkpoint mystery %u: %lu != %u\n",g_peercount,expected_len,event_strc->buffer_len);
+										printf("Checkpoint mystery %u: %zu != %u\n",g_peercount,expected_len,event_strc->buffer_len);
 										continue;
 									}
 									int added_one = 1;
@@ -890,7 +890,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
 							{ // Sanity check on request. File might not exist if size is 0
 								error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
-								printf("Checkpoint start=%lu end=%lu size=%lu\n",requested_start,requested_end,size);
+								printf("Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"\n",requested_start,requested_end,size);
 								printf("Checkpoint path: %s\n",file_path);
 								torx_free((void*)&file_path);
 								continue;
@@ -929,7 +929,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								torx_free((void*)&file_path);
 								continue;
 							}
-							printf("Checkpoint read_conn sending: %s from %lu to %lu on fd_type==%d owner==%d\n",file_path,requested_start,requested_end,fd_type,owner_nn);
+							printf("Checkpoint read_conn sending: %s from %"PRIu64" to %"PRIu64" on fd_type==%d owner==%d\n",file_path,requested_start,requested_end,fd_type,owner_nn);
 							torx_free((void*)&file_path);
 					/* jwofe9j20w*/	torx_fd_lock(nn,f) // XXX
 							fseek(*fd_active,(long int)requested_start,SEEK_SET);

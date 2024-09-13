@@ -884,14 +884,14 @@ int sql_insert_message(const int n,const int i)
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 	{ // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
 		char command[512]; // size is somewhat arbitrary
-		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol) VALUES (%ld,%ld,%d,%d,%d);",time,nstime,peer_index,stat,protocol);
+		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol) VALUES (%lld,%lld,%d,%d,%d);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
 	}
 	else
 	{
 		char command[512]; // size is somewhat arbitrary
-		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol,message_txt) VALUES (%ld,%ld,%d,%d,%d,?);",time,nstime,peer_index,stat,protocol);
+		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol,message_txt) VALUES (%lld,%lld,%d,%d,%d,?);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
 		sql_message_tail_section // XXX
@@ -924,7 +924,7 @@ int sql_update_message(const int n,const int i)
 	const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 
 	char command[512]; // size is somewhat arbitrary
-	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET (stat,protocol,message_txt) = (%d,%d,?) WHERE time = %ld AND nstime = %ld AND peer_index = %d;",stat,protocol,time,nstime,peer_index);
+	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET (stat,protocol,message_txt) = (%d,%d,?) WHERE time = %lld AND nstime = %lld AND peer_index = %d;",stat,protocol,(long long)time,(long long)nstime,peer_index);
 	const int val = sql_exec_msg(n,i,command); // Update message
 	sodium_memzero(command,sizeof(command));
 	uint32_t message_len;
@@ -997,7 +997,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	{ // On startup
 		reverse = 0;
 		if(days)
-			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld ORDER BY time ASC,nstime ASC;",peer_index,startup_time - 60*60*24*days);
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %lld ORDER BY time ASC,nstime ASC;",peer_index,(long long)startup_time - 60*60*24*days);
 		if(messages)
 			len = snprintf(command,sizeof(command),"SELECT *FROM ( SELECT *FROM message WHERE peer_index = %d ORDER BY time DESC,nstime DESC LIMIT %u ) ORDER BY time ASC,nstime ASC;",peer_index,messages);
 	}
@@ -1005,9 +1005,9 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	{ // This is for "load more" aka populate peer struct from -1--
 		reverse = 1;
 		if(days)
-			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %ld AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC;",peer_index,earliest_time - 60*60*24*days,earliest_time,peer_index,earliest_time,earliest_nstime);
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %lld AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ORDER BY time DESC,nstime DESC;",peer_index,(long long)earliest_time - 60*60*24*days,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime);
 		if(messages)
-			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %ld OR peer_index = %d AND time = %ld AND nstime < %ld ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,earliest_time,peer_index,earliest_time,earliest_nstime,messages);
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime,messages);
 	}
 	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
@@ -1592,11 +1592,11 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 			const int specific_peer = group[g].peerlist[p];
 			pthread_rwlock_unlock(&mutex_expand_group);
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %ld AND nstime = %ld;",peer_index_other,time,nstime);
+			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index_other,(long long)time,(long long)nstime);
 			sql_exec(&db_messages,command,NULL,0);
 		}
 	}
-	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %ld AND nstime = %ld;",peer_index,time,nstime);
+	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index,(long long)time,(long long)nstime);
 	return sql_exec(&db_messages,command,NULL,0);
 }
 

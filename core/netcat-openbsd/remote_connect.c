@@ -47,17 +47,17 @@ static inline void set_common_sockopts(evutil_socket_t proxyfd)
 { // TODO 2024/03/03 SO_RCVBUF/SO_SNDBUF are overwritten by Disable_nagle and set to SOCKET_SO_SNDBUF, so setting them here is pointless.
 	const int x = 1;
 	if(Sflag)
-		if(setsockopt(proxyfd, IPPROTO_TCP, TCP_MD5SIG_ignore, OPTVAL_CAST &x, sizeof(x)) == -1)
+		if(setsockopt(SOCKET_CAST_OUT proxyfd, IPPROTO_TCP, TCP_MD5SIG_ignore, OPTVAL_CAST &x, sizeof(x)) == -1)
 			error_simple(0, "set_common_sockopts() error: non-fatal TCP_MD5SIG error");
 	if(Iflag)
-		if(setsockopt(proxyfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &Iflag, sizeof(Iflag)) == -1)
+		if(setsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &Iflag, sizeof(Iflag)) == -1)
 			error_simple(0, "set_common_sockopts() error: set TCP receive buffer size");
 	if(Oflag)
-		if(setsockopt(proxyfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &Oflag, sizeof(Oflag)) == -1)
+		if(setsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &Oflag, sizeof(Oflag)) == -1)
 			error_simple(0, "set_common_sockopts() error: set TCP send buffer size");
 }
 
-static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr *name, socklen_t namelen)
+static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr *name,const size_t namelen)
 {
 	#ifdef WIN32
 	WSAPOLLFD pfd = {0};
@@ -66,9 +66,9 @@ static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr
 	#endif
 	int optval = 0;
 	int ret;
-	if((ret = connect(proxyfd, name, namelen)) != 0) // && errno == EINPROGRESS
+	if((ret = connect(SOCKET_CAST_OUT proxyfd, name, (socklen_t)namelen)) != 0) // && errno == EINPROGRESS
 	{
-		pfd.fd = proxyfd;
+		pfd.fd = SOCKET_CAST_OUT proxyfd;
 		pfd.events = POLLOUT;
 		#ifdef WIN32
 		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT);
@@ -78,7 +78,7 @@ static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr
 		if(ret == 1)
 		{
 			socklen_t optlen = sizeof(optval);
-			if((ret = getsockopt(proxyfd, SOL_SOCKET, SO_ERROR, (char *) &optval, &optlen)) == 0) // This occurs on startup with optval == 0, if connections get attempted before sockets are up. Not a big deal. // errno = optval;
+			if((ret = getsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_ERROR, (char *) &optval, &optlen)) == 0) // This occurs on startup with optval == 0, if connections get attempted before sockets are up. Not a big deal. // errno = optval;
 				ret = -1; // 2023/08/13 put this instead of ret = optval == 0 ? 0 : -1;
 		}
 		else if(ret == 0)
@@ -95,7 +95,7 @@ static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr
 	return ret;
 }
 
-int remote_connect(const char *host, const char *port, struct addrinfo hints)
+evutil_socket_t remote_connect(const char *host, const char *port, struct addrinfo hints)
 {
 	struct addrinfo *res, *res0 = {0};
 	evutil_socket_t proxyfd = -1;
@@ -109,15 +109,15 @@ int remote_connect(const char *host, const char *port, struct addrinfo hints)
 
 	for (res = res0; res; res = res->ai_next)
 	{ // this for NOT a loop
-		if((proxyfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1)
+		if((proxyfd = SOCKET_CAST_IN socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1)
 		{
 			error_simple(0,"Checkpoint remote_connect failed to bind.");
 			continue;
 		}
 		#ifndef WIN32
 		{
-			int one = 1;
-			setsockopt(proxyfd, SOL_SOCKET, SO_REUSEADDR, OPTVAL_CAST &one, sizeof(one));
+			const int one = 1;
+			setsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_REUSEADDR, OPTVAL_CAST &one, sizeof(one));
 		}
 		#endif
 		set_common_sockopts(proxyfd);

@@ -1461,9 +1461,9 @@ char *message_time_string(const int n,const int i)
 	struct tm *info = localtime(&rawtime);
 	char *timebuffer = torx_insecure_malloc(20); // not sure whether there is value in having this secure. going to venture to say no.
 	if(diff >= 0 && diff < 86400) // 24 hours
-		strftime(timebuffer,20,"%T",info);
+		strftime(timebuffer,20,"%H:%M:%S",info);
 	else
-		strftime(timebuffer,20,"%Y/%m/%d %T",info);
+		strftime(timebuffer,20,"%Y/%m/%d %H:%M:%S",info);
 	return timebuffer;
 }
 
@@ -1491,12 +1491,12 @@ char *file_progress_string(const int n,const int f)
 	else if(time_left > 7200)
 	{
 		const time_t hours = time_left/60/60;
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %ld hours %ld min left",bytes_per_second/1024,hours,(long int)time_left/60-hours*60);
+		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld hours %lld min left",bytes_per_second/1024,(long long)hours,(long long)time_left/60-hours*60);
 	}
 	else if(time_left > 120)
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %ld min left",bytes_per_second/1024,time_left/60);
+		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld min left",bytes_per_second/1024,(long long)time_left/60);
 	else if(time_left > 0)
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %ld sec left",bytes_per_second/1024,time_left);
+		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld sec left",bytes_per_second/1024,(long long)time_left);
 	else if(size < 2*1024) // < 2 kb
 		snprintf(file_size_text,file_size_text_len,"%zu B",size);
 	else if(size < 2*1024*1024) // < 2mb
@@ -2338,7 +2338,7 @@ void peer_offline(const int n,const int8_t fd_type)
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
-		snprintf(p1,sizeof(p1),"%ld",last_seen);
+		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
 		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
@@ -2347,7 +2347,7 @@ void peer_offline(const int n,const int8_t fd_type)
 uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is available (currently unused functionality, but works)
 { // Returns an available random port. Mutex used here to prevent race condition when calling randport() concurrently on different threads (which we do)
 	uint16_t port = 0;
-	int socket_rand = -1;
+	evutil_socket_t socket_rand;
 	struct sockaddr_in serv_addr = {0};
 	pthread_mutex_lock(&mutex_socket_rand);
 	while(1)
@@ -2356,7 +2356,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 			port = arg;
 		else
 			port = (uint16_t)(rand() % (65536 - 10000 + 1)) + 10000; // keeping it over 10000 to keep byte length consistent (5 bytes)
-		if((socket_rand = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+		if((socket_rand = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		{ // Unlikely to occur. Could be fatal but shouldnt happen.
 			error_simple(0,"Unlikely socket creation error");
 			continue;
@@ -2364,7 +2364,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 		serv_addr.sin_family = AF_INET;
 		serv_addr.sin_addr.s_addr = INADDR_ANY;
 		serv_addr.sin_port = htobe16(port);
-		if(bind(socket_rand,(struct sockaddr *) &serv_addr, sizeof(serv_addr)) == 0)
+		if(bind(SOCKET_CAST_OUT socket_rand,(struct sockaddr *) &serv_addr, sizeof(serv_addr)) == 0)
 		{
 			if(evutil_closesocket(socket_rand) < 0)
 			{
@@ -3917,7 +3917,7 @@ void initial(void)
 			wchar_t appdata_path[MAX_PATH];
 			swprintf(appdata_path,sizeof(appdata_path),L"%s\\TorX",basePath);
 		//	if(SUCCEEDED(StringCchCopyW(appdata_path, MAX_PATH, basePath)) && SUCCEEDED(StringCchCatW(appdata_path, MAX_PATH, L"\\TorX")))
-			if(GetFileAttributesW(appdata_path) == INVALID_FILE_ATTRIBUTES && CreateDirectoryW(appdata_path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS)
+			if((GetFileAttributesW(appdata_path) == INVALID_FILE_ATTRIBUTES && CreateDirectoryW(appdata_path, NULL)) || GetLastError() == ERROR_ALREADY_EXISTS)
 				SetCurrentDirectoryW(appdata_path);
 			CoTaskMemFree(basePath); // Free the memory allocated by SHGetKnownFolderPath
 		}
@@ -4178,7 +4178,7 @@ static inline void *login_threaded(void *arg)
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%llu",local_crypto_pwhash_OPSLIMIT);
 		sql_setting(1,-1,"crypto_pwhash_OPSLIMIT",p1,strlen(p1));
-		snprintf(p1,sizeof(p1),"%lu",local_crypto_pwhash_MEMLIMIT);
+		snprintf(p1,sizeof(p1),"%zu",local_crypto_pwhash_MEMLIMIT);
 		sql_setting(1,-1,"crypto_pwhash_MEMLIMIT",p1,strlen(p1));
 		snprintf(p1,sizeof(p1),"%d",local_crypto_pwhash_ALG);
 		sql_setting(1,-1,"crypto_pwhash_ALG",p1,strlen(p1));
@@ -4272,7 +4272,7 @@ void cleanup_lib(const int sig_num)
 			if(sendfd_connected > 0 && recvfd_connected > 0 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
 			{
 				char p1[21];
-				snprintf(p1,sizeof(p1),"%ld",time(NULL));
+				snprintf(p1,sizeof(p1),"%lld",(long long)time(NULL));
 				sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 			}
 		}
@@ -4353,7 +4353,7 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 	}
 	struct sockaddr_in serv_addr = {0};
 	evutil_socket_t sock; 
-	if((sock = socket(AF_INET,SOCK_STREAM,0)) < 0)
+	if((sock = SOCKET_CAST_IN socket(AF_INET,SOCK_STREAM,0)) < 0)
 	{
 		error_simple(0,"Socket creation error. Report this. Bailing.");
 		return -1;
@@ -4372,7 +4372,7 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 	int8_t success = 0;
 	while(retries < RETRIES_MAX && !success)
 	{
-		if(connect(sock,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) != 0)
+		if(connect(SOCKET_CAST_OUT sock,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) != 0)
 			retries++;
 		else
 			success = 1;
@@ -4391,9 +4391,9 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 	else
 	{ // Attempt Send
 		error_printf(5,"Tor call SUCCESS after %d retries: %s",retries,msg);
-		const ssize_t s = send(sock,msg,tor_call_len,0);
+		const ssize_t s = send(SOCKET_CAST_OUT sock,msg,SOCKET_WRITE_SIZE tor_call_len,0);
 		char rbuff[4096]; // zero'd
-		const ssize_t r = recv(sock,rbuff,sizeof(rbuff)-1,0);
+		const ssize_t r = recv(SOCKET_CAST_OUT sock,rbuff,sizeof(rbuff)-1,0);
 		if(s > 0 && r > -1)
 		{ // 250 is from the tor api spec which indicates success
 			rbuff[r] = '\0'; // do not remove, recv is not null terminating

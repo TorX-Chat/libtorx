@@ -13,7 +13,7 @@
 #include <pthread.h>
 #include <libgen.h>	// used ONLY for "dirname" though we could also get basename from it (rather than the one we use)
 #include <utime.h>
-
+#include <inttypes.h>
 /* Libevent related */
 #include <errno.h>
 #include <fcntl.h>
@@ -25,6 +25,16 @@
 
 #include <sodium.h>			// libsodium
 #include <sqlcipher/sqlite3.h>
+
+#ifdef WIN32 // NOTE: This must also be in appindicator.c file
+#define SOCKET_CAST_IN (evutil_socket_t)
+#define SOCKET_CAST_OUT (SOCKET)
+#define SOCKET_WRITE_SIZE (int)
+#else
+#define SOCKET_CAST_IN
+#define SOCKET_CAST_OUT
+#define SOCKET_WRITE_SIZE
+#endif
 
 #ifdef WIN32 // XXX
 #define pid_t int // currently used for run_binary
@@ -894,7 +904,7 @@ void takedown_onion(const int peer_index,const int delete);
 void block_peer(const int n);
 
 /* client_init.c */
-void DisableNagle(const int sendfd);
+void DisableNagle(const evutil_socket_t sendfd);
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
 int message_resend(const int n,const int i);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
@@ -917,8 +927,8 @@ void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
 
 /* socks.c */
-int remote_connect(const char *host, const char *port, struct addrinfo hints);
-int socks_connect(const char *host, const char *port);
+evutil_socket_t remote_connect(const char *host, const char *port, struct addrinfo hints);
+evutil_socket_t socks_connect(const char *host, const char *port);
 
 /* cpucount.c */
 int cpucount(void)__attribute__((warn_unused_result));

@@ -270,8 +270,8 @@ void group_get_index(int *n,int *i,const int g,const uint32_t index)
 		error_simple(-1,"group_get_index failed sanity check. Coding error. Report this.");
 	struct msg_list *current_page = NULL;
 	pthread_rwlock_rdlock(&mutex_expand_group);
-	const long int diff_msg_count = labs((long int)index - (long int)group[g].msg_count-1);
-	const long int diff_msg_index_iter = labs((long int)index - (long int)group[g].msg_index_iter);
+	const uint32_t diff_msg_count = (const uint32_t)labs((long int)index - (long int)group[g].msg_count-1);
+	const uint32_t diff_msg_index_iter = (const uint32_t)labs((long int)index - (long int)group[g].msg_index_iter);
 	if(index <= diff_msg_count && index <= diff_msg_index_iter)
 	{ // start from 0 (start from msg_first)
 		current_page = group[g].msg_first;

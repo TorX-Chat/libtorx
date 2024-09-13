@@ -243,7 +243,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 				peer[group_n].file[f].filename = torx_secure_malloc(filename_len+1);
 				memcpy(peer[group_n].file[f].filename,&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],filename_len);
 				peer[group_n].file[f].filename[filename_len] = '\0';
-				printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%lu %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
+				printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
 			}
 			if(!peer[group_n].file[f].status) // prevent overriding an existing status
 				peer[group_n].file[f].status = ENUM_FILE_INBOUND_PENDING;
@@ -341,15 +341,15 @@ static inline void *peer_init(void *arg)
 	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
 	memcpy(&buffer[2+56],ed25519_pk,sizeof(ed25519_pk));
 	DisableNagle(proxyfd); // DO NOT REMOVE THIS it helps packets stay together
-	listen(proxyfd,1); // Maximum one connect at a time
-	const ssize_t s = send(proxyfd,buffer,sizeof(buffer),0); // this is blocking
+	listen(SOCKET_CAST_OUT proxyfd,1); // Maximum one connect at a time
+	const ssize_t s = send(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // this is blocking
 	if(s < 0)
 		error_simple(0,"Error writing to client socket. should probably try again?");
 	else if(s != sizeof(buffer))
 		error_printf(0,"Message only partially sent: %ld bytes. This probably means our peer will spoil their onion.",s);
 	else // 2+56+32
 	{ /* Good send, Expecting response */
-		const ssize_t r = recv(proxyfd,buffer,sizeof(buffer),0); // XXX BLOCKING
+		const ssize_t r = recv(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // XXX BLOCKING
 		while(1)
 		{ // not a real while loop... just avoiding goto
 			if(r >= (ssize_t) sizeof(buffer))
@@ -733,7 +733,7 @@ int initialize_split_info(const int n,const int f)
 		torx_unlock(n) // XXX
 		error_simple(0,"Cannot initialize split info. Sanity check failed.");
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-		printf("Checkpoint owner==%d size==%lu\n",owner,size);
+		printf("Checkpoint owner==%d size==%"PRIu64"\n",owner,size);
 		return -1;
 	}
 	char *split_path = peer[n].file[f].split_path;
@@ -903,7 +903,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			if(ret1 == 0 || ret2)
 			{ // TODO Untested
 				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete.");
-				printf("Checkpoint bad section: %lu %d\n",ret1,ret2);
+				printf("Checkpoint bad section: %"PRIu64" %d\n",ret1,ret2);
 				torx_write(n) // XXX
 				peer[n].file[f].split_info[section] = 0;
 				torx_unlock(n) // XXX

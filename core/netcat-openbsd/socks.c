@@ -97,7 +97,7 @@ static inline const char *socks5_strerror(int e)
 	}
 } */
 
-static inline int decode_addrport(const char *h, const char *p, struct sockaddr *addr, socklen_t addrlen, int numeric)
+static inline int decode_addrport(const char *h, const char *p, struct sockaddr *addr,const size_t addrlen,const int numeric)
 {
 	struct addrinfo hints, *res = {0};
 	memset(&hints, 0, sizeof(hints));
@@ -125,7 +125,7 @@ static inline int decode_addrport(const char *h, const char *p, struct sockaddr 
 /*
  *ensure all of data on socket comes through. f==read || f==vwrite
  */
-static inline size_t atomicio(const short int pollin_or_pollout, evutil_socket_t fd, void *_s, size_t n)
+static inline size_t atomicio(const short int pollin_or_pollout,const evutil_socket_t fd,void *_s,const size_t n)
 {
 	char *s = _s;
 	size_t pos = 0;
@@ -134,15 +134,15 @@ static inline size_t atomicio(const short int pollin_or_pollout, evutil_socket_t
 	#else
 	struct pollfd pfd = {0};
 	#endif
-	pfd.fd = fd;
+	pfd.fd = SOCKET_CAST_OUT fd;
 	pfd.events = pollin_or_pollout;
 	while (n > pos)
 	{
 		ssize_t res;
 		if(pollin_or_pollout == POLLIN)
-			res = read(fd, s + pos, n - pos);
+			res = recv(SOCKET_CAST_OUT fd, s + pos, SOCKET_WRITE_SIZE (n - pos),0);
 		else if(pollin_or_pollout == POLLOUT)
-			res = write(fd, s + pos, n - pos);
+			res = send(SOCKET_CAST_OUT fd, s + pos, SOCKET_WRITE_SIZE (n - pos),0);
 		else
 		{
 			error_simple(-1,"Coding error in atomicio. Report this.");
@@ -183,7 +183,7 @@ static inline size_t atomicio(const short int pollin_or_pollout, evutil_socket_t
 	return pos;
 }
 
-int socks_connect(const char *host, const char *port)
+evutil_socket_t socks_connect(const char *host, const char *port)
 {
 	if(!port || strtoll(port, NULL, 10) < 1025)
 	{

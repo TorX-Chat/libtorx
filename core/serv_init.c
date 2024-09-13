@@ -346,7 +346,7 @@ static inline void *send_init(void *arg)
 	snprintf(port_string,sizeof(port_string),"%u",vport);
 	while((status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status))) == ENUM_STATUS_FRIEND)
 	{
-		const int socket = socks_connect(suffixonion,port_string);
+		const evutil_socket_t socket = socks_connect(suffixonion,port_string);
 		if(socket < 1)
 		{ // this causes blocking only until connected TODO endless segfaults here for unexplained reasons
 			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
@@ -409,7 +409,7 @@ void load_onion_events(const int n)
 			error_simple(0,"No valid port provided.");
 			return;
 		}
-		const int sock = socket(AF_INET, SOCK_STREAM, 0);
+		const evutil_socket_t sock = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0);
 		if(sock < 0)
 		{
 			error_simple(0,"Failed to open socket for recvfd");
@@ -420,7 +420,7 @@ void load_onion_events(const int n)
 		serv_addr.sin_family = AF_INET;
 		serv_addr.sin_addr.s_addr = inet_addr(TOR_CTRL_IP); // IP associated with tport, not TOR_CTRL_IP
 		serv_addr.sin_port = htobe16(tport);
-		if(bind(sock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
+		if(bind(SOCKET_CAST_OUT sock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
 		{
 			error_simple(0,"Failed to bind. Perhaps the random port is already in use. Coding fail."); //  TODO hit this on 2023/08/11
 			if(evutil_closesocket(sock) < 0)
