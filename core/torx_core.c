@@ -1871,31 +1871,36 @@ char *which(const char *binary)
 	if(!binary)
 		return NULL;
 	#ifdef WIN32
-	char searcher[] = "where";
+	char searcher[] = "where"; // NOTE: Unnecessary to affix .exe
 	#else
 	char searcher[] = "which";
 	#endif
-	char binary_array[1024];
+	char binary_array[PATH_MAX];
 	snprintf(binary_array,sizeof(binary_array),"%s",binary);
 	char* const args_cmd[] = {searcher,binary_array,NULL};
-	char *location = run_binary(NULL,NULL,NULL,args_cmd,NULL);
-	if(location)
+	char *location;
+	if((location = run_binary(NULL,NULL,NULL,args_cmd,NULL)))
 		return location;
-	else if(get_file_size(binary) > 0)
+	#ifdef WIN32
+	const size_t initial_len = strlen(binary_array);
+	if(initial_len > 4 && memcmp(binary_array[initial_len-4],".exe",4) && memcmp(binary_array[initial_len-4],".EXE",4))
+		snprintf(&binary_array[initial_len],sizeof(binary_array)-initial_len,".exe"); // affix .exe where it doesn't exist
+	#endif
+	if(get_file_size(binary_array) > 0)
 	{ // Not in path, so checking current directory.
 		char path[PATH_MAX];
 		if(getcwd(path,PATH_MAX))
 		{ // if we can get cwd, get its path and prefix it
 			size_t len = strlen(path);
-			snprintf(&path[len],PATH_MAX-len,"%c%s",platform_slash,binary);
+			snprintf(&path[len],PATH_MAX-len,"%c%s",platform_slash,binary_array);
 			len = strlen(path);
 			char *full_path = torx_insecure_malloc(len+1);
 			memcpy(full_path,path,len+1);
 			return full_path;
 		}
-		const size_t len = strlen(binary);
+		const size_t len = strlen(binary_array);
 		char *relative_path = torx_insecure_malloc(len+1);
-		memcpy(relative_path,binary,len+1);
+		memcpy(relative_path,binary_array,len+1);
 		return relative_path;
 	}
 	return NULL;
