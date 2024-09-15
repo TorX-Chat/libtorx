@@ -1543,7 +1543,7 @@ void sql_populate_setting(const int force_plaintext)
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
 	pthread_mutex_unlock(mutex);
-	if(attempt_login)
+	if(tor_location && attempt_login)
 		login_start("");
 }
 
