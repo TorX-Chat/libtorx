@@ -1854,14 +1854,19 @@ char *torrc_verify(const char *torrc_content_local)
 	char arg3[] = "-f";
 	char arg4[] = "-";
 	char arg5[] = "--DataDirectory"; // tor_data_directory
-	if(tor_data_directory)
+	char tor_location_local[PATH_MAX];
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+	char *tor_data_directory_local = tor_data_directory;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	if(tor_data_directory_local)
 	{
-		char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,arg5,tor_data_directory,NULL};
+		char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,tor_data_directory,NULL};
 		return run_binary(NULL,NULL,NULL,args_cmd,torrc_content_local);
 	}
 	else
 	{
-		char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,NULL};
+		char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,NULL};
 		return run_binary(NULL,NULL,NULL,args_cmd,torrc_content_local);
 	}
 }
@@ -2282,17 +2287,24 @@ static inline void hash_password(const char *password) // XXX Does not need lock
 
 static inline void get_tor_version(void)
 { /* Sets the tor_version, decides v3auth_enabled */
-	if(!tor_location)
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	const char *tor_location_local_pointer = tor_location;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	if(!tor_location_local_pointer)
 		return;
+	char tor_location_local[PATH_MAX];
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+	pthread_rwlock_unlock(&mutex_global_variable);
 	char arg1[] = "--quiet";
 	char arg2[] = "--version";
-	char* const args_cmd[] = {tor_location,arg1,arg2,NULL};
+	char* const args_cmd[] = {tor_location_local,arg1,arg2,NULL};
 	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
 	size_t len = 0;
 	if(ret)
 		len = strlen(ret);
 	if(len < 8)
-		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location);
+		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
 	else
 	{
 		uint32_t one,two,three,four;
@@ -2505,9 +2517,9 @@ static inline void *start_tor_threaded(void *arg)
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
 	get_tor_version();
 	pthread_rwlock_rdlock(&mutex_global_variable);
-	const char *tor_location_local = tor_location;
+	const char *tor_location_local_pointer = tor_location;
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(tor_location_local == NULL)
+	if(tor_location_local_pointer == NULL)
 		return 0;
 //	int8_t restart = 0;
 	pthread_mutex_lock(&mutex_tor_pipe);
@@ -2598,12 +2610,25 @@ static inline void *start_tor_threaded(void *arg)
 	char *ret;
 	char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
 	if(!torrc_content_local)
-		torrc_content_local = torrc_content;
+	{
+		pthread_rwlock_rdlock(&mutex_global_variable);
+		if(torrc_content)
+		{ // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
+			const size_t len = strlen(torrc_content);
+			torrc_content_local = torx_secure_malloc(len+1);
+			memcpy(torrc_content_local,torrc_content,len+1);
+		}
+		pthread_rwlock_unlock(&mutex_global_variable);
+	}
+	char tor_location_local[PATH_MAX];
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+	pthread_rwlock_unlock(&mutex_global_variable);
 	if(ConstrainedSockSize)
 	{
 		if(tor_data_directory)
 		{
-			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
 			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
@@ -2613,7 +2638,7 @@ static inline void *start_tor_threaded(void *arg)
 		}
 		else
 		{
-			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
 			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
@@ -2626,7 +2651,7 @@ static inline void *start_tor_threaded(void *arg)
 	{
 		if(tor_data_directory)
 		{
-			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
 			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
@@ -2636,7 +2661,7 @@ static inline void *start_tor_threaded(void *arg)
 		}
 		else
 		{
-			char* const args_cmd[] = {tor_location,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			#ifdef WIN32
 			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
@@ -2646,8 +2671,7 @@ static inline void *start_tor_threaded(void *arg)
 		}
 	}
 	torx_free((void*)&ret); // we don't use this and it should be null anyway
-	if(torrc_content_local != torrc_content)
-		torx_free((void*)&torrc_content_local);
+	torx_free((void*)&torrc_content_local);
 	pthread_rwlock_wrlock(&mutex_global_variable);
 	#ifdef WIN32
 	tor_fd_stdout = fd_stdout;
@@ -2821,7 +2845,10 @@ void initial_keyed(void)
 	}
 	if(get_file_size(file_db_messages) == 0) // permit recovery after deletion of messages database
 		sql_exec(&db_messages,table_message,NULL,0);
-	if(tor_location == NULL) // Binary locations should have already been set by UI calls to which() or otherwise. Not making a final attempt.
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	const char *tor_location_local_pointer = tor_location;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	if(tor_location_local_pointer == NULL) // Binary locations should have already been set by UI calls to which() or otherwise. Not making a final attempt.
 		error_simple(-1,"Tor could not be located. Please install Tor or report this bug to your UI developer.");
 	/* Generate Tor Control Password and Start Tor */
 	random_string(control_password_clear,sizeof(control_password_clear));

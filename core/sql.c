@@ -1385,6 +1385,27 @@ void sql_populate_setting(const int force_plaintext)
 					crypto_pwhash_MEMLIMIT = strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"crypto_pwhash_ALG",17))
 					crypto_pwhash_ALG = (int)strtoll(setting_value, NULL, 10);
+				else if(!strncmp(setting_name,"tor_location",12))
+				{
+					torx_free((void*)&tor_location);
+					tor_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(tor_location,setting_value,setting_value_len);
+					tor_location[setting_value_len] = '\0';
+				}
+				else if(!strncmp(setting_name,"snowflake_location",18))
+				{
+					torx_free((void*)&snowflake_location);
+					snowflake_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(snowflake_location,setting_value,setting_value_len);
+					snowflake_location[setting_value_len] = '\0';
+				}
+				else if(!strncmp(setting_name,"obfs4proxy_location",19))
+				{
+					torx_free((void*)&obfs4proxy_location);
+					obfs4proxy_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(obfs4proxy_location,setting_value,setting_value_len);
+					obfs4proxy_location[setting_value_len] = '\0';
+				}
 				else if(!strncmp(setting_name,"censored_region",10))
 					censored_region = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"decryption_key",14))
@@ -1414,13 +1435,6 @@ void sql_populate_setting(const int force_plaintext)
 				error_printf(3,"Encrypted Setting: peer_index=%d %s",peer_index,setting_name);
 				if(peer_index < 0) // global variable
 					pthread_rwlock_wrlock(&mutex_global_variable);
-				if(!strncmp(setting_name,"tor_location",12))
-				{
-					torx_free((void*)&tor_location);
-					tor_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(tor_location,setting_value,setting_value_len);
-					tor_location[setting_value_len] = '\0';
-				}
 				else if(!strncmp(setting_name,"download_dir",12))
 				{
 					torx_free((void*)&download_dir);
@@ -1543,7 +1557,10 @@ void sql_populate_setting(const int force_plaintext)
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
 	pthread_mutex_unlock(mutex);
-	if(tor_location && attempt_login)
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	const char *tor_location_local_pointer = tor_location;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	if(tor_location_local_pointer && attempt_login)
 		login_start("");
 }
 
