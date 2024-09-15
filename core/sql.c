@@ -1557,11 +1557,15 @@ void sql_populate_setting(const int force_plaintext)
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
 	pthread_mutex_unlock(mutex);
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	const char *tor_location_local_pointer = tor_location;
-	pthread_rwlock_unlock(&mutex_global_variable);
-	if(tor_location_local_pointer && attempt_login)
-		login_start("");
+	if(force_plaintext)
+	{
+		hash_password();
+		pthread_rwlock_rdlock(&mutex_global_variable);
+		const char *tor_location_local_pointer = tor_location;
+		pthread_rwlock_unlock(&mutex_global_variable);
+		if(tor_location_local_pointer && attempt_login)
+			login_start("");
+	}
 }
 
 int sql_delete_setting(const int force_plaintext,const int peer_index,const char *setting_name)

@@ -31,8 +31,8 @@ char *file_db_plaintext = {0}; // "plaintext.db"; // Do not set as const since p
 char *file_db_encrypted = {0}; // "encrypted.db"; // Do not set as const since particular UIs may want to define this themselves.
 char *file_db_messages = {0}; // "messages.db"; // Do not set as const since particular UIs may want to define this themselves.
 char *file_tor_pid = {0}; // "tor.pid";
-char control_password_clear[32+1];
-char control_password_hash[61+1] = {0}; // does not need rwlock because only modified once // correct length
+char control_password_clear[32+1] = {0}; // MUST be \0 initialized. Is cleared on shutdown in case it was set by UI to something custom.
+char control_password_hash[61+1] = {0}; // MUST be \0 initialized. // does not need rwlock because only modified once // correct length.  Is cleared on shutdown in case it was set by UI to something custom.
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
@@ -1855,13 +1855,16 @@ char *torrc_verify(const char *torrc_content_local)
 	char arg4[] = "-";
 	char arg5[] = "--DataDirectory"; // tor_data_directory
 	char tor_location_local[PATH_MAX];
+	char tor_data_directory_local[PATH_MAX];
+	int tdd_len = 0;
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
-	char *tor_data_directory_local = tor_data_directory;
+	if(tor_data_directory)
+		tdd_len = snprintf(tor_data_directory_local,sizeof(tor_data_directory_local),"%s",tor_data_directory);
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(tor_data_directory_local)
+	if(tdd_len)
 	{
-		char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,tor_data_directory,NULL};
+		char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,tor_data_directory_local,NULL};
 		return run_binary(NULL,NULL,NULL,args_cmd,torrc_content_local);
 	}
 	else
@@ -2256,10 +2259,13 @@ size_t stripbuffer(char *buffer)
 	return j - 1; // return length of new modified string
 }
 
-static inline void hash_password(const char *password) // XXX Does not need locks for the same reason intial_keyed doesn't.
+static inline int hash_password_internal(const char *password)
 { // Hashes the Tor control port password by making a call to the Tor binary
-	if(!tor_location || !password)
-		return;
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	const char *tor_location_local_pointer = tor_location;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	if(!tor_location_local_pointer || !password)
+		return 0;
 	char arg1[] = "--quiet";
 	char arg2[] = "--DataDirectory";
 	char arg3[] = "FyRH0kIouynnDZmTDZpQ"; // tor_data_directory
@@ -2268,7 +2274,11 @@ static inline void hash_password(const char *password) // XXX Does not need lock
 	const size_t password_len = strlen(password);
 	char *arg5 = torx_secure_malloc(password_len+1);
 	memcpy(arg5,password,password_len+1);
-	char* const args_cmd[] = {tor_location,arg1,arg2,arg3,arg4,arg5,NULL};
+	char tor_location_local[PATH_MAX];
+	pthread_rwlock_rdlock(&mutex_global_variable);
+	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+	pthread_rwlock_unlock(&mutex_global_variable);
+	char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,NULL};
 	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
 	torx_free((void*)&arg5);
 	size_t len = 0;
@@ -2276,22 +2286,47 @@ static inline void hash_password(const char *password) // XXX Does not need lock
 		len = strlen(ret);
 	if(len == 61)
 	{
+		pthread_rwlock_wrlock(&mutex_global_variable);
 		memcpy(control_password_hash,ret,sizeof(control_password_hash));
+		pthread_rwlock_unlock(&mutex_global_variable);
 		error_printf(3,"Actual Tor Control Password: %s",control_password_clear);
 		error_printf(3,"Hashed Tor Control Password: %s",control_password_hash);
 	}
 	else
 		error_simple(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect?");
 	torx_free((void*)&ret);
+	return (int)len;
 }
 
-static inline void get_tor_version(void)
+static inline void hash_password(void)
+{ // Generate Tor Control Password, if not already existing
+	pthread_rwlock_wrlock(&mutex_global_variable);
+	if(is_null(control_password_hash,sizeof(control_password_hash)))
+	{
+		if(is_null(control_password_clear,sizeof(control_password_clear))) // avoid overwriting if it has been set for some reason (ex: by UI)
+			random_string(control_password_clear,sizeof(control_password_clear));
+		char control_password_clear_local[sizeof(control_password_clear)];
+		memcpy(control_password_clear_local,control_password_clear,sizeof(control_password_clear));
+		pthread_rwlock_unlock(&mutex_global_variable);
+		if(hash_password_internal(control_password_clear_local) != 61)
+		{
+			pthread_rwlock_wrlock(&mutex_global_variable);
+			torx_free((void*)&tor_location);
+			pthread_rwlock_unlock(&mutex_global_variable);
+		}
+		sodium_memzero(control_password_clear_local,sizeof(control_password_clear_local));
+		pthread_rwlock_wrlock(&mutex_global_variable);
+	}
+	pthread_rwlock_unlock(&mutex_global_variable);
+}
+
+static inline int get_tor_version(void)
 { /* Sets the tor_version, decides v3auth_enabled */
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	const char *tor_location_local_pointer = tor_location;
 	pthread_rwlock_unlock(&mutex_global_variable);
 	if(!tor_location_local_pointer)
-		return;
+		return -1;
 	char tor_location_local[PATH_MAX];
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
@@ -2304,7 +2339,14 @@ static inline void get_tor_version(void)
 	if(ret)
 		len = strlen(ret);
 	if(len < 8)
+	{
 		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		torx_free((void*)&tor_location);
+		pthread_rwlock_unlock(&mutex_global_variable);
+		torx_free((void*)&ret);
+		return -1;
+	}
 	else
 	{
 		uint32_t one,two,three,four;
@@ -2323,8 +2365,9 @@ static inline void get_tor_version(void)
 		tor_version[2] = three;
 		tor_version[3] = four;
 		pthread_rwlock_unlock(&mutex_global_variable);
+		torx_free((void*)&ret);
+		return 0;
 	}
-	torx_free((void*)&ret);
 }
 
 void peer_offline(const int n,const int8_t fd_type)
@@ -2515,7 +2558,9 @@ static inline void *start_tor_threaded(void *arg)
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_start_tor)
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
-	get_tor_version();
+	if(get_tor_version())
+		return 0; // failed
+	hash_password(); // this will ONLY do anything if Tor failed on startup due to a bad Tor binary and has since been replaced
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	const char *tor_location_local_pointer = tor_location;
 	pthread_rwlock_unlock(&mutex_global_variable);
@@ -2850,10 +2895,7 @@ void initial_keyed(void)
 	pthread_rwlock_unlock(&mutex_global_variable);
 	if(tor_location_local_pointer == NULL) // Binary locations should have already been set by UI calls to which() or otherwise. Not making a final attempt.
 		error_simple(-1,"Tor could not be located. Please install Tor or report this bug to your UI developer.");
-	/* Generate Tor Control Password and Start Tor */
-	random_string(control_password_clear,sizeof(control_password_clear));
-	hash_password(control_password_clear);
-
+	/* Start Tor */
 	tor_ctrl_port = randport(0);
 	tor_socks_port = randport(9050);
 	if(tor_socks_port < 1025)
@@ -4034,6 +4076,8 @@ void initial(void)
 	}
 	if(!first_run)
 		sql_populate_setting(1); // plaintext settings
+	else // normally this is called in sql_populate_setting
+		hash_password();
 }
 
 static inline int password_verify(const char *password)
@@ -4318,6 +4362,8 @@ void cleanup_lib(const int sig_num)
 	}
 	else
 		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?).");
+	sodium_memzero(control_password_clear,sizeof(control_password_clear));
+	sodium_memzero(control_password_hash,sizeof(control_password_hash));
 	if(highest_ever_o > 0) // this does not mean file transfers occured, i think
 		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o);
 	// XXX Most activity should be brought to a halt by the above locks XXX
