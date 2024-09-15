@@ -1891,7 +1891,7 @@ char *which(const char *binary)
 		return location;
 	#ifdef WIN32
 	const size_t initial_len = strlen(binary_array);
-	if(initial_len > 4 && memcmp(binary_array[initial_len-4],".exe",4) && memcmp(binary_array[initial_len-4],".EXE",4))
+	if(initial_len > 4 && memcmp(&binary_array[initial_len-4],".exe",4) && memcmp(&binary_array[initial_len-4],".EXE",4))
 		snprintf(&binary_array[initial_len],sizeof(binary_array)-initial_len,".exe"); // affix .exe where it doesn't exist
 	#endif
 	if(get_file_size(binary_array) > 0)
