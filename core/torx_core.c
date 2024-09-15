@@ -4011,6 +4011,16 @@ void initial(void)
 	else
 		error_simple(0,"Failed to navigate to desired directory. Will fallback to current directory.");
 
+	// XXX Cannot move to initial_keyed because we need this info to build the initial UI (whether to display switch). For this reason, if we store this in a database, it'll have to be in cleartext. XXX
+	// Note: Will be over-written by stored settings, if applicable.
+	// Note: We intentionally placed this after chdir because which looks in current dir not where our running binary exists.
+	if(tor_location == NULL)
+		tor_location = which("tor");
+	if(snowflake_location == NULL)
+		snowflake_location = which("snowflake-client");
+	if(obfs4proxy_location == NULL)
+		obfs4proxy_location = which("obfs4proxy");
+
 	if(get_file_size(file_db_plaintext) == 0)
 		first_run = 1; // first point to set (1 of 2)
 
