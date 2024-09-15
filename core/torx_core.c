@@ -2821,10 +2821,8 @@ void initial_keyed(void)
 	}
 	if(get_file_size(file_db_messages) == 0) // permit recovery after deletion of messages database
 		sql_exec(&db_messages,table_message,NULL,0);
-	if(tor_location == NULL)
-		tor_location = which("tor");
-	if(tor_location == NULL)
-		error_simple(-1,"Tor could not be located. Please install Tor or report this bug.");
+	if(tor_location == NULL) // Binary locations should have already been set by UI calls to which() or otherwise. Not making a final attempt.
+		error_simple(-1,"Tor could not be located. Please install Tor or report this bug to your UI developer.");
 	/* Generate Tor Control Password and Start Tor */
 	random_string(control_password_clear,sizeof(control_password_clear));
 	hash_password(control_password_clear);
