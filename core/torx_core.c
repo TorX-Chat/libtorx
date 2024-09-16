@@ -1262,12 +1262,12 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		if(fd_stdin)
 			fd_stdin = NULL;
 		if(fd_stdout)
-			fd_stdout = NULL;
+			*(HANDLE*)fd_stdout = NULL;
 	}
 	else
 	{
 		if(return_pid)
-			*(DWORD*)return_pid = piProcInfo.dwProcessId; 
+			*(DWORD*)return_pid = piProcInfo.dwProcessId;
 		if(input)
 		{
 			DWORD written;
@@ -1286,7 +1286,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	torx_free((void*)&cmd);
 	char *output = {0};
 	if(fd_stdout)
-		fd_stdout = g_hChildStd_OUT_Rd;
+		*(HANDLE*)fd_stdout = g_hChildStd_OUT_Rd;
 	else
 	{ // Handle stdout, if directed to
 		len = 0;
@@ -1309,7 +1309,11 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		if(output)
 		{ // Strip trailing newline, if applicable, otherwise null terminate
 			if(output[len-1] == '\n')
+			{
 				output[len-1] = '\0';
+				if(output[len-2] == '\r') // This came up on Windows. Carriage Return.
+					output[len-2] = '\0';
+			}
 			else
 				output[len] = '\0';
 		}
@@ -2293,7 +2297,7 @@ static inline int hash_password_internal(const char *password)
 		error_printf(3,"Hashed Tor Control Password: %s",control_password_hash);
 	}
 	else
-		error_simple(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect?");
+		error_printf(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect? Length: %zu Output: %s",len,ret);
 	torx_free((void*)&ret);
 	return (int)len;
 }
@@ -2646,50 +2650,38 @@ static inline void *start_tor_threaded(void *arg)
 	char arg10[] = "--FetchUselessDescriptors";
 	char arg11[] = "1";
 	char arg12[] = "--DataDirectory"; // tor_data_directory
-	pthread_rwlock_rdlock(&mutex_global_variable);
 	char p1[21],p2[21],p3[21],p4[21];
+	pthread_rwlock_rdlock(&mutex_global_variable);
 	snprintf(p1,sizeof(p1),"%u",tor_socks_port);
 	snprintf(p2,sizeof(p2),"%u",tor_ctrl_port);
 	snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
 	snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
-	char *ret;
 	char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
 	if(!torrc_content_local)
 	{
-		pthread_rwlock_rdlock(&mutex_global_variable);
 		if(torrc_content)
 		{ // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
 			const size_t len = strlen(torrc_content);
 			torrc_content_local = torx_secure_malloc(len+1);
 			memcpy(torrc_content_local,torrc_content,len+1);
 		}
-		pthread_rwlock_unlock(&mutex_global_variable);
 	}
-	char tor_location_local[PATH_MAX];
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	char tor_location_local[PATH_MAX]; // not sensitive
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
-	pthread_rwlock_unlock(&mutex_global_variable);
+	char *ret;
 	if(ConstrainedSockSize)
 	{
 		if(tor_data_directory)
 		{
 			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
-			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
-			#else
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-			#endif
 		}
 		else
 		{
 			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
-			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
-			#else
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-			#endif
 		}
 	}
 	else
@@ -2698,31 +2690,19 @@ static inline void *start_tor_threaded(void *arg)
 		{
 			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
-			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
-			#else
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-			#endif
 		}
 		else
 		{
 			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
-			#ifdef WIN32
-			ret = run_binary(&pid,NULL,fd_stdout,args_cmd,torrc_content_local);
-			#else
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-			#endif
 		}
 	}
 	torx_free((void*)&ret); // we don't use this and it should be null anyway
 	torx_free((void*)&torrc_content_local);
 	pthread_rwlock_wrlock(&mutex_global_variable);
-	#ifdef WIN32
 	tor_fd_stdout = fd_stdout;
-	#else
-	tor_fd_stdout = fd_stdout;
-	#endif
 	tor_pid = pid;
 	pthread_rwlock_unlock(&mutex_global_variable);
 	pthread_mutex_unlock(&mutex_tor_pipe);
