@@ -1435,7 +1435,7 @@ void sql_populate_setting(const int force_plaintext)
 				error_printf(3,"Encrypted Setting: peer_index=%d %s",peer_index,setting_name);
 				if(peer_index < 0) // global variable
 					pthread_rwlock_wrlock(&mutex_global_variable);
-				else if(!strncmp(setting_name,"download_dir",12))
+				if(!strncmp(setting_name,"download_dir",12))
 				{
 					torx_free((void*)&download_dir);
 					download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown

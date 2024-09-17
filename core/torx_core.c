@@ -1702,10 +1702,15 @@ void *itovp(const int i)
 
 void random_string(char *destination,const unsigned int destination_size)
 { // Puts length + '\0' in destination // NOTE: srand() must be properly seeded (not with time()) or rand() will produce non-unique results if called more than once a second
+	if(!destination || destination_size < 2)
+	{
+		error_simple(0,"Random_string failed sanity check. Coding error. Report this.");
+		return;
+	}
 	const char alphanumeric[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 	destination[destination_size-1] = '\0';
 	for(unsigned int i = 0; i < destination_size - 1; i++)
-		destination[i] = *(alphanumeric + (rand() % 62)); 
+		destination[i] = *(alphanumeric + (randombytes_random() % 62));
 }
 
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion)
@@ -1778,6 +1783,11 @@ static inline uint32_t fnv1a_32_salted(const void *data,const size_t len)
 
 static int pid_write(const int pid)
 { // Write Tor's PID to file
+	#ifdef WIN32
+	(void)pid;
+	error_simple(0,"Killing by PID is not supported on Windows. Not writing.");
+	return -1;
+	#else
 	FILE *fp;
 	if((fp = fopen(file_tor_pid, "w+")) == NULL)
 	{
@@ -1789,10 +1799,15 @@ static int pid_write(const int pid)
 	fputs(p1,fp);
 	fclose(fp); fp = NULL; // close append mode
 	return 0;
+	#endif
 }
 
 static inline int pid_read(void)
 { // Read Tor's PID from file (used for killing an orphaned process after a crash or improper shutdown)
+	#ifdef WIN32
+	error_simple(0,"Killing by PID is not supported on Windows. Not reading.");
+	return -1;
+	#else
 	FILE *fp;
 	if((fp = fopen(file_tor_pid, "r")) == NULL)
 		return 0; // no PID
@@ -1802,6 +1817,7 @@ static inline int pid_read(void)
 	const int pid = (int)strtoll(pid_string, NULL, 10);
 	fclose(fp); fp = NULL; // close append mode
 	return pid;
+	#endif
 }
 
 void torrc_save(const char *torrc_content_local)
@@ -2419,7 +2435,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 		if(arg)
 			port = arg;
 		else
-			port = (uint16_t)(rand() % (65536 - 10000 + 1)) + 10000; // keeping it over 10000 to keep byte length consistent (5 bytes)
+			port = (uint16_t)(randombytes_random() % (65536 - 10000 + 1)) + 10000; // keeping it over 10000 to keep byte length consistent (5 bytes)
 		if((socket_rand = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0)) < 0)
 		{ // Unlikely to occur. Could be fatal but shouldnt happen.
 			error_simple(0,"Unlikely socket creation error");
@@ -3894,7 +3910,7 @@ void initial(void)
 	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 
-	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations.
+	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Note: rand() is terrible on Windows.
 	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
 
 	sodium_memzero(protocols,sizeof(protocols)); // XXX initialize protocols struct XXX
