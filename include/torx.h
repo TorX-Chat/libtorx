@@ -815,6 +815,7 @@ int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn
 void random_string(char *destination,const unsigned int destination_size);
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
+int pid_kill(const pid_t pid,const int signal);
 void torrc_save(const char *torrc_content_local);
 char *torrc_verify(const char *torrc_content_local)__attribute__((warn_unused_result));
 char *which(const char *binary)__attribute__((warn_unused_result));

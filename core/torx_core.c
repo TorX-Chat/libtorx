@@ -1781,13 +1781,31 @@ static inline uint32_t fnv1a_32_salted(const void *data,const size_t len)
 	return hash;
 }
 
+int pid_kill(const pid_t pid,const int signal)
+{
+	#ifdef WIN32
+	HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE,(DWORD)pid);
+	if(hProcess == NULL)
+	{
+		error_printf(0,"Failed to open process. Error code: %lu\n", GetLastError());
+		return -1;
+	}
+	BOOL result = TerminateProcess(hProcess,(UINT)signal);
+	if(result == 0)
+	{
+		error_printf(0,"Failed to terminate process. Error code: %lu\n", GetLastError());
+		CloseHandle(hProcess);
+		return -1;
+	}
+	CloseHandle(hProcess);
+	return 0; // Success
+	#else
+	return kill(pid,signal);
+	#endif
+}
+
 static int pid_write(const int pid)
 { // Write Tor's PID to file
-	#ifdef WIN32
-	(void)pid;
-	error_simple(0,"Killing by PID is not supported on Windows. Not writing.");
-	return -1;
-	#else
 	FILE *fp;
 	if((fp = fopen(file_tor_pid, "w+")) == NULL)
 	{
@@ -1799,15 +1817,10 @@ static int pid_write(const int pid)
 	fputs(p1,fp);
 	fclose(fp); fp = NULL; // close append mode
 	return 0;
-	#endif
 }
 
 static inline int pid_read(void)
 { // Read Tor's PID from file (used for killing an orphaned process after a crash or improper shutdown)
-	#ifdef WIN32
-	error_simple(0,"Killing by PID is not supported on Windows. Not reading.");
-	return -1;
-	#else
 	FILE *fp;
 	if((fp = fopen(file_tor_pid, "r")) == NULL)
 		return 0; // no PID
@@ -1817,7 +1830,6 @@ static inline int pid_read(void)
 	const int pid = (int)strtoll(pid_string, NULL, 10);
 	fclose(fp); fp = NULL; // close append mode
 	return pid;
-	#endif
 }
 
 void torrc_save(const char *torrc_content_local)
@@ -2595,17 +2607,8 @@ static inline void *start_tor_threaded(void *arg)
 		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 //		restart = 1;
 		#ifdef WIN32
-		if(TerminateProcess(tor_fd_stdout,0))
-		{
-			DWORD waitResult = WaitForSingleObject(tor_fd_stdout, 1000); // INFINITE
-			if (waitResult == WAIT_OBJECT_0)
-				error_simple(0,"Windows: Tor terminated before timeout successfully.\n");
-			else
-				error_simple(0,"Windows: Tor failed to terminate before timeout. Coding error. Report this.\n");
-			CloseHandle(tor_fd_stdout);
-		}
-		else
-			error_simple(0,"TerminateProcess failed. Coding error. Report this.");
+		pid_kill(tor_pid,SIGTERM);
+		CloseHandle(tor_fd_stdout);
 		#else
 		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
@@ -4331,9 +4334,7 @@ void cleanup_lib(const int sig_num)
 { // Cleanup process: cleanup_cb() saves UI settings, calls cleanup_lib() to save library settings and close databases, then UI exits
 	#ifdef WIN32
 	WSACleanup(); // TODO this might need to be later
-	#define kill_tor_successfully TerminateProcess(tor_fd_stdout,0) != 0
-	#else
-	#define kill_tor_successfully kill(tor_pid,SIGTERM) == 0
+
 	#endif
 	if(sig_num)
 		breakpoint();
@@ -4361,7 +4362,7 @@ void cleanup_lib(const int sig_num)
 	pthread_rwlock_wrlock(&mutex_broadcast);
 	if(tor_pid < 1)
 		error_simple(0,"Exiting before Tor started. Goodbye.");
-	else if(kill_tor_successfully)
+	else if(!pid_kill(tor_pid,SIGTERM))
 	{ // we don't need to bother waiting for termination, just signal
 		pid_write(0);
 		error_simple(0,"Exiting normally after killing Tor. Goodbye.");
