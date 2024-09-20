@@ -333,7 +333,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			sodium_memzero(invitation,sizeof(invitation));
 		}
 	}
-	else if(arg && base_message_len) // Necessary check?
+	else if(arg && (base_message_len || null_terminated_len))
 	{ // If we simply need to add a null byte, we'll do it here rather than in message_sign, to avoid copying
 		memcpy(base_message,arg,base_message_len); // this is a necessary copy
 		if(null_terminated_len)

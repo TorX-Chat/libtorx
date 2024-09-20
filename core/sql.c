@@ -367,7 +367,7 @@ int sql_setting(const int force_plaintext,const int peer_index,const char *setti
 	return val;
 }
 
-static inline int load_messages_struc(const uint8_t reverse,const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
+static inline int load_messages_struc(const int offset,const int n,const time_t time,const time_t nstime,const uint8_t stat,const int p_iter,const char *message,const uint32_t base_message_len,const unsigned char *signature,const size_t signature_length)
 {
 	if(n < 0 || p_iter < 0/* || !message*/)
 	{
@@ -425,7 +425,10 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 	else // Most/All message types get here
 	{ // For signed messages, this is where we re-attach signatures and network order time / nstime to messages when loading them
 		if(!message)
+		{
 			error_simple(0,"Load_messages_struc failed sanity check due to message being inappropriately NULL");
+			return -1;
+		}
 		message_len = base_message_len + null_terminated_len + date_len + signature_len;
 		tmp_message = torx_secure_malloc(message_len);
 		memcpy(tmp_message,message,base_message_len);
@@ -471,17 +474,20 @@ static inline int load_messages_struc(const uint8_t reverse,const int n,const ti
 			const int g = set_g(-1,tmp_message);
 			invitee_add(g,n);
 		}
-	}
+	} // FISHING
+	if(offset < 0)
+printf("Checkpoint load_messages_struc offset =%d\n",offset);
 	int i;
-	if(reverse)
-		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i)) - 1;
+	if(offset < 0)
+		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i)) - offset - 1;
+	else if(offset > 0)
+		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + offset + 1;
 	else
 		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-	expand_message_struc(n,i);
+	if(!offset)
+		expand_message_struc(n,i);
 	torx_write(n) // XXX
-	if(reverse)
-		peer[n].min_i--;
-	else
+	if(!offset)
 		peer[n].max_i++;
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
@@ -799,7 +805,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
 	}
 	else if(null_terminated_len && message)
-		val = sql_exec(&db_messages,command,message,strlen(message)); // TODO 2024/07/03 segfaulted on strlen heres
+		val = sql_exec(&db_messages,command,message,strlen(message));
 	else
 		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,message ? 1 : 0);
 	torx_free((void*)&message);
@@ -986,8 +992,16 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
 	torx_read(n) // XXX
 	const int min_i = peer[n].min_i;
-	const time_t earliest_time = peer[n].message[min_i].time;
-	const time_t earliest_nstime = peer[n].message[min_i].nstime;
+	time_t earliest_time = peer[n].message[min_i].time;
+	time_t earliest_nstime = peer[n].message[min_i].nstime;
+	if(!earliest_time)
+	{ // Loading a message with zero time must be avoided, or no further messages can be loaded.
+		int tmp_i = peer[n].min_i;
+		while(tmp_i < peer[n].max_i && !peer[n].message[tmp_i].time)
+			tmp_i++;
+		earliest_time = peer[n].message[tmp_i].time;
+		earliest_nstime = peer[n].message[tmp_i].nstime;
+	}
 	torx_unlock(n) // XXX
 	sqlite3_stmt *stmt;
 	char command[512]; // size is somewhat arbitrary
@@ -1017,9 +1031,26 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		pthread_mutex_unlock(&mutex_sql_messages);
 		return 0;
 	}
+	int offset = 0;
+	if(reverse)
+	{ // Need to calculate the offset and appropriately expand the struct.
+		int i = min_i;
+		while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
+		{
+			i--;
+			offset--;
+			expand_message_struc(n,i); // before adjusting min_i
+			torx_write(n) // XXX
+			peer[n].min_i--;
+			torx_unlock(n) // XXX
+
+		}
+		sqlite3_reset(stmt);
+printf("Checkpoint offset: %d\n",offset);
+	}
 	uint32_t loaded = 0; // start at 0
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
-	{
+	{ // FISHING
 		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
 		const time_t nstime = (time_t)sqlite3_column_int(stmt, 1);
 		const uint8_t message_stat = (uint8_t)sqlite3_column_int(stmt, 3);
@@ -1097,8 +1128,12 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				}
 			}
 		}
-		if(!load_messages_struc(reverse,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length))
+		if(!load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length))
 			loaded++;
+		if(offset > 0)
+			offset--;
+		else if(offset < 0)
+			offset++;
 	//	if(messages && messages == loaded)
 	//		break;
 	}
