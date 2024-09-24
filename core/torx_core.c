@@ -71,7 +71,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 15; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
+uint32_t show_log_messages = 25; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -3146,7 +3146,6 @@ static inline int find_message_struc_pointer(const int min_i)
 
 void expand_message_struc(const int n,const int i)
 { /* Expand messages struct if our current i is unused && divisible by 10 */
-//printf("Checkpoint expand_message_struc: n=%d i=%d\n",n,i);
 	if(n < 0)
 	{
 		error_simple(0,"expand_message_struc failed sanity check. Coding error. Report this.");
@@ -4316,6 +4315,9 @@ void login_start(const char *arg)
 		error_simple(0,"Login_start called during lockout. UI bug. Report this to UI dev.");
 		return;
 	}
+	pthread_rwlock_wrlock(&mutex_global_variable);
+	lockout = 1;
+	pthread_rwlock_unlock(&mutex_global_variable);
 	char *password = {0};
 	if(arg)
 	{
@@ -4323,9 +4325,6 @@ void login_start(const char *arg)
 		password = torx_secure_malloc(len+1);
 		memcpy(password,arg,len+1);
 	}
-	pthread_rwlock_wrlock(&mutex_global_variable);
-	lockout = 1;
-	pthread_rwlock_unlock(&mutex_global_variable);
 	if(pthread_create(&thrd_login,&ATTR_DETACHED,&login_threaded,(void*)password))
 		error_simple(-1,"Failed to create thread");
 }

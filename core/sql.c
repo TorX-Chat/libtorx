@@ -474,9 +474,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			const int g = set_g(-1,tmp_message);
 			invitee_add(g,n);
 		}
-	} // FISHING
-	if(offset < 0)
-printf("Checkpoint load_messages_struc offset =%d\n",offset);
+	}
 	int i;
 	if(offset < 0)
 		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i)) - offset - 1;
@@ -1046,11 +1044,10 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 
 		}
 		sqlite3_reset(stmt);
-printf("Checkpoint offset: %d\n",offset);
 	}
 	uint32_t loaded = 0; // start at 0
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
-	{ // FISHING
+	{
 		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
 		const time_t nstime = (time_t)sqlite3_column_int(stmt, 1);
 		const uint8_t message_stat = (uint8_t)sqlite3_column_int(stmt, 3);
