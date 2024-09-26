@@ -2490,7 +2490,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 			continue;
 		}
 		serv_addr.sin_family = AF_INET;
-		serv_addr.sin_addr.s_addr = INADDR_ANY;
+		serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 		serv_addr.sin_port = htobe16(port);
 		if(bind(SOCKET_CAST_OUT socket_rand,(struct sockaddr *) &serv_addr, sizeof(serv_addr)) == 0)
 		{

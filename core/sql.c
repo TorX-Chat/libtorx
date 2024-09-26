@@ -993,7 +993,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	time_t earliest_time = peer[n].message[min_i].time;
 	time_t earliest_nstime = peer[n].message[min_i].nstime;
 	if(!earliest_time)
-	{ // Loading a message with zero time must be avoided, or no further messages can be loaded.
+	{ // Loading a message with zero time must be avoided, or no further messages can be loaded. TODO Note: On startup this *WILL ALWAYS* be zero, which is fine, on startup.
 		int tmp_i = peer[n].min_i;
 		while(tmp_i < peer[n].max_i && !peer[n].message[tmp_i].time)
 			tmp_i++;
