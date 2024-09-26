@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 12 , 7 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks .config/.key, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 12 , 7 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -1188,9 +1188,6 @@ void message_sort(const int g)
 				}
 			}
 		}
-	pthread_rwlock_rdlock(&mutex_expand_group); // XXX TODO REMOVE
-	error_printf(0,"Checkpoint message_sort group[%d].msg_count==%u",g,group[g].msg_count); // XXX TODO REMOVE
-	pthread_rwlock_unlock(&mutex_expand_group); // XXX TODO REMOVE
 }
 
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)
