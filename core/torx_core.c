@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 12 , 7 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 13 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -759,7 +759,6 @@ void setcanceltype(int type,int *arg)
 	(void) arg;
 }
 
-
 int8_t torx_debug_level(const int8_t level)
 { // sets or gets (-1)
 	if(level > -1)
@@ -1188,6 +1187,40 @@ void message_sort(const int g)
 				}
 			}
 		}
+}
+
+int *message_load_more(int *count,const int n)
+{
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
+	const int loaded = sql_populate_message(peer_index,0,local_show_log_messages);
+	if(loaded)
+	{ // Need to re-sort messages
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		int g = -1;
+		if(owner == ENUM_OWNER_GROUP_CTRL)
+			g = set_g(n,NULL);
+		const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+		int loaded_array[loaded];
+		for(int i = min_i, discovered = 0; discovered < loaded ; i++)
+		{
+			const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+			if(p_iter > -1)
+			{
+				loaded_array[discovered++] = i;
+				if(g > -1)
+					message_insert(g,n,i);
+			}
+		}
+		if(count)
+		{
+			*count = loaded;
+			int *ret = torx_insecure_malloc(sizeof(loaded_array));
+			memcpy(ret,loaded_array,sizeof(loaded_array));
+			return ret;
+		}
+	}
+	return NULL; // none loaded, or count wasn't passed
 }
 
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)

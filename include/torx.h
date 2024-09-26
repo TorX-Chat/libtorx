@@ -795,6 +795,7 @@ void torx_free(void **p);
 int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
+int *message_load_more(int *count,const int n);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input);
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
