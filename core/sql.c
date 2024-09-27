@@ -978,9 +978,9 @@ int sql_update_peer(const int n)
 	return val;
 }
 
-int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages)
-{ // WARNING: Calling by messages is a work-in-progress for groups
-	if(peer_index < 0 || (days && messages) || (!days && !messages))
+int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since)
+{ // Note: Groups can only be populated by since
+	if(peer_index < 0 || (days && messages) || (since && days) || (since && messages))
 	{
 		error_simple(0,"Sanity check fail in sql_populate_message. Bailing out. Report this.");
 		breakpoint();
@@ -989,18 +989,22 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	const int n = set_n(peer_index,NULL);
 	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
 	torx_read(n) // XXX
+	const uint8_t owner = peer[n].owner;
 	const int min_i = peer[n].min_i;
-	time_t earliest_time = peer[n].message[min_i].time;
-	time_t earliest_nstime = peer[n].message[min_i].nstime;
-	if(!earliest_time)
-	{ // Loading a message with zero time must be avoided, or no further messages can be loaded. TODO Note: On startup this *WILL ALWAYS* be zero, which is fine, on startup.
-		int tmp_i = peer[n].min_i;
-		while(tmp_i < peer[n].max_i && !peer[n].message[tmp_i].time)
-			tmp_i++;
-		earliest_time = peer[n].message[tmp_i].time;
-		earliest_nstime = peer[n].message[tmp_i].nstime;
-	}
+	int tmp_i = peer[n].min_i;
+	while(tmp_i < peer[n].max_i && !peer[n].message[tmp_i].time)
+		tmp_i++;// Loading a message with zero time must be avoided, or no further messages can be loaded. Note: On startup zero is OK, because we don't use earliest_time.
+	time_t earliest_time = peer[n].message[tmp_i].time;
+	time_t earliest_nstime = peer[n].message[tmp_i].nstime;
 	torx_unlock(n) // XXX
+	if(!earliest_time)
+		earliest_time = time(NULL); // 2024/09/27 experimental solution to a hypothetical problem
+	if(since > earliest_time || ((messages || days) && owner != ENUM_OWNER_CTRL))
+	{ // We've already loaded this far back or further, or we're trying to load group/group peer messages in a bad way
+		error_simple(0,"Sanity check fail in sql_populate_message at point two. Bailing out. Report this.");
+		pthread_mutex_unlock(&mutex_sql_messages);
+		return 0; // no messages to retrieve
+	}
 	sqlite3_stmt *stmt;
 	char command[512]; // size is somewhat arbitrary
 	int len = 0; // clang thinks this should be initialized, but I disagree.
@@ -1010,16 +1014,20 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		reverse = 0;
 		if(days)
 			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %lld ORDER BY time ASC,nstime ASC;",peer_index,(long long)startup_time - 60*60*24*days);
-		if(messages)
+		else if(messages)
 			len = snprintf(command,sizeof(command),"SELECT *FROM ( SELECT *FROM message WHERE peer_index = %d ORDER BY time DESC,nstime DESC LIMIT %u ) ORDER BY time ASC,nstime ASC;",peer_index,messages);
+		else // default to since, even if it is 0
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time >= %lld ORDER BY time ASC,nstime ASC;",peer_index,(long long)since);
 	}
 	else
 	{ // This is for "load more" aka populate peer struct from -1--
 		reverse = 1;
 		if(days)
 			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time > %lld AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ORDER BY time DESC,nstime DESC;",peer_index,(long long)earliest_time - 60*60*24*days,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime);
-		if(messages)
+		else if(messages)
 			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime,messages);
+		else // default to since, even if it is 0
+			len = snprintf(command,sizeof(command),"SELECT *FROM message WHERE peer_index = %d AND time >= %lld AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ORDER BY time DESC,nstime DESC;",peer_index,(long long)since,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime);
 	}
 	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
@@ -1059,6 +1067,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 		const uint8_t file_offer = protocols[p_iter].file_offer;
 		const uint8_t file_checksum = protocols[p_iter].file_checksum;
+		const uint8_t group_msg = protocols[p_iter].group_msg;
 		pthread_rwlock_unlock(&mutex_protocols);
 		if(null_terminated_len == 0 && logged)
 			column = 6;
@@ -1125,8 +1134,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				}
 			}
 		}
-		if(!load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length))
-			loaded++;
+		if(!load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length) && !(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
+			loaded++; // XXX j2fjq0fiofg WARNING: The second part of this if statement MUST be the same as in inline_load_array
 		if(offset > 0)
 			offset--;
 		else if(offset < 0)
@@ -1139,6 +1148,26 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	pthread_mutex_unlock(&mutex_sql_messages);
 	return (int)loaded;
+}
+
+static inline void inline_load_messages(const uint8_t owner,const int peer_index,const int n,const uint32_t local_show_log_messages)
+{ // Warning: we don't sanity check args
+	if(owner == ENUM_OWNER_GROUP_CTRL)
+	{ // XXX This *should* always occur first before any GROUP_PEERS load. If it doesn't, we should get lots of errors. XXX
+		const time_t since = message_find_since(n);
+		sql_populate_message(peer_index,0,0,since);
+	}
+	else if(owner == ENUM_OWNER_GROUP_PEER)
+	{
+		const int g = set_g(n,NULL);
+		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+		const int min_i = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+		const time_t since = getter_time(group_n,min_i,-1,-1,offsetof(struct message_list,time));
+		sql_populate_message(peer_index,0,0,since);
+	}
+	else if(owner == ENUM_OWNER_CTRL) // do not use else here
+		sql_populate_message(peer_index,0,local_show_log_messages,0);
+	peer_loaded_cb(n);
 }
 
 int sql_populate_peer(void)
@@ -1156,6 +1185,7 @@ int sql_populate_peer(void)
 		return -1;
 	}
 	sleep(1); // this isn't necessary. no longer crashes if it is removed. however it might immediately go to sleep(5) if we don't have sleep(1) here
+	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
 	{ // Retrieve data here using sqlite3_column_* functions,
 		const int peer_index = sqlite3_column_int(stmt, 0);
@@ -1170,7 +1200,6 @@ int sql_populate_peer(void)
 		const unsigned char *invitation = sqlite3_column_blob(stmt, 9); // TODO should probably check length to prevent potential overflow read in case of error
 		const int expiration = sqlite3_column_int(stmt, 10);
 		int n = -1;
-		const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 		if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		{
 			if((owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT) && expiration > 0 && time(NULL) > expiration)
@@ -1188,10 +1217,7 @@ int sql_populate_peer(void)
 				if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 					continue;
 				if(messages_loaded == 0)
-				{
-					sql_populate_message(peer_index,0,local_show_log_messages);
-					peer_loaded_cb(n);
-				}
+					inline_load_messages(owner,peer_index,n,local_show_log_messages);
 			}
 			else if((status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT))
 				|| (status == ENUM_STATUS_FRIEND && AUTOMATICALLY_LOAD_CTRL == 1 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)))
@@ -1202,8 +1228,7 @@ int sql_populate_peer(void)
 				load_onion(n);
 				if(messages_loaded == 0)
 				{
-					sql_populate_message(peer_index,0,local_show_log_messages);
-					peer_loaded_cb(n);
+					inline_load_messages(owner,peer_index,n,local_show_log_messages);
 					if(owner == ENUM_OWNER_GROUP_CTRL)
 					{
 						const int g = set_g(n,NULL);

@@ -71,7 +71,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 25; // TODO set this to something low (like 50 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
+uint32_t show_log_messages = 500; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -1189,38 +1189,158 @@ void message_sort(const int g)
 		}
 }
 
-int *message_load_more(int *count,const int n)
-{
-	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+time_t message_find_since(const int n)
+{ // Helper function to get approximate age (for calling sql_populate_message with `since` arg) for group_pm (if GROUP_PEER) or group_msg (if GROUP_CTRL) messages of show_log_messages distance
 	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
-	const int loaded = sql_populate_message(peer_index,0,local_show_log_messages);
-	if(loaded)
-	{ // Need to re-sort messages
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-		int g = -1;
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-			g = set_g(n,NULL);
-		const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
-		int loaded_array[loaded];
-		for(int i = min_i, discovered = 0; discovered < loaded ; i++)
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	char command_supplement[4096] = {0}; // size is somewhat arbitrary
+	time_t earliest_time = 0;
+	time_t earliest_nstime = 0;
+	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
+	{
+		for(int tmp_i = peer[n].min_i ; tmp_i < peer[n].max_i ; tmp_i++)
 		{
-			const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-			if(p_iter > -1)
+			const int p_iter = peer[n].message[tmp_i].p_iter;
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint8_t group_pm = protocols[p_iter].group_pm;
+			const uint8_t group_msg = protocols[p_iter].group_msg;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if((owner == ENUM_OWNER_GROUP_PEER && group_pm) || (owner == ENUM_OWNER_GROUP_CTRL && group_msg))
 			{
-				loaded_array[discovered++] = i;
+				earliest_time = peer[n].message[tmp_i].time;
+				earliest_nstime = peer[n].message[tmp_i].nstime;
+				break;
+			}
+		}
+		size_t pos = 0;
+		int group_pm_count = 0,group_msg_count = 0;
+		for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
+		{
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint8_t group_pm = protocols[p_iter].group_pm;
+			const uint8_t group_msg = protocols[p_iter].group_msg;
+			const uint16_t protocol = protocols[p_iter].protocol;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if((owner == ENUM_OWNER_GROUP_PEER && group_pm) || (owner == ENUM_OWNER_GROUP_CTRL && group_msg))
+			{
+				if((owner == ENUM_OWNER_GROUP_PEER && !group_pm_count) || (owner == ENUM_OWNER_GROUP_CTRL && !group_msg_count))
+					pos += (size_t) snprintf(command_supplement,sizeof(command_supplement)," AND protocol IN (");
+				pos += (size_t) snprintf(&command_supplement[pos],sizeof(command_supplement)-pos,"%u,",protocol);
+				owner == ENUM_OWNER_GROUP_PEER ? group_pm_count++ : group_msg_count++;
+			}
+		}
+		if((owner == ENUM_OWNER_GROUP_PEER && group_pm_count) || (owner == ENUM_OWNER_GROUP_CTRL && group_msg_count))
+		{
+			if(command_supplement[pos-1] == ',')
+				pos--;
+			command_supplement[pos-3] = ')';
+			command_supplement[pos-2] = ' ';
+			command_supplement[pos-1] = '\0';
+		}
+	}
+	sqlite3_stmt *stmt;
+	char command[4096]; // size is somewhat arbitrary
+	int len = 0; // clang thinks this should be initialized, but I disagree.
+	if(!messages_loaded)
+		len = snprintf(command,sizeof(command),"SELECT time FROM ( SELECT *FROM message WHERE peer_index = %d %s ORDER BY time DESC,nstime DESC LIMIT %u ) ORDER BY time ASC,nstime ASC;",peer_index,command_supplement,local_show_log_messages);
+	else
+		len = snprintf(command,sizeof(command),"SELECT time FROM message WHERE ( peer_index = %d AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ) %s ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime,command_supplement,local_show_log_messages);
+	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
+	sodium_memzero(command,sizeof(command));
+	if(val != SQLITE_OK)
+	{
+		error_printf(0, "Can't prepare message statement: %s. Not loading messages. Report this.",sqlite3_errmsg(db_messages));
+		return 0;
+	}
+	int count = 0;
+	time_t oldest_time = 0; // yes, must initialize to 0
+	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
+	{
+		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
+		if(!count++ || time < oldest_time)
+			oldest_time = time;
+	}
+	if(val != SQLITE_DONE)
+		error_printf(0, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
+	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
+	return oldest_time;
+}
+
+static inline void inline_load_array(const int g,const int n,int *loaded_array,const int loaded,const int freshly_loaded)
+{
+	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = min_i, discovered = 0; discovered < freshly_loaded ; i++)
+	{
+		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+		if(p_iter > -1)
+		{
+			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // do not pass this without thinking
+			const uint8_t message_stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint8_t group_msg = protocols[p_iter].group_msg;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if(!(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
+			{ // XXX j2fjq0fiofg WARNING: This MUST be the same as in sql_populate_message
+				loaded_array[loaded + discovered++] = i;
 				if(g > -1)
 					message_insert(g,n,i);
 			}
 		}
-		if(count)
+	}
+}
+
+int *message_load_more(int *count,const int n)
+{
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	int loaded = 0; // must initialize as 0
+	int g = -1;
+	int *loaded_array = NULL; // must initialize as NULL
+	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
+	{ // need to use helper function to get since rather than guessing with exponential growth, then call sql_populate_message with since
+		const time_t since = message_find_since(n); // YES, use n not group_n here because we respect what our caller is looking for
+		g = set_g(n,NULL);
+		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+		const int group_n_peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+		loaded_array = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
+		int freshly_loaded = 0;
+		if((freshly_loaded = sql_populate_message(group_n_peer_index,0,0,since)))
+		{ // Do GROUP CTRL first
+			loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
+			inline_load_array(g,group_n,loaded_array,loaded,freshly_loaded);
+			loaded += freshly_loaded;
+		}
+		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
-			*count = loaded;
-			int *ret = torx_insecure_malloc(sizeof(loaded_array));
-			memcpy(ret,loaded_array,sizeof(loaded_array));
-			return ret;
+			pthread_rwlock_rdlock(&mutex_expand_group);
+			const int peer_n = group[g].peerlist[nn];
+			pthread_rwlock_unlock(&mutex_expand_group);
+			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			if((freshly_loaded = sql_populate_message(peer_n_peer_index,0,0,since)))
+			{ // Do each GROUP_PEER
+				loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
+				inline_load_array(g,peer_n,loaded_array,loaded,freshly_loaded);
+				loaded += freshly_loaded;
+			}
 		}
 	}
-	return NULL; // none loaded, or count wasn't passed
+	else if(owner == ENUM_OWNER_CTRL)
+	{
+		const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
+		if((loaded = sql_populate_message(peer_index,0,local_show_log_messages,0)))
+		{
+			loaded_array = torx_insecure_malloc((size_t)loaded * sizeof(int));
+			inline_load_array(g,n,loaded_array,0,loaded);
+		}
+	}
+	if(count) // do not change logic
+		*count = loaded;
+	if(loaded && count) // do not change logic
+		return loaded_array;
+	torx_free((void*)&loaded_array); // do not change logic
+	return NULL;
 }
 
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)
