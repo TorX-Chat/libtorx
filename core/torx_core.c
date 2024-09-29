@@ -4068,7 +4068,7 @@ void initial(void)
 	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
 
-	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Note: rand() is terrible on Windows.
+	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Use randombytes_random(). Note: rand() is terrible on Windows.
 	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
 
 	sodium_memzero(protocols,sizeof(protocols)); // XXX initialize protocols struct XXX

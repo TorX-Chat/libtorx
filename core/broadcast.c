@@ -201,14 +201,14 @@ static inline void *broadcast_threaded(void *arg)
 	{
 		broadcast_delay_local = BROADCAST_DELAY_SLEEP;
 		pthread_rwlock_rdlock(&mutex_broadcast);
-		for(int iter_queue = 0,random_start_1 = rand() % BROADCAST_QUEUE_SIZE; iter_queue < BROADCAST_QUEUE_SIZE ; iter_queue++,random_start_1++)
-		{ // choose a random broadcast by calling rand() once as the starting position then iterate and wrap around as necessary.
+		for(int iter_queue = 0,random_start_1 = randombytes_random() % BROADCAST_QUEUE_SIZE; iter_queue < BROADCAST_QUEUE_SIZE ; iter_queue++,random_start_1++)
+		{ // choose a random broadcast by calling randombytes_random() once as the starting position then iterate and wrap around as necessary.
 			int random_broadcast = random_start_1;
 			if(random_broadcast >= BROADCAST_QUEUE_SIZE)
 				random_broadcast -= BROADCAST_QUEUE_SIZE; // Wrap around
 			if(broadcasts_queued[random_broadcast].hash)
 			{ // Chose random broadcast
-				for(int iter_peer = 0,random_start_2 = rand() % BROADCAST_MAX_PEERS; iter_peer < BROADCAST_MAX_PEERS ; iter_peer++,random_start_2++)
+				for(int iter_peer = 0,random_start_2 = randombytes_random() % BROADCAST_MAX_PEERS; iter_peer < BROADCAST_MAX_PEERS ; iter_peer++,random_start_2++)
 				{ // Choose a random peer to send it to
 					int random_peer = random_start_2;
 					if(random_peer >= BROADCAST_MAX_PEERS)
