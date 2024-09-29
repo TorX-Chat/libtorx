@@ -407,7 +407,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // ENUM_STATUS_FRIEND seems to include active SING/MULT
-		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // 2024/05/06 Happens on deleted CTRL, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
+		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // TODO 2024/09/28 happens after blocks or deletion, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
 		disconnect_forever(bev,ctx); // Run last, will exit event base
 		return; // 2024/03/11 hit this after deleting a group. probably didn't takedown the event properly after group delete
 	}

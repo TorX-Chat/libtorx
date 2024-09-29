@@ -349,14 +349,14 @@ static inline void *send_init(void *arg)
 		const evutil_socket_t socket = socks_connect(suffixonion,port_string);
 		if(socket < 1)
 		{ // this causes blocking only until connected TODO endless segfaults here for unexplained reasons
+			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep. MUST be before the sendfd_connected check to give libevent time to close.
 			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 			if(sendfd_connected)
-			{ // TODO this occured on 2024/05/18 when doing repeated blocks/unblocks of online peer. unsure of implications. lots of warnings happened after.
+			{ // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
 				error_simple(0,"Nulling a .bev_send here possibly without doing any necessary free in libevent. Report this!!!");
 				breakpoint();
 				peer_offline(n,1);
 			}
-			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep.
 		}
 		else
 		{

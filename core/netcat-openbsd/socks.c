@@ -282,10 +282,10 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 		case SOCKS_IPV4:
 			cnt = atomicio(POLLIN, proxyfd, buf + 4, 6);
 			if(cnt != 6)
-			{ // Occured on 2024/02/21 when taking down a group peer
+			{ // Occured on 2024/02/21 when taking down a group peer.
 				error_simple(0,"read failed, this will probably never occur because we don't use ipv6");
 				if(evutil_closesocket(proxyfd) == -1)
-					error_simple(0,"Failed to close socket. 95324");
+					error_simple(0,"Failed to close socket. 95324"); // Occured on 2024/09/28 when repeatedly blocking/unblocking.
 				return -1;
 			}
 			break;
