@@ -42,7 +42,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const char *true_name = protocols[true_p_iter].name;
 			pthread_rwlock_unlock(&mutex_protocols);
-			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name);
+			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name); // 2024/09/30 Occurred after a possible GTK issue. Sticker Request != Propose Upgrade
 		}
 		start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos));
 		if(start == 0)

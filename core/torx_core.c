@@ -3207,7 +3207,7 @@ void re_expand_callbacks(void)
 			break;
 		error_simple(0,"Checkpoint re_expand_callbacks n");
 		expand_peer_struc_cb(n);
-		for(int nn = n+10; nn > n; nn--)
+		for(int nn = n + 10; nn > n; nn--)
 		{
 			initialize_n_cb(nn);
 			const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -3215,21 +3215,21 @@ void re_expand_callbacks(void)
 			for(int i = min_i; ; i += 10)
 			{
 				const int p_iter = getter_int(nn,i,-1,-1,offsetof(struct message_list,p_iter));
-				if(p_iter == -1 && i%10 == 0 && i+10 > max_i + 1)
+				if(p_iter == -1 && i % 10 == 0 && i + 10 > max_i + 1)
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks i");
 				expand_message_struc_cb(nn,i);
-				for(int j = i+10; j > i; j--)
+				for(int j = i + 10; j > i; j--)
 					initialize_i_cb(nn,j);
 			}
 			for(int f = 0; ; f += 10)
 			{
 				getter_array(&checksum,sizeof(checksum),nn,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-				if(is_null(checksum,CHECKSUM_BIN_LEN) && f%10 == 0)
+				if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN))
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks f");
 				expand_file_struc_cb(nn,f);
-				for(int j = f+10; j > f; j--)
+				for(int j = f + 10; j > f; j--)
 					initialize_f_cb(nn,j);
 			}
 		}
@@ -3237,7 +3237,7 @@ void re_expand_callbacks(void)
 	for(int g = 0; ; g += 10)
 	{
 		pthread_rwlock_rdlock(&mutex_expand_group); // XXX
-		if(is_null(group[g].id,GROUP_ID_SIZE) && g%10 == 0 && g+10 > max_group)
+		if(g % 10 == 0 && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
 		{
 			pthread_rwlock_unlock(&mutex_expand_group); // XXX
 			break;
@@ -3279,7 +3279,7 @@ static inline void expand_file_struc(const int n,const int f)
 	}
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-	if(is_null(checksum,CHECKSUM_BIN_LEN) && f%10 == 0) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
+	if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
 	{ // Safe to cast f as size_t because > -1
 		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
@@ -3370,7 +3370,7 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 		error_simple(0,"expand_group_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	if(is_null(group[g].id,GROUP_ID_SIZE) && g%10 == 0 && g+10 > max_group)
+	if(g % 10 == 0 && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
 	{ // Safe to cast g as size_t because > -1
 		const size_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
@@ -3516,10 +3516,10 @@ int set_g(const int n,const void *arg)
 	uint8_t owner = 0; // initializing for clang. doesnt need to be.
 	pthread_rwlock_rdlock(&mutex_expand_group); // XXX
 	if(n > -1 && (owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) == ENUM_OWNER_GROUP_CTRL) // search for a GROUP_CTRL by n
-		while((!is_null(group[g].id,GROUP_ID_SIZE) || group[g].n > -1) && group[g].n != n)
+		while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && group[g].n != n)
 			g++;
 	else if(n > -1 && owner == ENUM_OWNER_GROUP_PEER) // search for a GROUP_PEER by n
-		while(!is_null(group[g].id,GROUP_ID_SIZE) || group[g].n > -1)
+		while(group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE))
 		{ // XXX EXPERIMENTAL
 			uint32_t gg = 0;
 			while(gg < group[g].peercount && group[g].peerlist[gg] != n)
@@ -3530,10 +3530,10 @@ int set_g(const int n,const void *arg)
 				break; // winner! set peer[n].associated_group here so that it only need be set once
 		}
 	else if(group_id)// search by group_id
-		while((!is_null(group[g].id,GROUP_ID_SIZE) || group[g].n > -1) && memcmp(group[g].id,group_id,GROUP_ID_SIZE))
+		while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && memcmp(group[g].id,group_id,GROUP_ID_SIZE))
 			g++;
 	else // find next blank, allow re-use
-		while((!is_null(group[g].id,GROUP_ID_SIZE) && memcmp(group[g].id,zero_array,GROUP_ID_SIZE)) || group[g].n > -1)
+		while(group[g].n > -1 || (!is_null(group[g].id,GROUP_ID_SIZE) && memcmp(group[g].id,zero_array,GROUP_ID_SIZE)))
 			g++; // TODO potential uninitialized soething (seems to be a bug on re-use... so it doesn't occur on first-run, just after crap is deleted)
 /* // Useful but valgrind gets upset. Disabled 2024/03/24.
 	if(owner == ENUM_OWNER_GROUP_PEER && n > -1 && g > -1 && group[g].n < 0 && (is_null(group[g].id,GROUP_ID_SIZE) || !memcmp(group[g].id,zero_array,GROUP_ID_SIZE)))
@@ -4530,7 +4530,7 @@ void cleanup_lib(const int sig_num)
 		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o);
 	// XXX Most activity should be brought to a halt by the above locks XXX
 	pthread_rwlock_rdlock(&mutex_expand_group);
-	for(int g = 0 ; !is_null(group[g].id,GROUP_ID_SIZE) || group[g].n > -1 ;  g++)
+	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE) ;  g++)
 	{
 		pthread_rwlock_unlock(&mutex_expand_group);
 		zero_g(g); // XXX INCLUDES LOCKS mutex_expand_group

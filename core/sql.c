@@ -1291,8 +1291,14 @@ int sql_populate_peer(void)
 	if(messages_loaded == 0) // this check is necessary to ensure this only runs on startup and not when tor is restarted
 		login_cb(0); //.... this check COULD be moved to login_cb itself if we have a reason for it to be
 	messages_loaded = 1;
+	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
+	{
+		pthread_rwlock_unlock(&mutex_expand_group);
 		message_sort(g);
+		pthread_rwlock_rdlock(&mutex_expand_group);
+	}
+	pthread_rwlock_unlock(&mutex_expand_group);
 	return 0;
 }
 
@@ -1328,7 +1334,6 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 			snprintf(command,allocated,"SELECT *FROM setting_global WHERE setting_name = '%s'",query);
 		else
 			snprintf(command,allocated,"SELECT *FROM setting_peer WHERE setting_name = '%s'",query);
-		printf("Checkpoint command: %s\n",command);
 		int val = sqlite3_prepare_v2(*db,command,(int)strlen(command), &stmt, NULL);
 		torx_free((void*)&command);
 		if(val != SQLITE_OK)
@@ -1463,7 +1468,7 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(obfs4proxy_location,setting_value,setting_value_len);
 					obfs4proxy_location[setting_value_len] = '\0';
 				}
-				else if(!strncmp(setting_name,"censored_region",10))
+				else if(!strncmp(setting_name,"censored_region",15))
 					censored_region = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"decryption_key",14))
 				{
