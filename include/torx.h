@@ -491,6 +491,12 @@ enum exclusive_types {
 	ENUM_EXCLUSIVE_GROUP_MECHANICS = 3
 }; // group_pm, group_msg, file_offer, group_mechanics, utf8, stream);
 
+enum stream_types { // Stream > 0 is not stored in struct longer than necessary. Handed off to UI after sent/recieved and removed from message struct.
+	ENUM_NON_STREAM = 0,
+	ENUM_STREAM_DISCARDABLE = 1, // Disgard if cannot be sent immediately. Message_send returns -1 if failed to send.
+	ENUM_STREAM_NON_DISCARDABLE = 2 // Do not disgard if cannot be sent immediately. No way to check if it ever sent because it is deleted from struct after send.
+};
+
 enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed upon each message):
 		XXX New Method:	echo $(($RANDOM*2-$RANDOM%2)) */
 /*	ENUM_PROTOCOL_AUDIO_WAV = 14433,			// TODO TODO TODO small size audio message, wav format. runtime(seconds) + data

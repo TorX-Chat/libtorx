@@ -113,7 +113,7 @@ static inline void begin_cascade_recv(const int n)
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(stat == ENUM_MESSAGE_FAIL && stream == 0)
+			if(stat == ENUM_MESSAGE_FAIL && stream != ENUM_STREAM_DISCARDABLE)
 				if(!send_prep(n,i,p_iter,0)) // Will do nothing if there are no messages to send
 					break; // allow cascading effect in output_cb
 		}

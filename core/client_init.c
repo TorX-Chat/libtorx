@@ -487,7 +487,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			torx_unlock(nnnn) // XXX
 		}
 		if(!stream)
-		{ // Save non-stream message to peer struct and potentially disk
+		{
 			if(cycle == 0)
 			{
 				if(target_g > -1 || (owner == ENUM_OWNER_GROUP_PEER && group_pm))
@@ -518,8 +518,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			torx_unlock(nnnn) // XXX
 			section_unclaim(n,f,nnnn,fd_type);
 		}
-		else if(ret == -1 && stream)
-		{ // delete unsuccessful stream message
+		else if(ret == -1 && stream == ENUM_STREAM_DISCARDABLE)
+		{ // delete unsuccessful discardable stream message
 			torx_write(nnnn) // XXX
 			zero_i(nnnn,iiii);
 			torx_unlock(nnnn) // XXX

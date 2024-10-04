@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 13 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 14 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -4079,7 +4079,7 @@ void initial(void)
 	// TODO ENUM_PROTOCOL_AUDIO_WAV TODO
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,1);
+	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
@@ -4089,7 +4089,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,0); // must NOT be stream (because must save). Must NOT be swappable.
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,1);
+	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
 	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 //	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_NONE,1,1,0); // not in use
@@ -4105,7 +4105,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
 	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
 	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
-	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,1);
+	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
 
 	size_t len;
 	if(file_db_plaintext == NULL)
