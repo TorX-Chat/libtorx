@@ -17,9 +17,9 @@ struct thread_data { // XXX Do not sodium_malloc structs unless they contain sen
 };
 struct serv_strc { // Sodium malloc this struct due to sensitive arrays
 	uint8_t owner;
-	char privkey[88+1]; // XXX 0xNJYoSBnU XXX
-	char onion[56+1]; // XXX 0xNJYoSBnU XXX
-	char peernick[56+1]; // XXX 0xNJYoSBnU XXX
+	char privkey[88+1];
+	char onion[56+1];
+	char *peernick;
 	int8_t in_pthread;
 };
 
@@ -141,8 +141,17 @@ static void *onion_gen(void *arg)
 { // For SING/MULT generation, call with pthread_create. THIS IS A BACKEND FUNCTION ONLY. // Note: TorX-ID length will be [52-suffix_length]
 	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
 	struct serv_strc *serv_strc = (struct serv_strc*) arg; // Casting passed struct
-	if((serv_strc->owner == ENUM_OWNER_SING || serv_strc->owner == ENUM_OWNER_MULT) && strlen(serv_strc->peernick) < 1)
-		snprintf(serv_strc->peernick,sizeof(serv_strc->peernick),"no_identifier_specified");
+	if((serv_strc->owner == ENUM_OWNER_SING || serv_strc->owner == ENUM_OWNER_MULT) && (serv_strc->peernick == NULL || strlen(serv_strc->peernick) < 1))
+	{
+		torx_free((void*)&serv_strc->peernick);
+		if(default_peernick == NULL)
+			error_simple(-1,"Default peernick is null. Coding error. Report this.");
+		pthread_rwlock_rdlock(&mutex_global_variable);
+		const size_t allocation_len = strlen(default_peernick)+1;
+		serv_strc->peernick = torx_secure_malloc(allocation_len);
+		snprintf(serv_strc->peernick,allocation_len,"%s",default_peernick);
+		pthread_rwlock_unlock(&mutex_global_variable);
+	}
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	size_t suffix_length_local = (size_t)suffix_length;
 	const uint8_t local_shorten_torxids = shorten_torxids;
@@ -213,7 +222,7 @@ static void *onion_gen(void *arg)
 			if(b64_decode(expanded_sk,sizeof(expanded_sk),serv_strc->privkey) != 64)
 			{
 				error_simple(0,"Invalid base64 privkey passed to onion_gen(). Bailing out.");
-				sodium_memzero(serv_strc->peernick,56+1);
+				torx_free((void*)&serv_strc->peernick);
 				return 0;
 			}
 			memcpy(ed25519_sk,expanded_sk,32);
@@ -239,7 +248,10 @@ static void *onion_gen(void *arg)
 			{
 				error_simple(0,"Probably invalid privkey provided to us (could only be caused by not enough bytes/un-decodable base64)."); // goto retry;
 				if(serv_strc->in_pthread == 1)
-					torx_free((void*)&serv_strc); 
+				{
+					torx_free((void*)&serv_strc->peernick);
+					torx_free((void*)&serv_strc);
+				}
 				return 0; 
 			}
 		}
@@ -307,7 +319,10 @@ static void *onion_gen(void *arg)
 		load_peer_struc(-1,serv_strc->owner,99,serv_strc->privkey,99,serv_strc->onion,serv_strc->peernick,NULL,NULL,NULL);
 	} // XXX NOTE: the 000... is just to beat our sanity check. This may not be an ideal long term solution.
 	if(serv_strc->in_pthread == 1)
-		torx_free((void*)&serv_strc); 
+	{
+		torx_free((void*)&serv_strc->peernick);
+		torx_free((void*)&serv_strc);
+	}
 	return 0; // could return n to generate_onion to avoid having to set_n() but thats lower priority
 }
 
@@ -327,9 +342,11 @@ int generate_onion(const uint8_t owner,char *privkey,const char *peernick)
 		sodium_memzero(serv_strc->privkey,88+1);
 	sodium_memzero(serv_strc->onion,56+1);
 	if(peernick)
-		snprintf(serv_strc->peernick,56+1,"%s",peernick);
-//	else // read the note below f3t34g before enabling this and disabling it in onion_gen()
-//		strcpy(serv_strc->peernick,"no_identifier_specified");
+	{
+		const size_t allocation_len = strlen(peernick)+1;
+		serv_strc->peernick = torx_secure_malloc(allocation_len);
+		snprintf(serv_strc->peernick,allocation_len,"%s",peernick);
+	}
 	if((owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT) && threadsafe_read_int8(&mutex_global_variable,(int8_t*)&shorten_torxids) == 1 && privkey == NULL) // NOTE: This must be the same as above UID:271231
 	{ // Nonblocking operation (relies on callback)
 		serv_strc->in_pthread = 1;
@@ -344,16 +361,12 @@ int generate_onion(const uint8_t owner,char *privkey,const char *peernick)
 		onion_gen(serv_strc);
 		if(return_privkey == 1)
 			snprintf(privkey,88+1,"%s",serv_strc->privkey);
+		torx_free((void*)&serv_strc->peernick);
 		if(serv_strc->onion[0] == '\0')
 		{ // BAD PRIVKEY, cannot be decoded. Probably passed from custom_input()
 			torx_free((void*)&serv_strc); // otherwise free'd in pthread
 			return -1;
 		}
-//		if(peernick == NULL)
-//		{ // f3t34g do not do this, or it will segfault. Passing null must be permitted without anything getting written to it. If we want to return, must malloc
-//			strncpy(peernick,serv_strc->peernick,56); 
-//			peernick[56] = '\0';
-//		}
 		const int n = set_n(-1,serv_strc->onion);
 		torx_free((void*)&serv_strc); // otherwise free'd in pthread
 		return n;

@@ -324,11 +324,10 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 			if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
 			{ // Append our group[g].invitation after (which we received from someone else when we joined the group)
 				getter_array(&base_message[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
-				char peernick[56+1];
-				getter_array(&peernick,sizeof(peernick),target_n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+				char *peernick = getter_string(NULL,target_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(group_add_peer(g,int_char->p,peernick,int_char->up,invitation) > -1) // we are working with two invitations... this is the correct one
 					error_simple(0,RED"Checkpoint New group peer! (message_prep)"RESET);
-				sodium_memzero(peernick,sizeof(peernick));
+				torx_free((void*)&peernick);
 			}
 			sodium_memzero(invitation,sizeof(invitation));
 		}

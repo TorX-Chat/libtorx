@@ -34,9 +34,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 	}
 	else if(f > -1)
 	{
-		if(offset == offsetof(struct file_list,checksum))
-			len = sizeof(peer[n].file[f].checksum);
-		else if(offset == offsetof(struct file_list,filename))
+		if(offset == offsetof(struct file_list,filename))
 		{
 			if(peer[n].file[f].filename)
 			{
@@ -64,24 +62,42 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 			}
 		}
 		else
-			error_printf(-1,"Invalid offset passed to getter_string2: %lu. Coding error. Report this.",offset);
+		{ // Handle arrays or error offsets
+			if(offset == offsetof(struct file_list,checksum))
+				len = sizeof(peer[n].file[f].checksum);
+			else
+				error_printf(-1,"Invalid offset passed to getter_string2: %lu. Coding error. Report this.",offset);
+			string = torx_secure_malloc(len);
+			memcpy(string,(char*)&peer[n] + offset,len);
+		}
+
 	}
 	else
 	{
-		if(offset == offsetof(struct peer_list,privkey))
-			len = sizeof(peer[n].privkey);
-		else if(offset == offsetof(struct peer_list,onion))
-			len = sizeof(peer[n].onion);
-		else if(offset == offsetof(struct peer_list,torxid))
-			len = sizeof(peer[n].torxid);
-		else if(offset == offsetof(struct peer_list,peeronion))
-			len = sizeof(peer[n].peeronion);
-		else if(offset == offsetof(struct peer_list,peernick))
-			len = sizeof(peer[n].peernick);
+		if(offset == offsetof(struct peer_list,peernick))
+		{
+			if(peer[n].peernick)
+			{
+				len = (uint32_t)strlen(peer[n].peernick) + 1;
+				string = torx_secure_malloc(len);
+				memcpy(string,peer[n].peernick,len);
+			}
+		}
 		else
-			error_printf(-1,"Invalid offset passed to getter_string3: %lu. Coding error. Report this.",offset);
-		string = torx_secure_malloc(len);
-		memcpy(string,(char*)&peer[n] + offset,len);
+		{ // Handle arrays or error offsets
+			if(offset == offsetof(struct peer_list,privkey))
+				len = sizeof(peer[n].privkey);
+			else if(offset == offsetof(struct peer_list,onion))
+				len = sizeof(peer[n].onion);
+			else if(offset == offsetof(struct peer_list,torxid))
+				len = sizeof(peer[n].torxid);
+			else if(offset == offsetof(struct peer_list,peeronion))
+				len = sizeof(peer[n].peeronion);
+			else
+				error_printf(-1,"Invalid offset passed to getter_string3: %lu. Coding error. Report this.",offset);
+			string = torx_secure_malloc(len);
+			memcpy(string,(char*)&peer[n] + offset,len);
+		}
 	}
 	torx_unlock(n) // XXX
 	if(size)

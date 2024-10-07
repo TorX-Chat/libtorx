@@ -540,7 +540,11 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 	if(peer[n].peeronion != peeronion) // checking to avoid "Source and destination overlap"
 		snprintf(peer[n].peeronion,56+1,"%s",peeronion);
 	if(peer[n].peernick != peernick) // checking to avoid "Source and destination overlap"
-		snprintf(peer[n].peernick,56+1,"%s",peernick);
+	{
+		const size_t allocation_len = strlen(peernick)+1;
+		peer[n].peernick = torx_secure_malloc(allocation_len);
+		snprintf(peer[n].peernick,allocation_len,"%s",peernick);
+	}
 	if(owner == ENUM_OWNER_PEER)
 		random_string(peer[n].privkey,88+1);
 	else if(peer[n].privkey != privkey) // checking to avoid "Source and destination overlap"
@@ -688,6 +692,8 @@ void load_onion(const int n)
 
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
 { // not filling 'peer_sign_pk' and 'sign_sk', leaving them as NULL. Fill them during handshake with sql_update_peer.
+	if(!privkey || !peeronion || !peernick) // TODO could add some additional checks here
+		error_simple(-1,"Sanity check failed in sql_insert_peer. Coding error. Report this.");
 	char command[1024]; // size is arbitrary
 	snprintf(command,sizeof(command),"INSERT OR ABORT INTO peer (owner,status,peerversion,privkey,peeronion,peernick,expiration) VALUES (%u,%u,%u,'%s','%s',?,%d);",owner,status,peerversion,privkey,peeronion,expiration);
 	int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
@@ -958,10 +964,10 @@ int sql_update_peer(const int n)
 	snprintf(command,sizeof(command),"UPDATE OR ABORT peer SET (owner,status,peerversion,privkey,peeronion,peernick) = (%u,%u,%u,'%s','%s',?) WHERE peer_index = %d;",owner,status,peerversion,privkey,peeronion,peer_index);
 	sodium_memzero(privkey,sizeof(privkey));
 	sodium_memzero(peeronion,sizeof(peeronion));
-	char peernick[56+1];
-	getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
-	const int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
-	sodium_memzero(peernick,sizeof(peernick));
+	uint32_t peernick_len;
+	char *peernick = getter_string(&peernick_len,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+	const int val = sql_exec(&db_encrypted,command,peernick,peernick_len-1); // don't include null byte in the count
+	torx_free((void*)&peernick);
 	sodium_memzero(command,sizeof(command));
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
 	getter_array(&sign_sk,sizeof(sign_sk),n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
@@ -1461,12 +1467,19 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(snowflake_location,setting_value,setting_value_len);
 					snowflake_location[setting_value_len] = '\0';
 				}
-				else if(!strncmp(setting_name,"obfs4proxy_location",19))
+				else if(!strncmp(setting_name,"lyrebird_location",17))
 				{
-					torx_free((void*)&obfs4proxy_location);
-					obfs4proxy_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(obfs4proxy_location,setting_value,setting_value_len);
-					obfs4proxy_location[setting_value_len] = '\0';
+					torx_free((void*)&lyrebird_location);
+					lyrebird_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(lyrebird_location,setting_value,setting_value_len);
+					lyrebird_location[setting_value_len] = '\0';
+				}
+				else if(!strncmp(setting_name,"conjure_location",16))
+				{
+					torx_free((void*)&conjure_location);
+					conjure_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(conjure_location,setting_value,setting_value_len);
+					conjure_location[setting_value_len] = '\0';
 				}
 				else if(!strncmp(setting_name,"censored_region",15))
 					censored_region = (uint8_t)strtoull(setting_value, NULL, 10);

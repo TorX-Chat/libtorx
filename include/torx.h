@@ -240,7 +240,7 @@ struct torx_peer { // "Data type: peer_list"  // Most important is to define oni
 	char torxid[52+1];
 	uint16_t peerversion;
 	char peeronion[56+1];
-	char peernick[56+1]; // note: asian characters can be up to 4 char
+	char *peernick;
 	int8_t log_messages; // -1 (override global), never log. 0 use global, 1 yes logging (override global)
 	time_t last_seen; // time. should be UTC.
 	uint16_t vport; // externally visible on onion
@@ -350,7 +350,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	char torxid[52+1];
 	uint16_t peerversion;
 	char peeronion[56+1];
-	char peernick[56+1]; // note: asian characters can be up to 4 char
+	char *peernick;
 	int8_t log_messages; // -1 (override global), never log. 0 use global, 1 yes logging (override global)
 	time_t last_seen; // time. should be UTC.
 	uint16_t vport; // externally visible on onion
@@ -899,7 +899,7 @@ int is_inbound_transfer(const uint8_t file_status)__attribute__((warn_unused_res
 void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
-int peer_save(const char *arg1,const char *arg2);
+int peer_save(const char *unstripped_peerid,const char *peernick);
 void peer_accept(const int n);
 void change_nick(const int n,const char *freshpeernick);
 uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));

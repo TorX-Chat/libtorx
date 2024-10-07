@@ -323,10 +323,9 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 			const uint16_t peerversion = getter_uint16(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			char privkey[88+1];
 			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
-			char peernick[56+1];
-			getter_array(&peernick,sizeof(peernick),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(NULL,event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			const int peer_index_fresh = sql_insert_peer(ENUM_OWNER_CTRL,status_fresh,peerversion,privkey,peeronion,peernick,0);
-			sodium_memzero(peernick,sizeof(peernick));
+			torx_free((void*)&peernick);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			sodium_memzero(privkey,sizeof(privkey));
 			setter(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index_fresh,sizeof(peer_index_fresh));
@@ -1093,8 +1092,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									}
 									unsigned char invitor_invitation[crypto_sign_BYTES];
 									memcpy(invitor_invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES);
-									char peernick[56+1];
-									getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+									char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 									const int peer_n = group_add_peer(g,&event_strc->buffer[GROUP_ID_SIZE],peernick,group_peer_ed25519_pk,invitor_invitation);
 									if(peer_n > -1)
 									{
@@ -1105,7 +1103,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									//	else
 									//		printf("Checkpoint NOT REQUESTING peerlist2. Peercount==%u\n",peercount);
 									}
-									sodium_memzero(peernick,sizeof(peernick));
+									torx_free((void*)&peernick);
 									sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
 								}
 								else
@@ -1267,10 +1265,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		{ // Generate, send, and save ctrl
 			uint8_t former_owner = owner; // use to mitigate race condition caused by deletion of SING
 			char fresh_privkey[88+1] = {0};
-			char peernick[56+1];
-			getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			event_strc->fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
-			sodium_memzero(peernick,sizeof(peernick));
+			torx_free((void*)&peernick);
 			if(former_owner == ENUM_OWNER_SING) // XXX DO NOT USE N AFTER THIS or risk race conditon XXX
 				bufferevent_disable(bev, EV_READ); // this will cause onion to be deleted i think !!!
 			const uint16_t fresh_peerversion = be16toh(align_uint16((void*)&buffer_ln[0]));
@@ -1282,8 +1279,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			crypto_sign_keypair(ed25519_pk,ed25519_sk);
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
 			memcpy(peer_sign_pk,&buffer_ln[2+56],sizeof(peer_sign_pk));
-			char peernick_fresh_n[56+1];
-			getter_array(&peernick_fresh_n,sizeof(peernick_fresh_n),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+			char *peernick_fresh_n = getter_string(NULL,event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			int fresh_n = -1; // for double chcking
 			if(former_owner == ENUM_OWNER_SING || (former_owner == ENUM_OWNER_MULT && threadsafe_read_uint8(&mutex_global_variable,&auto_accept_mult)))
 				fresh_n = load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_privkey,fresh_peerversion,fresh_peeronion,peernick_fresh_n,ed25519_sk,peer_sign_pk,NULL);
@@ -1291,7 +1287,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				fresh_n = load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_PENDING,fresh_privkey,fresh_peerversion,fresh_peeronion,peernick_fresh_n,ed25519_sk,peer_sign_pk,NULL);
 			else
 				error_simple(0,"Coding error 129012. Report this.");
-			sodium_memzero(peernick_fresh_n,sizeof(peernick_fresh_n));
+			torx_free((void*)&peernick_fresh_n);
 			if(fresh_n == -1 || event_strc->fresh_n != fresh_n)
 			{ // Coding error or buggy/malicious peer. TODO Should spoil onion.
 				printf("Checkpoint FAIL 2323fsadf event_strc->fresh_n == %d,fresh_n==%d\n",event_strc->fresh_n,fresh_n );

@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 14 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 15 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -34,6 +34,7 @@ char *file_tor_pid = {0}; // "tor.pid";
 char control_password_clear[32+1] = {0}; // MUST be \0 initialized. Is cleared on shutdown in case it was set by UI to something custom.
 char control_password_hash[61+1] = {0}; // MUST be \0 initialized. // does not need rwlock because only modified once // correct length.  Is cleared on shutdown in case it was set by UI to something custom.
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
+char *default_peernick = {0}; // default is set in initial() or after initial() by UI. Do not null.
 uint16_t tor_ctrl_port = 0;
 uint16_t tor_socks_port = 0;
 uint32_t tor_version[4] = {0};
@@ -63,7 +64,8 @@ const char platform_slash = '/';
 
 /* User configurable options that will automatically be checked by initial() */
 char *snowflake_location = {0}; // UI should set this
-char *obfs4proxy_location = {0}; // UI should set this
+char *lyrebird_location = {0}; // UI should set this
+char *conjure_location = {0}; // UI should set this
 char *native_library_directory = {0}; // UI should set this (Android-only)
 char *tor_data_directory = {0}; // UI can set this as a fixed path (relative paths produce warnings) within working_dir. This will override any path set in torrc.
 char *tor_location = {0}; // $PATH will be used if this is not set. Must be set on android/windows.
@@ -163,7 +165,7 @@ const char *table_peer = \
 		peerversion	INT	STRICT NOT NULL,\
 		privkey		TEXT	STRICT NOT NULL UNIQUE CHECK (length(privkey) == 88),\
 		peeronion	TEXT	STRICT NOT NULL UNIQUE CHECK (length(peeronion) == 56),\
-		peernick	TEXT	STRICT NOT NULL CHECK (length(peernick) <= 56),\
+		peernick	TEXT	STRICT NOT NULL,\
 		peer_sign_pk	BLOB,\
 		sign_sk		BLOB,\
 		invitation	BLOB,\
@@ -2166,7 +2168,7 @@ void zero_n(const int n) // XXX do not put locks in here
 	memset(peer[n].torxid,'0',sizeof(peer[n].torxid)-1);
 	peer[n].peerversion = 0;
 	memset(peer[n].peeronion,'0',sizeof(peer[n].peeronion)-1);
-	memset(peer[n].peernick,'0',sizeof(peer[n].peernick)-1);
+	torx_free((void*)&peer[n].peernick);
 	peer[n].log_messages = 0;
 	peer[n].last_seen = 0;
 	peer[n].vport = 0;
@@ -2368,8 +2370,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 					{
 						const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 						const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
-						char peernick[56+1];
-						getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+						char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 						if((search == NULL || mit_strcasestr(peernick,search) != NULL)\
 						&& ((z == 0 && (sendfd_connected > 0 && recvfd_connected > 0)) /* green */\
 						|| (z == 1 && (sendfd_connected < 1 && recvfd_connected > 0)) /* orange */\
@@ -2381,7 +2382,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 						//	if(owner == ENUM_OWNER_GROUP_PEER)
 						//		printf("Checkpoint refined_list owner==%d g==%d n==%u\n",owner,g,n);
 						}
-						sodium_memzero(peernick,sizeof(peernick));
+						torx_free((void*)&peernick);
 					}
 				}
 			}
@@ -2394,14 +2395,13 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 				const int n = sorted_n[max];
 				const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 				const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-				char peernick[56+1];
-				getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+				char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(local_owner == owner && status == peer_status && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 				{
 					array[relevant] = n;
 					relevant++;
 				}
-				sodium_memzero(peernick,sizeof(peernick));
+				torx_free((void*)&peernick);
 			}
 		}
 	}
@@ -2411,14 +2411,13 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 		while(max--)
 		{ // effectively newest first order
 			const uint8_t owner_max = getter_uint8(max,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-			char peernick[56+1];
-			getter_array(&peernick,sizeof(peernick),max,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(NULL,max,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			if(owner_max == owner && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 			{
 				array[relevant] = max;
 				relevant++;
 			}
-			sodium_memzero(peernick,sizeof(peernick));
+			torx_free((void*)&peernick);
 		}
 	}
 	else
@@ -3138,7 +3137,7 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	sodium_memzero(peer[n].torxid,sizeof(peer[n].torxid));
 	peer[n].peerversion = 0;
 	sodium_memzero(peer[n].peeronion,sizeof(peer[n].peeronion)); // peer[n].peeronion[0] = '\0';
-	sodium_memzero(peer[n].peernick,sizeof(peer[n].peernick)); // peer[n].peernick[0] = '\0';
+	peer[n].peernick = NULL;
 	peer[n].log_messages = 0;
 	peer[n].last_seen = 0;
 	peer[n].vport = 0;
@@ -3854,7 +3853,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 		sodium_memzero(peer_invite,sizeof(peer_invite));
 	}
 	const char *local_group_peernick;
-	char nick_array[56+1] = {0};
+	char nick_array[56+1];
 	if(group_peernick && strlen(group_peernick) > 0)
 		local_group_peernick = group_peernick;
 	else
@@ -4172,8 +4171,17 @@ void initial(void)
 		tor_location = which("tor");
 	if(snowflake_location == NULL)
 		snowflake_location = which("snowflake-client");
-	if(obfs4proxy_location == NULL)
-		obfs4proxy_location = which("obfs4proxy");
+	if(lyrebird_location == NULL)
+		lyrebird_location = which("lyrebird");
+	if(conjure_location == NULL)
+		conjure_location = which("conjure");
+
+	if(default_peernick == NULL)
+	{
+		const char defname[8+1] = "Nameless";
+		default_peernick = torx_secure_malloc(sizeof(defname));
+		snprintf(default_peernick,sizeof(defname),"%s",defname);
+	}
 
 	if(get_file_size(file_db_plaintext) == 0)
 		first_run = 1; // first point to set (1 of 2)

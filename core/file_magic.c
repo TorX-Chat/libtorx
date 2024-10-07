@@ -324,8 +324,7 @@ static inline void *peer_init(void *arg)
 	while((proxyfd = socks_connect(suffixonion,port_string)) < 1) // this is blocking
 		sleep(1); // not sure if necessary. could probably be eliminated or reduced without any ill effect
 	char fresh_privkey[88+1] = {0};
-	char peernick[56+1];
-	getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+	char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 	const int fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
 	// generate keypair here, do not store it yet except locally
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
@@ -373,12 +372,11 @@ static inline void *peer_init(void *arg)
 						sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 						break;
 					}
-					char peernick_fresh_n[56+1];
-					getter_array(&peernick_fresh_n,sizeof(peernick_fresh_n),fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+					char *peernick_fresh_n = getter_string(NULL,fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 					const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
 					setter(fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 					error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);
-					sodium_memzero(peernick_fresh_n,sizeof(peernick_fresh_n));
+					torx_free((void*)&peernick_fresh_n);
 					sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
 					sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 					sql_update_peer(fresh_n);
@@ -395,7 +393,7 @@ static inline void *peer_init(void *arg)
 	}
 	if(evutil_closesocket(proxyfd) == -1)
 		error_simple(0,"Failed to close socket. 3414");
-	sodium_memzero(peernick,sizeof(peernick));
+	torx_free((void*)&peernick);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 	sodium_memzero(buffer,sizeof(buffer));
@@ -404,30 +402,28 @@ static inline void *peer_init(void *arg)
 	return 0;
 }
 
-int peer_save(const char *arg1,const char *arg2) // peeronion, peernick.
-{ // Initiate a friend request. // XXX Untested "Stealth Addresses" functionality where invalid (non-base32) and excessive (beyond 51 character) characters are stripped. To utilize, take a 51 length TorX-ID, sprinkle invalid characters throughout it as desired, add unlimited length suffix trailing it, and then pass to peer_save. Should "work". XXX
-	if(arg1 == NULL || arg2 == NULL || strlen(arg1) == 0 || strlen(arg2) == 0)
+int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, peernick.
+{ // Initiate a friend request.
+	if(unstripped_peerid == NULL || peernick == NULL || strlen(unstripped_peerid) == 0 || strlen(peernick) == 0)
 	{
 		error_simple(0,"Passed null or 0 length peeronion or peernick to peer_save. Not allowed.");
 		return -1;
 	}
-	size_t id_len = strlen(arg1);
-	if(id_len == 44 && arg1[43] == '=')
+	size_t id_len = strlen(unstripped_peerid);
+	if(id_len == 44 && unstripped_peerid[43] == '=')
 	{ // could like... use a return value other than -1, and do something productive with this.
 		error_simple(0,"Highly likely that user attempted to save a public group ID as a peer.");
 		return -1;
 	}
-	char arg1_local[id_len+1];
-	snprintf(arg1_local,sizeof(arg1_local),"%s",arg1);
+	char unstripped_peerid_local[id_len+1];
+	snprintf(unstripped_peerid_local,sizeof(unstripped_peerid_local),"%s",unstripped_peerid);
 	if(id_len == 56) // OnionID
-		id_len = stripbuffer(arg1_local);
+		id_len = stripbuffer(unstripped_peerid_local);
 	else // TorX-ID
-		id_len = stripbuffer_b32_len51(arg1_local);
+		id_len = stripbuffer_b32_len51(unstripped_peerid_local);
 	char peeronion_or_torxid[56+1];
-	char peernick[56+1];
-	snprintf(peeronion_or_torxid,sizeof(peeronion_or_torxid),"%s",arg1_local);
-	sodium_memzero(arg1_local,sizeof(arg1_local));
-	snprintf(peernick,sizeof(peernick),"%s",arg2);
+	snprintf(peeronion_or_torxid,sizeof(peeronion_or_torxid),"%s",unstripped_peerid_local);
+	sodium_memzero(unstripped_peerid_local,sizeof(unstripped_peerid_local));
 	char *peeronion = {0}; // must set null in case of error
 	while(1)
 	{ // not a real while loop, just don't want to use goto
@@ -483,7 +479,6 @@ int peer_save(const char *arg1,const char *arg2) // peeronion, peernick.
 		sodium_memzero(peeronion_local,sizeof(peeronion_local));
 		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 		torx_free((void*)&peeronion);
-		sodium_memzero(peernick,sizeof(peernick));
 		const uint16_t vport = INIT_VPORT;
 		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 		torx_read(n) // XXX
@@ -494,7 +489,6 @@ int peer_save(const char *arg1,const char *arg2) // peeronion, peernick.
 		return 0;
 	}
 	sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
-	sodium_memzero(peernick,sizeof(peernick));
 	torx_free((void*)&peeronion);
 	return -1;
 }
@@ -514,10 +508,15 @@ void peer_accept(const int n)
 
 void change_nick(const int n,const char *freshpeernick)
 {
-	char peernick[56+1];
-	snprintf(peernick,56+1,"%s",freshpeernick);
-	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick),&peernick,sizeof(peernick));
-	sodium_memzero(peernick,sizeof(peernick));
+	size_t len;
+	if(freshpeernick == NULL || (len = strlen(freshpeernick)) < 1)
+		return;
+	char *tmp = torx_secure_malloc(len+1);
+	snprintf(tmp,len+1,"%s",freshpeernick);
+	torx_write(n)
+	torx_free((void*)&peer[n].peernick);
+	peer[n].peernick = tmp;
+	torx_unlock(n)
 	sql_update_peer(n);
 }
 
@@ -527,8 +526,7 @@ void block_peer(const int n)
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_GROUP_PEER)
 	{
 		uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-		char peernick[56+1];
-		getter_array(&peernick,sizeof(peernick),n,INT_MIN,-1,-1,offsetof(struct peer_list,peernick));
+		char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 		if(status == ENUM_STATUS_FRIEND)
 		{
 			if(owner == ENUM_OWNER_CTRL)
@@ -557,7 +555,7 @@ void block_peer(const int n)
 			error_printf(0,"Tried to toggle block status of status=%u. Coding error. Report this.",status);
 			breakpoint();
 		}
-		sodium_memzero(peernick,sizeof(peernick));
+		torx_free((void*)&peernick);
 	}
 	else
 	{
