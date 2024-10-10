@@ -153,10 +153,10 @@ UseBridges 1\n\
 UpdateBridgesFromAuthority 1\n\
 ClientTransportPlugin snowflake exec ";
 const char *torrc_content_default_censored_region_part2 = "\n\
-Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://1098762253.rsc.cdn77.org/ fronts=www.cdn77.com,www.phpmyadmin.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
-Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org/ fronts=www.cdn77.com,www.phpmyadmin.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
+Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net.global.prod.fastly.net/ fronts=www.shazam.com,www.cosmopolitan.com,www.esquire.com ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
+Bridge snowflake 192.0.2.4:80 8838024498816A039FCBBAB14E6F40A0843051FA fingerprint=8838024498816A039FCBBAB14E6F40A0843051FA url=https://1098762253.rsc.cdn77.org/ fronts=docs.plesk.com,www.phpmyadmin.net ice=stun:stun.l.google.com:19302,stun:stun.antisip.com:3478,stun:stun.bluesip.net:3478,stun:stun.dus.net:3478,stun:stun.epygi.com:3478,stun:stun.sonetel.net:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn\n\
 ";
-// For updated bridges: https://gitlab.torproject.org/tpo/applications/tor-browser-build/-/raw/main/projects/tor-expert-bundle/pt_config.json
+// For updated bridges: https://github.com/net4people/bbs/issues/338 https://gitlab.torproject.org/tpo/applications/tor-browser-build/-/raw/main/projects/tor-expert-bundle/pt_config.json
 const char *table_peer = \
 	"CREATE TABLE IF NOT EXISTS peer (\
 		peer_index	INTEGER	PRIMARY KEY AUTOINCREMENT,\
@@ -2761,16 +2761,18 @@ static inline void *start_tor_threaded(void *arg)
 	{
 		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 //		restart = 1;
+
 		#ifdef WIN32
 		pid_kill(tor_pid,SIGTERM);
 		CloseHandle(tor_fd_stdout);
 		#else
 		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
-		kill(tor_pid,SIGTERM); // was 0
-		tor_pid = wait(NULL);
+		if(!kill(tor_pid,SIGTERM))
+			tor_pid = wait(NULL);
 		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 		#endif
+
 	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
 		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
 			fprintf(stderr,"not ready yet\n");
