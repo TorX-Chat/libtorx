@@ -1068,6 +1068,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const uint16_t protocol = (uint16_t)sqlite3_column_int(stmt, 4);
 		int column;
 		const int p_iter = protocol_lookup(protocol);
+		if(p_iter < 0)
+		{ // Save memory and trouble by not loading unrecognized message types. Note: Usually they probably just won't be saved to begin with. These might be old messages of a depreciated type.
+			error_printf(0,"Unrecognized protocol not loaded: %u",protocol);
+			continue;
+		}
 		pthread_rwlock_rdlock(&mutex_protocols);
 		const uint8_t logged = protocols[p_iter].logged;
 		const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;

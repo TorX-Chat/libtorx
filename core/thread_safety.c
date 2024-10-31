@@ -70,7 +70,6 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 			string = torx_secure_malloc(len);
 			memcpy(string,(char*)&peer[n] + offset,len);
 		}
-
 	}
 	else
 	{
@@ -490,7 +489,7 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 		error_printf(-1,"Illegal getter return value. Coding error. Report this.3 %lu < %lu",offsets_struc[iter].size,size);
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const int o,const size_t offset)
-{ // Be careful on size. TODO Could actually use this on integers, not just arrays.
+{ // Be careful on size. Could actually use this on integers, not just arrays. It needs re-writing and better sanity checks. See getter_string as an example.
 	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0) || size < 1 || array == NULL)
 	{
 		error_printf(0,"getter_array sanity check failed at offset: %lu",offset);
@@ -510,7 +509,9 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	{
 		getter_array_sanity_check(offsets_message)
 		torx_read(n)
-		if(offset == offsetof(struct message_list,message))
+		if(peer[n].message[i].message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function.
+			memcpy(array,peer[n].message[i].message,peer[n].message[i].message_len);
+		else if(offset == offsetof(struct message_list,message))
 			memcpy(array,peer[n].message[i].message,size);
 		else
 			memcpy(array,(char*)&peer[n].message[i] + offset,size);
