@@ -14,7 +14,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 15 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 16 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -523,6 +523,11 @@ void message_deleted_cb(const int n,const int i)
 	if(message_deleted_registered)
 		message_deleted_registered(n,i);
 }
+void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t data_len)
+{
+	if(message_extra_registered)
+		message_extra_registered(n,i,data,data_len);
+}
 void login_cb(const int value)
 {
 	if(login_registered)
@@ -682,6 +687,12 @@ void message_deleted_setter(void (*callback)(int,int))
 {
 	if(message_deleted_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
 		message_deleted_registered = callback;
+}
+
+void message_extra_setter(void (*callback)(int,int,unsigned char*,uint32_t))
+{
+	if(message_extra_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		message_extra_registered = callback;
 }
 
 void login_setter(void (*callback)(int))
@@ -2769,7 +2780,7 @@ static inline void *start_tor_threaded(void *arg)
 		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
 		if(!kill(tor_pid,SIGTERM))
-			tor_pid = wait(NULL);
+			tor_pid = wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
 		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 		#endif
 

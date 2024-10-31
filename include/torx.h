@@ -655,6 +655,7 @@ void (*custom_setting_registered)(const int n,char *setting_name,char *setting_v
 void (*message_new_registered)(const int n,const int i);
 void (*message_modified_registered)(const int n,const int i);
 void (*message_deleted_registered)(const int n,const int i);
+void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len); // torx_secure_free required
 void (*login_registered)(const int value);
 void (*peer_loaded_registered)(const int n);
 void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
@@ -684,6 +685,7 @@ void custom_setting_setter(void (*callback)(int,char*,char*,size_t,int));
 void message_new_setter(void (*callback)(int,int));
 void message_modified_setter(void (*callback)(int,int));
 void message_deleted_setter(void (*callback)(int,int));
+void message_extra_setter(void (*callback)(int,int,unsigned char*,uint32_t));
 void login_setter(void (*callback)(int));
 void peer_loaded_setter(void (*callback)(int));
 void cleanup_setter(void (*callback)(int));
@@ -713,6 +715,7 @@ void custom_setting_cb(const int n,char *setting_name,char *setting_value,const 
 void message_new_cb(const int n,const int i);
 void message_modified_cb(const int n,const int i);
 void message_deleted_cb(const int n,const int i);
+void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t data_len);
 void login_cb(const int value);
 void peer_loaded_cb(const int n);
 void cleanup_cb(const int sig_num);
@@ -886,6 +889,7 @@ int sql_update_message(const int n,const int i);
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);
 int sql_update_peer(const int n);
 int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since);
+void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
 int sql_populate_peer(void);
 unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query);
 void sql_populate_setting(const int force_plaintext);

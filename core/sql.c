@@ -382,7 +382,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d has message",n,p_iter);
 		else // TODO currently triggers on all non-PM GROUP_PEER messages
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %u, nstime: %u, base_message_len: %u, signature_length: %lu, protocol: %s",n,p_iter,time,nstime,base_message_len,signature_length,name);
-		return -1;
+		return INT_MIN;
 	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	pthread_rwlock_rdlock(&mutex_protocols);
@@ -417,7 +417,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			else if(group_i > max_i)
 			{ // 2024/05/25 this probably occurs due to deleted messages?
 				error_printf(0,"Message not found. Cannot match GROUP_PEER with GROUP_CTRL message. Protocol: %u. Report this for science.",protocol);
-				return -1; // fail
+				return INT_MIN; // fail
 			}
 			group_i++;
 		}
@@ -427,7 +427,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		if(!message)
 		{
 			error_simple(0,"Load_messages_struc failed sanity check due to message being inappropriately NULL");
-			return -1;
+			return INT_MIN;
 		}
 		message_len = base_message_len + null_terminated_len + date_len + signature_len;
 		tmp_message = torx_secure_malloc(message_len);
@@ -494,7 +494,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 	peer[n].message[i].message = tmp_message;
 	peer[n].message[i].message_len = message_len;
 	torx_unlock(n) // XXX
-	return 0;
+	return i;
 }
 
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
@@ -1083,65 +1083,77 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		uint32_t message_len = (uint32_t)sqlite3_column_bytes(stmt, column);
 		const unsigned char *signature = sqlite3_column_blob(stmt, 7);
 		const size_t signature_length = (size_t)sqlite3_column_bytes(stmt, 7);
+		const char *extraneous;
+		uint32_t extraneous_len = (uint32_t)sqlite3_column_bytes(stmt, 8);
 		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 			process_pause_cancel(n,set_f(n,(const unsigned char *)message,CHECKSUM_BIN_LEN),protocol,message_stat);
-		else if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
-		{ // handle outbound file related messages
+		if(extraneous_len)
+		{
 			int nn = n;
 			int f = -1;
-			if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
-				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
-			if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
-			{ // do NOT make else if
-				const int g = set_g(n,NULL);
-				nn = getter_group_int(g,offsetof(struct group_list,n));
-				if(nn < 0)
-				{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
-					error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",nn,protocol);
-					continue;
+			if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
+			{ // handle outbound file related messages
+				if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
+					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
+				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
+				{ // do NOT make else if
+					const int g = set_g(n,NULL);
+					nn = getter_group_int(g,offsetof(struct group_list,n));
+					if(nn < 0)
+					{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
+						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",nn,protocol);
+						continue;
+					}
+					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 				}
-				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+				else if(f < 0)
+					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			}
-			else if(f < 0)
-				f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
 			{ // Retrieve file_path /* goat */
-				const size_t path_len = (size_t)sqlite3_column_bytes(stmt, 8);
-				if(path_len)
-				{ // necessary check
-					torx_write(nn) // XXX
-					peer[nn].file[f].file_path = torx_secure_malloc(path_len+1);
-					const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
-					memcpy(peer[nn].file[f].file_path,file_path,path_len);
-					peer[nn].file[f].file_path[path_len] = '\0';
-					const uint64_t *split_info = peer[nn].file[f].split_info;
-					torx_unlock(nn) // XXX
-					uint8_t status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
-					if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
-					{ // This can trigger when the status == pending due to having received a pause at any time
-						status = ENUM_FILE_INBOUND_ACCEPTED;
-						setter(nn,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-					}
-					else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-					{
-						initialize_split_info(nn,f);
-						torx_read(nn) // XXX
-						if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
-						{ // 2024/05/12 Setting transferred amount according to file size
-							torx_unlock(nn) // XXX
-							const uint64_t size_on_disk = get_file_size(file_path);
-							torx_write(nn) // XXX
-							peer[nn].file[f].split_info[0] = size_on_disk;
-							if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
-								peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
-						}
+				extraneous = NULL;
+				const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
+				torx_write(nn) // XXX
+				peer[nn].file[f].file_path = torx_secure_malloc(extraneous_len+1);
+				memcpy(peer[nn].file[f].file_path,file_path,extraneous_len);
+				peer[nn].file[f].file_path[extraneous_len] = '\0';
+				const uint64_t *split_info = peer[nn].file[f].split_info;
+				torx_unlock(nn) // XXX
+				extraneous_len = 0; // MUST because related to callback
+				uint8_t status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
+				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
+				{ // This can trigger when the status == pending due to having received a pause at any time
+					status = ENUM_FILE_INBOUND_ACCEPTED;
+					setter(nn,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+				}
+				else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+				{
+					initialize_split_info(nn,f);
+					torx_read(nn) // XXX
+					if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
+					{ // 2024/05/12 Setting transferred amount according to file size
 						torx_unlock(nn) // XXX
+						const uint64_t size_on_disk = get_file_size(file_path);
+						torx_write(nn) // XXX
+						peer[nn].file[f].split_info[0] = size_on_disk;
+						if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
+							peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
 					}
+					torx_unlock(nn) // XXX
 				}
 			}
+			else
+				extraneous = (const char *)sqlite3_column_blob(stmt, 8);
 		}
-		if(!load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length) && !(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
+		const int i = load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
+		if(i != INT_MIN && !(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
 			loaded++; // XXX j2fjq0fiofg WARNING: The second part of this if statement MUST be the same as in inline_load_array
+		if(extraneous_len && i != INT_MIN)
+		{ // Must allocate because _cb is probably asyncronous
+			unsigned char *extraneous_allocated = torx_secure_malloc(extraneous_len);
+			memcpy(extraneous_allocated,extraneous,extraneous_len);
+			message_extra_cb(n,i,extraneous_allocated,extraneous_len);
+		}
 		if(offset > 0)
 			offset--;
 		else if(offset < 0)
@@ -1154,6 +1166,14 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	pthread_mutex_unlock(&mutex_sql_messages);
 	return (int)loaded;
+}
+
+void message_extra(const int n,const int i,const void *data,const uint32_t data_len)
+{ // Save some extra data related to a message, which will be retrievable via message_extra_cb when loading the message
+	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
+	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));
+	sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,data,(int)data_len);
 }
 
 static inline void inline_load_messages(const uint8_t owner,const int peer_index,const int n,const uint32_t local_show_log_messages)
