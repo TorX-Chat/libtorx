@@ -2779,11 +2779,10 @@ static inline void *start_tor_threaded(void *arg)
 		#else
 		close(tor_fd_stdout);
 		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
-		if(!kill(tor_pid,SIGTERM))
+		if(!kill(tor_pid,SIGTERM) && tor_running) // DO NOT MODIFY: wait() must NOT be called if !tor_running or issues on startup occur.
 			tor_pid = wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
 		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 		#endif
-
 	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
 		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
 			fprintf(stderr,"not ready yet\n");
