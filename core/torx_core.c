@@ -2527,7 +2527,8 @@ static inline int hash_password_internal(const char *password)
 		return 0;
 	char arg1[] = "--quiet";
 	char arg2[] = "--DataDirectory";
-	char arg3[] = "FyRH0kIouynnDZmTDZpQ"; // tor_data_directory
+	char arg3[64];
+	random_string(arg3,sizeof(arg3)); // generate a random data directory to avoid errors on certain platforms
 	char arg4[] = "--hash-password";
 //	char arg5[] = "-"; // cannot, does not work TODO talk to #tor
 	const size_t password_len = strlen(password);
