@@ -323,9 +323,10 @@ endif()
 target_include_directories(
 	${PROJECT_NAME}
 	PUBLIC ##	SYSTEM # not sure if helpful
+		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>		# to get torx.h
+		$<INSTALL_INTERFACE:include>			# this MIGHT make it work when distributed https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html#creating-relocatable-packages
+	PRIVATE
 		${PNG_INCLUDE_DIRS}				# probably not useful, i think this is bunk. see include_directories()
-		${CMAKE_CURRENT_SOURCE_DIR}/include		# to get torx.h
-##		$<INSTALL_INTERFACE:include>			# this MIGHT make it work when distributed https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html#creating-relocatable-packages
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 )
 add_compile_definitions(SQLITE_HAS_CODEC QR_GENERATOR SECURE_MALLOC)
