@@ -628,6 +628,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_read(nn) // XXX
 				const int *split_status = peer[nn].file[f].split_status;
 				const int8_t *split_status_fd = peer[nn].file[f].split_status_fd;
+				torx_unlock(nn) // XXX
+				if(split_status == NULL || split_status_fd == NULL)
+				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second
+					error_simple(0,"Peer asked us to a file without initialized split_status. Coding error. Report this. Bailing.");
+					continue;
+				}
+				torx_read(nn) // XXX
 				const uint64_t section_info_current = peer[nn].file[f].split_info[section];
 				const int8_t relevant_split_status_fd = peer[nn].file[f].split_status_fd[section];
 				const int relevant_split_status = peer[nn].file[f].split_status[section];
@@ -642,7 +649,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					error_printf(0,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
 					continue;
 				}
-				else if(split_status == NULL || split_status_fd == NULL || relevant_split_status != n || relevant_split_status_fd != fd_type)
+				else if(relevant_split_status != n || relevant_split_status_fd != fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
 				//	if(split_status)
 				//		printf("Checkpoint split status EXISTS: %d ?= %d\n",relevant_split_status,n);

@@ -648,7 +648,7 @@ void destroy_file(const char *file_path)
 	sodium_memzero(path_copy,sizeof(path_copy)); // DO NOT do this before using directory. Basename and dirname are peculiar
 	if(rename(file_path, new_file_path) != 0)
 	{
-		error_simple(0,"Error renaming file destroy_file. Probably deleting an empty history?");
+		error_simple(0,"Error renaming file destroy_file. File may not exist.");
 		sodium_memzero(new_file_path,sizeof(new_file_path));
 		return;
 	}
