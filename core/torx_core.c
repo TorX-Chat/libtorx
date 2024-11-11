@@ -2194,8 +2194,8 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 	peer[n].message[i].pos = 0;
 	peer[n].message[i].time = 0;
 	peer[n].message[i].nstime = 0;
-	if(peer[n].max_i == i) // EXPERIMENTAL ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
-		peer[n].max_i--;
+	while(peer[n].max_i == i && peer[n].message[i].p_iter == -1)
+		peer[n].max_i--; // EXPERIMENTAL ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
 }
 
 static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here

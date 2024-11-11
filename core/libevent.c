@@ -1531,11 +1531,11 @@ void *torx_events(void *arg)
 			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion < 2))
 				pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
-			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1/* && peerversion < torx_library_version[0]*/)
+			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
 			{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
-				printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1\n"RESET);
+				printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u\n"RESET,peerversion);
 				const uint16_t trash_version = htobe16(torx_library_version[0]);
-				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version)); // TODO this will fail 100% of the time because its STREAM
+				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
 			}
 			if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.

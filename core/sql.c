@@ -82,6 +82,23 @@ Other:
 Legal:
 - Export controls (US/EU) && Apple Appstore: https://discuss.zetetic.net/t/export-requirements-for-applications-using-sqlcipher/47
 */
+
+/* static inline void shrink_message_struct(const int n)
+{ // XXX DO NOT DELETE XXX
+// TODO: Integrate zero_i calls. Callback to the UI to shrink its' t_message struct too
+// Issue(s): race conditions caused by message_deleted_cb() occuring after the struct has shrunk, so we would have to eliminate message_deleted_cb() calls (in delete_log) and rely solely on shrink_message_struct_cb
+// Further: How will we handle caching messages while offloaded? What if we don't? See todo.html for current ideas.
+	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	const int pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
+	torx_write(n) // XXX
+	peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, sizeof(struct message_list) *21) + 10;
+	for(int j = -10; j < 11; j++)
+		initialize_i(n,j);
+	peer[n].min_i = 0;
+	torx_unlock(n) // XXX
+//TODO	shrink_message_struct_cb(n); // TODO remember to remove message_deleted_cb from delete_log
+} */
+
 void delete_log(const int n)
 { // WARNING: If called on GROUP_CTRL, THIS WILL ALSO DELETE PRIVATE MESSAGES
 	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
@@ -118,8 +135,8 @@ void delete_log(const int n)
 			}
 			torx_write(peer_n) // XXX
 			peer[peer_n].max_i = -1;
-			peer[peer_n].min_i = 0;
 			torx_unlock(peer_n) // XXX
+		//TODO	shrink_message_struct(peer_n);
 		}
 	}
 	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -138,8 +155,8 @@ void delete_log(const int n)
 	}
 	torx_write(n) // XXX
 	peer[n].max_i = -1;
-	peer[n].min_i = 0;
 	torx_unlock(n) // XXX
+//TODO	shrink_message_struct(n);
 }
 
 int message_edit(const int n,const int i,const char *message)
