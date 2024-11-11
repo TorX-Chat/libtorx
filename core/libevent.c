@@ -161,22 +161,25 @@ static inline int pipe_auth_inbound(const int n,const int8_t fd_type,const char 
 	return ret;
 }
 
-static inline void begin_cascade_recv(const int n)
-{
+static inline void begin_cascade(const int n,const int8_t fd_type)
+{ // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
+	const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+	const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+	if(sendfd_connected && recvfd_connected)
+		return; // Bail out because we assume cascade was already triggered on the other fd_type
 	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
 	{
 		const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-		if(p_iter > -1)
+		if(stat == ENUM_MESSAGE_FAIL && p_iter > -1)
 		{ // important check, to snuff out deleted messages
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(stat == ENUM_MESSAGE_FAIL && stream != ENUM_STREAM_DISCARDABLE)
-				if(!send_prep(n,i,p_iter,0)) // Will do nothing if there are no messages to send
-					break; // allow cascading effect in output_cb
+			if(stream != ENUM_STREAM_DISCARDABLE && !send_prep(n,i,p_iter,fd_type)) // Will do nothing if there are no messages to send
+				break; // allow cascading effect in output_cb
 		}
 	}
 }
@@ -898,7 +901,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									event_strc->authenticated = 1;
 									const uint8_t recvfd_connected = 1;
 									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-									begin_cascade_recv(n);
+									begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
 									peer_online(n);
 									if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
 									{ // propose upgrade
@@ -1448,17 +1451,15 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 
 	if(event_strc->authenticated)
 	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
-		const uint8_t recvfd_connected = 1;
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 			error_simple(1,"Existing Peer has connected to us.");
 		else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 			error_simple(1,"New potential peer has connected.");
-
+		const uint8_t recvfd_connected = 1;
+		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 		if(owner == ENUM_OWNER_CTRL)
-			begin_cascade_recv(n);
+			begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
 		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 			peer_online(n); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 	}
@@ -1529,15 +1530,27 @@ void *torx_events(void *arg)
 			const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-			if(owner == ENUM_OWNER_CTRL && (local_v3auth_enabled == 0 || peerversion < 2))
-				pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
-			if(owner == ENUM_OWNER_CTRL && local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
-			{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
-				printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u\n"RESET,peerversion);
-				const uint16_t trash_version = htobe16(torx_library_version[0]);
-				message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+			const uint8_t sendfd_connected = 1;
+			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
+			if(owner == ENUM_OWNER_CTRL)
+			{
+				uint8_t have_triggered_cascade = 0;
+				if(local_v3auth_enabled == 0 || peerversion < 2)
+				{
+					pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
+					have_triggered_cascade = 1;
+				}
+				if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
+				{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
+					printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u\n"RESET,peerversion);
+					const uint16_t trash_version = htobe16(torx_library_version[0]);
+					message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+					have_triggered_cascade = 1;
+				}
+				else if(!have_triggered_cascade)
+					begin_cascade(n,1); // should go immediately after <fd_type>_connected = 1
 			}
-			if(owner == ENUM_OWNER_GROUP_PEER)
+			else if(owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
 				uint8_t first_connect = 0;

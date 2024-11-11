@@ -425,8 +425,6 @@ static inline void *send_init(void *arg)
 			evutil_make_socket_nonblocking(socket); // for libevent
 			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
 			error_simple(1,"Connected to existing peer.");
-			const uint8_t sendfd_connected = 1;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 			event_strc->sockfd = socket;
 			event_strc->authenticated = 1; // this is sendfd. It is always authenticated.
