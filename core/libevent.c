@@ -162,7 +162,7 @@ static inline int pipe_auth_inbound(const int n,const int8_t fd_type,const char 
 }
 
 static inline void begin_cascade(const int n,const int8_t fd_type)
-{ // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
+{ // Triggers a single unsent message // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
 	const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 	const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
 	if(sendfd_connected && recvfd_connected)
@@ -209,6 +209,11 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 					continue;
 				}
 				const int p_iter = packet[o].p_iter;
+				if(p_iter < 0)
+				{ // Should never happen
+					error_simple(0,"p_iter is negative in packet_removal. Potentially serious coding error. Report this.");
+					continue;
+				}
 				const int packet_f_i = packet[o].f_i;
 				const uint16_t packet_len = packet[o].packet_len;
 				const uint64_t packet_start = packet[o].start;
@@ -1554,9 +1559,9 @@ void *torx_events(void *arg)
 			{ // Put this in front of the queue.
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
 				uint8_t first_connect = 0;
-				if(stat == ENUM_MESSAGE_FAIL)
+				int p_iter;
+				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter)) > -1))
 				{ // Put queue skipping protocols first, if unsent, before pipe auth
-					const int p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter));
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
 					pthread_rwlock_unlock(&mutex_protocols);

@@ -1145,10 +1145,15 @@ void message_remove(const int g,const int n,const int i)
 	else
 	{ // TODO 2024/02/24 unable to discern why some fail and some don't. (ie why some are in struct and others aren't -- review message_insert, message_sort)
 		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-		pthread_rwlock_rdlock(&mutex_protocols);
-		const char *name = protocols[p_iter].name;
-		pthread_rwlock_unlock(&mutex_protocols);
-		error_printf(0,"Sanity message_remove called on non-existant message of protocol: %s. Coding error. Report this.",name);
+		if(p_iter < 0)
+			error_printf(0,"Sanity message_remove called on non-existant message. Coding error. Report this.");
+		else
+		{
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const char *name = protocols[p_iter].name;
+			pthread_rwlock_unlock(&mutex_protocols);
+			error_printf(0,"Sanity message_remove called on non-existant message of protocol: %s. Coding error. Report this.",name);
+		}
 	//	breakpoint();
 		return;
 	}
@@ -1187,50 +1192,55 @@ void message_sort(const int g)
 		const time_t nstime = peer[group_n].message[i].nstime;
 		const int p_iter = peer[group_n].message[i].p_iter;
 		torx_unlock(group_n) // XXX
-		pthread_rwlock_rdlock(&mutex_protocols);
-		const uint16_t protocol = protocols[p_iter].protocol;
-		pthread_rwlock_unlock(&mutex_protocols);
-		if(stat == ENUM_MESSAGE_FAIL || stat == ENUM_MESSAGE_SENT)
-		{ // Do outbound messages on group_n. NOTE: For speed of insertion, since this is the first N, it should be in order and therefore there is no need to check time/nstime, we assume they are sequential.
-			if(time_last < time || (time_last == time && nstime_last < nstime))
-			{ // Indeed sequential
-				struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
-				page->message_prior = message_prior;
-				page->n = group_n;
-				page->i = i;
-				page->time = time;
-				page->nstime = nstime;
-				page->message_next = NULL;
-				if(message_prior) // Not first message
-					message_prior->message_next = page;
-				else
-				{ // First message
+		if(p_iter > -1)
+		{
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint16_t protocol = protocols[p_iter].protocol;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if(stat == ENUM_MESSAGE_FAIL || stat == ENUM_MESSAGE_SENT)
+			{ // Do outbound messages on group_n. NOTE: For speed of insertion, since this is the first N, it should be in order and therefore there is no need to check time/nstime, we assume they are sequential.
+				if(time_last < time || (time_last == time && nstime_last < nstime))
+				{ // Indeed sequential
+					struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
+					page->message_prior = message_prior;
+					page->n = group_n;
+					page->i = i;
+					page->time = time;
+					page->nstime = nstime;
+					page->message_next = NULL;
+					if(message_prior) // Not first message
+						message_prior->message_next = page;
+					else
+					{ // First message
+						pthread_rwlock_wrlock(&mutex_expand_group);
+						group[g].msg_first = page;
+						pthread_rwlock_unlock(&mutex_expand_group);
+					}
+					if(i == group_n_max_i)
+					{ // Potentiallly last (can be overruled by message_insert later)
+						pthread_rwlock_wrlock(&mutex_expand_group);
+						group[g].msg_last = page;
+						pthread_rwlock_unlock(&mutex_expand_group);
+					}
+					else
+						message_prior = page; // for the next one
+					time_last = time;
+					nstime_last = nstime;
 					pthread_rwlock_wrlock(&mutex_expand_group);
-					group[g].msg_first = page;
+					group[g].msg_count++;
 					pthread_rwlock_unlock(&mutex_expand_group);
 				}
-				if(i == group_n_max_i)
-				{ // Potentiallly last (can be overruled by message_insert later)
-					pthread_rwlock_wrlock(&mutex_expand_group);
-					group[g].msg_last = page;
-					pthread_rwlock_unlock(&mutex_expand_group);
-				}
-				else
-					message_prior = page; // for the next one
-				time_last = time;
-				nstime_last = nstime;
-				pthread_rwlock_wrlock(&mutex_expand_group);
-				group[g].msg_count++;
-				pthread_rwlock_unlock(&mutex_expand_group);
+				else // If that assumption is wrong, *MUST USE* message_insert instead.
+					message_insert(g,group_n,i);
 			}
-			else // If that assumption is wrong, *MUST USE* message_insert instead.
-				message_insert(g,group_n,i);
+			else if(protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+			{ // ENTRY_REQUEST are logged at least until SENT
+				error_printf(0,"Checkpoint message_sort unexpected stat: %d %u",stat,protocol);
+				breakpoint(); // shouldn't happen, just checking. If this doesn't trigger, can potentially remove stat check
+			}
 		}
-		else if(protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
-		{ // ENTRY_REQUEST are logged at least until SENT
-			error_printf(0,"Checkpoint message_sort unexpected stat: %d %u",stat,protocol);
-			breakpoint(); // shouldn't happen, just checking. If this doesn't trigger, can potentially remove stat check
-		}
+		else // TODO eliminate error message if this causes no issues
+			error_simple(0,"Message_sort called on a message with p_iter < 0. Carry on.");
 	}
 	if(peerlist && peercount > 0)
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
@@ -1276,6 +1286,8 @@ time_t message_find_since(const int n)
 		for(int tmp_i = peer[n].min_i ; tmp_i < peer[n].max_i ; tmp_i++)
 		{
 			const int p_iter = peer[n].message[tmp_i].p_iter;
+			if(p_iter < 0)
+				continue;
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_pm = protocols[p_iter].group_pm;
 			const uint8_t group_msg = protocols[p_iter].group_msg;
@@ -3497,7 +3509,7 @@ int set_last_message(int *nn,const int n,const int count_back)
 			while(1)
 			{ // DO NOT CHANGE ORDER OR LOGIC. The logic is complex
 				const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
-				if((p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back))
+				if(p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back)
 					break;
 				else if(--i < min_i)
 				{
@@ -3680,6 +3692,8 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	if(n < 0)
 		return -1;
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	if(p_iter < 0)
+		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	pthread_rwlock_unlock(&mutex_protocols);
@@ -3707,6 +3721,8 @@ int set_f_from_i(const int n,const int i)
 	if(message_len < CHECKSUM_BIN_LEN)
 		return -1;
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	if(p_iter < 0)
+		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint8_t file_checksum = protocols[p_iter].file_checksum;
 	pthread_rwlock_unlock(&mutex_protocols);
