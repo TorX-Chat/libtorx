@@ -283,6 +283,11 @@ static inline void *broadcast_threaded(void *arg)
 					const uint8_t online = sendfd_connected + recvfd_connected;
 					if(online || owner == ENUM_OWNER_GROUP_CTRL)
 					{ // chose one and send to it, then delist if applicable
+						if(owner == ENUM_OWNER_GROUP_CTRL)
+						{ // Make sure the group has peers (ie: that we're not attempting to broadcast into the group we're trying to join). TODO Could also check that >0 are online.
+							if(!getter_group_uint32(set_g(n,NULL),offsetof(struct group_list,peercount)))
+								continue;
+						}
 						error_printf(0,"Broadcast chose ONLINE victim owner=%u",owner);
 						message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,broadcasts_queued[random_broadcast].broadcast,GROUP_BROADCAST_LEN);
 						pthread_rwlock_unlock(&mutex_broadcast);
