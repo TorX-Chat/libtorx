@@ -374,6 +374,36 @@ static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey
 	return 0;
 }
 
+static inline void initialize_event_strc(struct event_strc *event_strc,const int n,const uint8_t owner,const int8_t fd_type,const evutil_socket_t socket)
+{
+	event_strc->sockfd = socket;
+	if(fd_type == 1 || (threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) && getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion)) > 1))
+		event_strc->authenticated = 1;
+	else
+		event_strc->authenticated = 0;
+	event_strc->fd_type = fd_type;
+	if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
+	{
+		event_strc->g = set_g(n,NULL);
+		event_strc->invite_required = getter_group_uint8(event_strc->g,offsetof(struct group_list,invite_required));
+		if(owner == ENUM_OWNER_GROUP_CTRL)
+			event_strc->group_n = n;
+		else
+			event_strc->group_n = getter_group_int(event_strc->g,offsetof(struct group_list,n));
+	}
+	else
+	{
+		event_strc->invite_required = 0;
+		event_strc->g = -1;
+		event_strc->group_n = -1;
+	}
+	event_strc->n = n;
+	event_strc->fresh_n = -1;
+	event_strc->buffer = NULL;
+	event_strc->buffer_len = 0;
+	event_strc->untrusted_message_len = 0;
+}
+
 static inline void *send_init(void *arg)
 { /* This should be called for every peer on startup and should set the peer [n]. sendfd. */
 	const int n = vptoi(arg);
@@ -426,14 +456,7 @@ static inline void *send_init(void *arg)
 			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
 			error_simple(1,"Connected to existing peer.");
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
-			event_strc->sockfd = socket;
-			event_strc->authenticated = 1; // this is sendfd. It is always authenticated.
-			event_strc->fd_type = 1; // sendfd
-			event_strc->n = n;
-			event_strc->fresh_n = -1;
-			event_strc->buffer = NULL;
-			event_strc->buffer_len = 0;
-			event_strc->untrusted_message_len = 0;
+			initialize_event_strc(event_strc,n,owner,1,socket);
 			torx_events(event_strc); // NOTE: deleted peers will come out of here with owner "0000"
 			if(evutil_closesocket(socket) == -1) // no need to check return on this. Sometimes -1, sometimes 0. Its just for ensuring cleanup
 				error_printf(3,"Failed to close socket. 02312. Owner: %u. Status: %u.",owner,status);
@@ -487,20 +510,8 @@ void load_onion_events(const int n)
 			return;
 		}
 		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
-		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
-		event_strc->sockfd = sock;
-		if(local_v3auth_enabled && peerversion > 1) // this is recvfd, we need to check.
-			event_strc->authenticated = 1;
-		else
-			event_strc->authenticated = 0;
-		event_strc->fd_type = 0; // recvfd
-		event_strc->n = n;
-		event_strc->fresh_n = -1;
-		event_strc->buffer = NULL;
-		event_strc->buffer_len = 0;
-		event_strc->untrusted_message_len = 0;
+		initialize_event_strc(event_strc,n,owner,0,sock);
 		torx_read(n) // XXX
 		pthread_t *thrd_recv = &peer[n].thrd_recv;
 		torx_unlock(n) // XXX

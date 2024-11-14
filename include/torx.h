@@ -674,6 +674,9 @@ struct event_strc { // XXX Do not sodium_malloc structs unless they contain sens
 	evutil_socket_t sockfd;
 	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
 	int8_t fd_type; // 0 recvfd, 1 sendfd
+	uint8_t invite_required;
+	int g;
+	int group_n;
 	int n;
 	int fresh_n; // for SING/MULT to pass internally
 	char *buffer; // for use with incomplete messages in read_conn.
@@ -721,6 +724,7 @@ void (*login_registered)(const int value);
 void (*peer_loaded_registered)(const int n);
 void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
 void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len); // torx_secure_free required
+void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len); // torx_secure_free required
 
 /* Callback Setters */
 void initialize_n_setter(void (*callback)(int));
@@ -751,6 +755,7 @@ void login_setter(void (*callback)(int));
 void peer_loaded_setter(void (*callback)(int));
 void cleanup_setter(void (*callback)(int));
 void stream_setter(void (*callback)(int,int,char*,uint32_t));
+void unknown_setter(void (*callback)(int,uint16_t,char*,uint32_t));
 
 /* WARNING: All callbacks *must* allocate data for pointers and rely on the receiver to free because the callback may not be triggered syncronously (ex: Flutter) */
 void initialize_n_cb(const int n);
@@ -781,6 +786,7 @@ void login_cb(const int value);
 void peer_loaded_cb(const int n);
 void cleanup_cb(const int sig_num);
 void stream_cb(const int n,const int p_iter,char *data,const uint32_t len);
+void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t len);
 
 // XXX TODO FIXME some of these functions might be fun to return const values
 

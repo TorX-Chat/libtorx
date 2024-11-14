@@ -113,7 +113,7 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 { // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
 	error_simple(0,YELLOW"Checkpoint disconnect_forever"RESET);
 	if(ctx)
-	{
+	{ // XXX NOTE: buffer and ctx will be free'd outside of this function after the loopexit
 		struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
 		const int n = event_strc->n;
 		const int8_t fd_type = event_strc->fd_type;
@@ -132,22 +132,23 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 	disconnect_forever(bev_recv,NULL);
 }*/
 
-static inline void pipe_auth_and_request_peerlist(const int n)
+static inline void pipe_auth_and_request_peerlist(const int n,const int g)
 { // Send ENUM_PROTOCOL_PIPE_AUTH && ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST
+	if(n < 0)
+	{
+		error_simple(0,"pipe_auth_and_request_peerlist sanity check failed. Coding error. Report this.");
+		return;
+	}
 	char peeronion[56+1];
 	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
 	sodium_memzero(peeronion,sizeof(peeronion));
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	if(owner == ENUM_OWNER_GROUP_PEER)
+	if(g > -1 && getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) == ENUM_OWNER_GROUP_PEER)
 	{ // sanity check, more or less.
-		const int g = set_g(n,NULL);
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		const uint32_t trash = htobe32(peercount);
 		message_send(n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
 	}
-	else
-		printf(RED"Checkpoint pipe_auth_and_request_peerlist CTRL\n"RESET);
 }
 
 static inline int pipe_auth_inbound(const int n,const int8_t fd_type,const char *buffer,const uint32_t buffer_len)
@@ -184,7 +185,7 @@ static inline void begin_cascade(const int n,const int8_t fd_type)
 	}
 }
 
-static inline size_t packet_removal(const int n,const int8_t fd_type,const size_t drain_len)
+static inline size_t packet_removal(const int n,const int g,const int8_t fd_type,const size_t drain_len)
 {
 	size_t drained = 0;
 	time_t time_oldest = LONG_MAX; // must initialize as a very high value
@@ -316,7 +317,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 							error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 							error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-								pipe_auth_and_request_peerlist(n); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
+								pipe_auth_and_request_peerlist(n,g); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 							else
 							{
 								const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -359,7 +360,7 @@ static inline size_t packet_removal(const int n,const int8_t fd_type,const size_
 static inline void output_cb(void *ctx)
 { // Note: A *lot* of redundancy with packet_removal()
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	packet_removal(event_strc->n,event_strc->fd_type,0);
+	packet_removal(event_strc->n,event_strc->g,event_strc->fd_type,0);
 }
 
 static void write_finished(struct bufferevent *bev, void *ctx)
@@ -448,7 +449,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		if(to_drain)
 		{ // Note: there is an infinately small chance of a race condition by calling packet_removal before ev_buffer_drain. Unavoidable unless we use evbuffer locks.
 			printf("Checkpoint draining up to n=%d bytes=%zu\n",n,to_drain);
-			const size_t to_actually_drain = packet_removal(n,fd_type,to_drain);
+			const size_t to_actually_drain = packet_removal(n,event_strc->g,fd_type,to_drain);
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
 	}
@@ -486,13 +487,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	{ // Bytes to Read on CTRL
 		unsigned char read_buffer[PACKET_SIZE_MAX]; // free'd // == "EVBUFFER_MAX_READ_DEFAULT" variable from libevent. could set this to 64kb to be safe, in case libevent increases one day
 		int group_peer_n; // DO NOT USE except for signed group messages
-		int group_ctrl_n; // DO NOT USE except for signed group messages
 		uint8_t continued = 0;
 		uint16_t protocol = 0; // NOTE: Until this is set, it could be 0 or the prior packet's protocol
 		uint16_t packet_len = 0;
 		while(1)
 		{ // not a real while loop, just eliminating goto. Do not attempt to eliminate. We use a lot of 'continue' here.
-			group_ctrl_n = group_peer_n = -1;
+			group_peer_n = -1;
 			if(continued == 1)
 			{// we came here from continue, so we should flush out whatever complete (but worthless) packet was in the buffer
 				sodium_memzero(read_buffer,packet_len);
@@ -505,55 +505,46 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			continued = 1;
 			uint16_t trash_int = 0;
 			uint16_t minimum_length = 2+2; // packet length + protocol
-			if(evbuffer_get_length(input) < minimum_length || evbuffer_copyout(input,&trash_int,2) != 2)
+			const size_t evbuffer_len = evbuffer_get_length(input);
+			if(evbuffer_len < minimum_length || evbuffer_copyout(input,&trash_int,2) != 2)
 				return; // too short to get protocol and length
 			packet_len = be16toh(trash_int);
 			uint16_t cur = 2; // current position, after reading packet len
-			if(evbuffer_get_length(input) < (size_t) packet_len)
+			if(evbuffer_len < (size_t) packet_len)
 				return; // not enough data yet, only partial packet. Minimize CPU cycles and allocations before this. Occurs on about 20% of packets without EV_ET and 25% of packets with EV_ET.
 			if(packet_len > PACKET_SIZE_MAX)
 			{ // Sanity check
 				error_simple(0,"Major unexpected problem, either an invalid packet size or an oversized packet. Packet is being discarded."); // \npacket_len:\t%d\ttrash_int:\t%d\n",packet_len,trash_int);
-				evbuffer_drain(input,(size_t)packet_len);
-				return;
+				break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 			}
 			if(evbuffer_remove(input,read_buffer,(size_t)packet_len) != packet_len) // multiples of PACKET_SIZE_MAX, up to 4096 max, otherwise bytes get lost to the ether.
 			{ // This is a libevent bug because we already checked length is sufficient.
 				error_simple(0,"This should not occur 12873. should never occur under any circumstances. report this.");
-				sodium_memzero(read_buffer,packet_len); // important, could be in a continue or have something sensitive
-				breakpoint();
-				return;
+				break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 			}
 			protocol = be16toh(align_uint16((void*)&read_buffer[cur]));
 			cur += 2; // 2 --> 4
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-				minimum_length += 4 + 8; // truncated checksum + start
+				minimum_length += 4 + 8; // truncated checksum + start (starting position for file piece)
 			else if(event_strc->buffer_len == 0)
-				minimum_length += 4; // length of message or start (starting position for file piece)
+				minimum_length += 4; // length of message, if we don't already have a partial message in buffer
 			if(packet_len < minimum_length)
 			{ // TODO make protocol specific minimum lengths?
 				error_simple(0,"Unreasonably small packet received. Peer likely buggy. Report this.");
-				breakpoint();
-				return;
+				break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 			}
 			if(owner == ENUM_OWNER_CTRL && fd_type == 0 && event_strc->authenticated == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE))
 			{ // NOTE: Do not ever attempt downgrades here or elsewhere. There are many reasons why it is a bad idea.
 				error_printf(0,"Unexpected protocol received on ctrl before PIPE_AUTH: %u. Closing.",protocol);
-				sodium_memzero(read_buffer,packet_len);
-				bufferevent_free(bev); // close a connection and await a new accept_conn
-				return;
+				break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 			}
-			else if(owner == ENUM_OWNER_GROUP_CTRL)
-			{ // TODO decomplexify this sanity check. make it less expensive/redundant
-				const int g = set_g(n,NULL);
-				const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-				if((g_invite_required == 1 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST))
-				|| (g_invite_required == 0 && (protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)))
+			else if(owner == ENUM_OWNER_GROUP_CTRL && protocol != ENUM_PROTOCOL_PIPE_AUTH)
+			{ // GROUP_CTRL connections are only allowed to authenticate or permit entries
+				if((event_strc->invite_required == 1 && protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+				|| (event_strc->invite_required == 0 && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
 				{
 					error_printf(0,"Unexpected protocol received on group ctrl before PIPE_AUTH: %u. Closing.",protocol);
-					sodium_memzero(read_buffer,packet_len);
-					bufferevent_free(bev); // close a connection and await a new accept_conn
-					return;
+					break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 				}
 			}
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
@@ -566,13 +557,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				{
 					if(n == nn && owner == ENUM_OWNER_GROUP_PEER)
 					{
-						const int g = set_g(n,NULL);
-						nn = getter_group_int(g,offsetof(struct group_list,n));
+						nn = event_strc->group_n;
 						cur -= 4; // 8 --> 4 DO NOT DELETE, will break things
 						goto try_group_n;
 					}
-					error_printf(0,"Invalid raw data packet received from owner: %u",owner); // TODO consider blocking peer if this triggers. this peer is probably buggy or malicious.
-					continue;
+					error_printf(0,"Invalid raw data packet received from owner: %u",owner);
+					continue; // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE // TODO consider calling break or blocking peer or something if this triggers. this peer is probably buggy or malicious.
 				}
 				umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
 				FILE **fd_active = {0};
@@ -586,21 +576,26 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					torx_unlock(nn) // XXX
 					error_simple(0,"Re-opening file pointer which we assumed would be open.");
 					char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
+					if(!file_path)
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
+						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
+						continue;
+					}
 					torx_fd_lock(nn,f) // XXX
-					*fd_active = fopen(file_path, "a");
+					*fd_active = fopen(file_path, "a"); // Create file if not existing
 					torx_fd_unlock(nn,f) // XXX
-					if(!file_path || *fd_active == NULL)
-					{
-						error_printf(0,"Failed to open for writing: %s",file_path);
+					if(*fd_active == NULL)
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
+						error_printf(0,"Failed to open for writing1: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
 					}
 					torx_fd_lock(nn,f) // XXX
 					fclose(*fd_active); *fd_active = NULL;
-					*fd_active = fopen(file_path, "r+");
+					*fd_active = fopen(file_path, "r+"); // Open file for writing
 					torx_fd_unlock(nn,f) // XXX
 					if(*fd_active == NULL)
-					{
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						error_printf(0,"Failed to open for writing2: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
@@ -688,656 +683,661 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_fd_lock(nn,f) // XXX
 				*fd_active = local;
 				torx_fd_unlock(nn,f) // XXX
-				section_update(nn,f,packet_start,wrote,fd_type,section,section_end,n);
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
 					error_simple(-1,"Failed to write a file packet. Check disk space (this message will NOT repeat).");
-				const uint8_t file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
-				const uint64_t transferred = calculate_transferred(nn,f);
-				if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
-					transfer_progress(nn,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+				else
+				{
+					section_update(nn,f,packet_start,wrote,fd_type,section,section_end,n);
+					const uint8_t file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
+					const uint64_t transferred = calculate_transferred(nn,f);
+					if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
+						transfer_progress(nn,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+				}
 			}
 			else
-			{
-				const int p_iter = protocol_lookup(protocol);
-				if(p_iter < 0)
-					goto bad_p_iter;
-				pthread_rwlock_rdlock(&mutex_protocols);
-				const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
-				const uint32_t date_len = protocols[p_iter].date_len;
-				const uint32_t signature_len = protocols[p_iter].signature_len;
-				const uint8_t file_offer = protocols[p_iter].file_offer;
-				const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
-				const uint8_t utf8 = protocols[p_iter].utf8;
-				const uint8_t group_pm = protocols[p_iter].group_pm;
-				const uint8_t group_msg = protocols[p_iter].group_msg;
-				const uint8_t stream = protocols[p_iter].stream;
-				const char *name = protocols[p_iter].name;
-				pthread_rwlock_unlock(&mutex_protocols);
-				if(p_iter < 0 || (owner != ENUM_OWNER_GROUP_CTRL && owner != ENUM_OWNER_GROUP_PEER && (group_mechanics || group_pm)))
-				{
-					if(group_pm) // TODO delete this check and error message
-						error_simple(0,"Checkpoint message was group_pm. If this triggers in 2024/05, remove group_pm check above and verify elsewhere");
-					bad_p_iter: {}
-					error_printf(0,"Unknown protocol message received (%u) on Owner (%u) and n (%d). User should be notified.",protocol,owner,n); // Should find the length and send this to front-end in a callback:
+			{ // Process messages
+				int8_t complete = 0; // if incomplete, do not print it or save it to file yet
+				if(event_strc->buffer_len == 0)
+				{ // this is only on FIRST PACKET of message // protocol check is a sanity check. it is optional.
+				//	printf("Checkpoint setting event_strc->untrusted_message_len = %u\n",event_strc->untrusted_message_len);
+					event_strc->untrusted_message_len = be32toh(align_uint32((void*)&read_buffer[cur]));
+					cur += 4; // 4 --> 8
 				}
+				if(event_strc->buffer_len + (packet_len - cur) == event_strc->untrusted_message_len) // 2024/02/16 can be == , >= is to catch excessive, just in case
+					complete = 1;
+				else if(event_strc->buffer_len > 0 && event_strc->buffer_len + (packet_len - cur) > event_strc->untrusted_message_len)
+				{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
+					error_printf(0,"Disgarding a oversized message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,event_strc->buffer_len,packet_len,cur,event_strc->untrusted_message_len);
+					break;
+				}
+				// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
+				if(event_strc->buffer)
+					event_strc->buffer = torx_realloc(event_strc->buffer,event_strc->buffer_len + (packet_len - cur));
 				else
-				{ // Process messages
-					int8_t complete = 0; // if incomplete, do not print it or save it to file yet
-					if(event_strc->buffer_len == 0)
-					{ // this is only on FIRST PACKET of message // protocol check is a sanity check. it is optional.
-					//	printf("Checkpoint setting event_strc->untrusted_message_len = %u\n",event_strc->untrusted_message_len);
-						event_strc->untrusted_message_len = be32toh(align_uint32((void*)&read_buffer[cur]));
-						cur += 4;
-					}
-					if(event_strc->buffer_len + (packet_len - cur) == event_strc->untrusted_message_len) // 2024/02/16 can be == , >= is to catch excessive, just in case
-						complete = 1;
-					else if(event_strc->buffer_len > 0 && event_strc->buffer_len + (packet_len - cur) > event_strc->untrusted_message_len)
-					{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
-						error_printf(0,"Disgarding a corrupted message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,event_strc->buffer_len,packet_len,cur,event_strc->untrusted_message_len);
+					event_strc->buffer = torx_secure_malloc(event_strc->buffer_len + (packet_len - cur));
+				memcpy(&event_strc->buffer[event_strc->buffer_len],&read_buffer[cur],packet_len - cur);
+				event_strc->buffer_len += packet_len - cur;
+				if(complete) // XXX XXX XXX NOTE: All SIGNED messages must be in the COMPLETE area. XXX XXX XXX
+				{ // This has to be after the file struct is loaded (? what?)
+					const int p_iter = protocol_lookup(protocol);
+					if(p_iter < 0)
+					{ // NOTE: We can't utilize group_check_sig to determine group_peer_n because we don't know if it is signed.
+						error_printf(0,"Unknown protocol message received (%u) on Owner (%u) and n (%d). User should be notified.",protocol,owner,n);
+						unknown_cb(n,protocol,event_strc->buffer,event_strc->buffer_len); // Note: this could include a signature. We don't check.
+						event_strc->buffer = NULL; // XXX IMPORTANT: to prevent the message from being torx_free'd when we hit continue;
 						event_strc->buffer_len = 0;
-						breakpoint();
-						evbuffer_drain(input,evbuffer_get_length(input)); // 2024/03/11 THIS IS RIGHT! It destroys the one/two messages that corrupted us and carries on.
-						break;
+						continue;
 					}
-					// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
-					if(event_strc->buffer)
-						event_strc->buffer = torx_realloc(event_strc->buffer,event_strc->buffer_len + (packet_len - cur));
-					else
-						event_strc->buffer = torx_secure_malloc(event_strc->buffer_len + (packet_len - cur));
-					memcpy(&event_strc->buffer[event_strc->buffer_len],&read_buffer[cur],packet_len - cur); // TODO segfault on 2023/10/26 twice. send a 1 byte file to replicate. segfaulted on 2023/11/22 also, on larger file
-					event_strc->buffer_len += packet_len - cur;
-					if(complete) // XXX XXX XXX NOTE: All SIGNED messages must be in the COMPLETE area. XXX XXX XXX
-					{ // This has to be after the file struct is loaded (? what?)
-						if(event_strc->buffer_len < null_terminated_len + date_len + signature_len)
-						{
-							error_printf(0,"Unreasonably short message received from peer. Discarding entire message protocol: %u owner: %u size: %u of reported: %u",protocol,owner,event_strc->buffer_len,event_strc->untrusted_message_len);
-							continue;
-						}
-						error_printf(0,CYAN"<--IN%d %s %u"RESET,fd_type,name,event_strc->untrusted_message_len);
-						if(signature_len)
-						{ // XXX Signed and Signed Date messages only
-							if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER) // XXX adding GROUP_PEER without testing for full duplex
-							{ // Check signatures of group messages (unknown sender), then handle any actions that should be taken for specific message types
-								const int g = set_g(n,NULL);
-								const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-								group_ctrl_n = getter_group_int(g,offsetof(struct group_list,n));
-								group_peer_n = group_check_sig(g,event_strc->buffer,event_strc->buffer_len,protocol,(unsigned char *)&event_strc->buffer[event_strc->buffer_len - crypto_sign_BYTES],NULL);
-								if(group_peer_n < 0)
-									continue; // Disgard if not signed by someone in group TODO notify user? print anonymous message?
-								if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
-								{ // After receiving this, we should be able to process unsigned messages as having known receiver, on this connection.
-									if(owner != ENUM_OWNER_GROUP_CTRL || pipe_auth_inbound(group_ctrl_n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
-									{
-										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on GROUP_CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
-										sodium_memzero(read_buffer,packet_len);
-										bufferevent_free(bev); // close a connection and await a new accept_conn
-										return; // Invalid. Might not hit this because we close buffer.
-									}
-									// Success. Set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
-									torx_read(n) // XXX Do not mess with this block. (below)
-									struct bufferevent *bev_recv = peer[n].bev_recv;
-									torx_unlock(n) // XXX
-									torx_write(group_peer_n) // XXX
-									peer[group_peer_n].bev_recv = bev_recv; // 1st, order important
-									torx_unlock(group_peer_n) // XXX
-									torx_write(n) // XXX
-									peer[n].bev_recv = NULL; // 2nd, order important. do not free.
-									torx_unlock(n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
-									n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
-									owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // should 100% be ENUM_OWNER_GROUP_PEER ?
-									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
-									const uint8_t recvfd_connected = 1; // important
-									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-									event_strc->n = n; // important
-								} // no need to return here, can carry on evaluating further data in buffer. could continue to avoid storing ENUM_PROTOCOL_PIPE_AUTH in ram
-								else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
+					pthread_rwlock_rdlock(&mutex_protocols);
+					const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
+					const uint32_t date_len = protocols[p_iter].date_len;
+					const uint32_t signature_len = protocols[p_iter].signature_len;
+					const uint8_t file_offer = protocols[p_iter].file_offer;
+					const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
+					const uint8_t utf8 = protocols[p_iter].utf8;
+					const uint8_t group_pm = protocols[p_iter].group_pm;
+					const uint8_t group_msg = protocols[p_iter].group_msg;
+					const uint8_t stream = protocols[p_iter].stream;
+					const char *name = protocols[p_iter].name;
+					pthread_rwlock_unlock(&mutex_protocols);
+					if(event_strc->buffer_len < null_terminated_len + date_len + signature_len)
+					{
+						error_printf(0,"Unreasonably short message received from peer. Discarding entire message protocol: %u owner: %u size: %u of reported: %u",protocol,owner,event_strc->buffer_len,event_strc->untrusted_message_len);
+						continue;
+					}
+					else if(owner != ENUM_OWNER_GROUP_CTRL && owner != ENUM_OWNER_GROUP_PEER && (group_mechanics || group_pm))
+					{
+						error_simple(0,"Group message received on non-group. Buggy peer or coding error. Report this.");
+						continue;
+					}
+					error_printf(0,CYAN"<--IN%d %s %u"RESET,fd_type,name,event_strc->untrusted_message_len);
+					if(signature_len)
+					{ // XXX Signed and Signed Date messages only
+						if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER) // XXX adding GROUP_PEER without testing for full duplex
+						{ // Check signatures of group messages (unknown sender), then handle any actions that should be taken for specific message types
+							group_peer_n = group_check_sig(event_strc->g,event_strc->buffer,event_strc->buffer_len - signature_len,protocol,(unsigned char *)&event_strc->buffer[event_strc->buffer_len - crypto_sign_BYTES],NULL);
+							if(group_peer_n < 0)
+							{ // Disgard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
+								error_simple(0,"Group received an anonymous message. Nothing we can do with it.");
+								break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
+							}
+							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
+							{ // After receiving this, we should be able to process unsigned messages as having known receiver, on this connection.
+								if(owner != ENUM_OWNER_GROUP_CTRL || pipe_auth_inbound(event_strc->group_n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
 								{
-									if(event_strc->buffer_len != sizeof(uint32_t) + DATE_SIGN_LEN)
-									{
-										error_simple(0,"Peer sent totally empty REQUEST_PEERLIST. Buggy peer.");
-										continue;
-									}
-									const uint32_t peer_g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
-									const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-									if(peer_g_peercount < g_peercount)
-									{ // Peer has less in their list than us, lets give them our list
-										error_printf(0,"Sending peerlist because %u < %u\n",peer_g_peercount,g_peercount);
-										if(g_invite_required)
-											message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PRIVATE_LEN);
-										else
-											message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PUBLIC_LEN);
-									}
+									error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on GROUP_CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
+									break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
+								}
+								// Success. Set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
+								torx_read(n) // XXX Do not mess with this block. (below)
+								struct bufferevent *bev_recv = peer[n].bev_recv;
+								torx_unlock(n) // XXX
+								torx_write(group_peer_n) // XXX
+								peer[group_peer_n].bev_recv = bev_recv; // 1st, order important
+								torx_unlock(group_peer_n) // XXX
+								torx_write(n) // XXX
+								peer[n].bev_recv = NULL; // 2nd, order important. do not free.
+								torx_unlock(n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
+								n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
+								owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // should 100% be ENUM_OWNER_GROUP_PEER ?
+								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
+								const uint8_t recvfd_connected = 1; // important
+								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+								event_strc->n = n; // important
+							} // no need to break here, can carry on evaluating further data in buffer.
+							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
+							{
+								if(event_strc->buffer_len != sizeof(uint32_t) + DATE_SIGN_LEN)
+								{
+									error_simple(0,"Peer sent totally empty REQUEST_PEERLIST. Buggy peer.");
+									continue;
+								}
+								const uint32_t peer_g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
+								const uint32_t g_peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
+								if(peer_g_peercount < g_peercount)
+								{ // Peer has less in their list than us, lets give them our list
+									error_printf(0,"Sending peerlist because %u < %u\n",peer_g_peercount,g_peercount);
+									if(event_strc->invite_required)
+										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PRIVATE_LEN);
 									else
-										error_printf(0,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
-								}
-								else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
-								{ // Audited 2024/02/16 // Format: g_peercount + onions + ed25519 keys + invitation sigs
-									if(event_strc->buffer_len < sizeof(uint32_t) + DATE_SIGN_LEN)
-									{
-										error_simple(0,"Peer sent totally empty PEERLIST. Buggy peer.");
-										continue;
-									}
-									const uint32_t g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
-									size_t expected_len;
-									if(g_invite_required)
-										expected_len = GROUP_PEERLIST_PRIVATE_LEN;
-									else
-										expected_len = GROUP_PEERLIST_PUBLIC_LEN;
-									if(!g_peercount || expected_len + DATE_SIGN_LEN != event_strc->buffer_len)
-									{ // Prevent illegal reads from malicious message
-										error_simple(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing.");
-										printf("Checkpoint mystery %u: %zu != %u\n",g_peercount,expected_len,event_strc->buffer_len);
-										continue;
-									}
-									int added_one = 1;
-									while(added_one)
-									{ // need to re-do the whole loop every time one or more is added because it might have invited someone
-										for(uint32_t nnn = 0 ; nnn < g_peercount ; nnn++)
-										{ // Try each proposed peeronion...
-											added_one = 0;
-											const char *proposed_peeronion = &event_strc->buffer[sizeof(int32_t)+nnn*56];
-											const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*56+nnn*crypto_sign_PUBLICKEYBYTES];
-											int ret;
-											if(g_invite_required) // pass inviter's signature
-											{
-												const unsigned char *group_peer_invitation = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES];
-											//	printf("Checkpoint invitation/sig in at %lu of %u: %s\n",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES,event_strc->buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
-												ret = group_add_peer(g,proposed_peeronion,NULL,group_peer_ed25519_pk,group_peer_invitation);
-											}
-											else
-												ret = group_add_peer(g,proposed_peeronion,NULL,group_peer_ed25519_pk,NULL);
-											if(ret == -1)
-											{
-												error_simple(0,"Incoming peerlist has errors. Bailing.");
-												break;
-											}
-											else if(ret != -2)
-											{ // -2 is "already have it"
-												added_one++;
-												error_simple(0,RED"Checkpoint New group peer! (read_conn 1)"RESET);
-												if(g_invite_required)
-													message_send(ret,ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,itovp(g),GROUP_PRIVATE_ENTRY_REQUEST_LEN);
-												else
-												{
-													unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
-													broadcast_prep(ciphertext_new,g);
-													message_send(ret,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
-													sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
-												}
-											}
-										}
-									}
-								}
-							}
-							else
-							{ // Check signatures of non-group messages (known sender)
-							/*	if(be16toh(align_uint16((void*)&event_strc->buffer[event_strc->buffer_len - (sizeof(uint16_t) + crypto_sign_BYTES)])) != protocol)
-								{
-									error_simple(0,"Signed protocol differs from untrusted protocol. Bailing out without verifying signature. Report this.");
-									continue;
-								}*/
-								unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-								getter_array(&peer_sign_pk,sizeof(peer_sign_pk),n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
-								char *prefixed_message = affix_protocol_len(protocol,event_strc->buffer,event_strc->buffer_len - crypto_sign_BYTES);
-								if(crypto_sign_verify_detached((unsigned char *)&event_strc->buffer[event_strc->buffer_len - crypto_sign_BYTES],(unsigned char *)prefixed_message,2+4+event_strc->buffer_len - crypto_sign_BYTES,peer_sign_pk) != 0)
-								{
-									sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-									error_printf(0,"Invalid signed (%u) message of len (%u) received from peer.",protocol,event_strc->buffer_len);
-									char *signature_b64 = b64_encode(event_strc->buffer,crypto_sign_BYTES);
-									error_printf(3,"Inbound Signature: %s",signature_b64);
-									torx_free((void*)&signature_b64);
-									torx_free((void*)&prefixed_message);
-									continue;
-								}
-								sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-								torx_free((void*)&prefixed_message);
-
-								if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
-								{
-									if(pipe_auth_inbound(n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
-									{
-										error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
-										sodium_memzero(read_buffer,packet_len);
-										bufferevent_free(bev); // close a connection and await a new accept_conn
-										return; // Invalid. Might not hit this because we close buffer.
-									}
-									event_strc->authenticated = 1;
-									const uint8_t recvfd_connected = 1;
-									setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-									begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
-									peer_online(n);
-									if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
-									{ // propose upgrade
-										printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2\n"RESET);
-										const uint16_t trash_version = htobe16(torx_library_version[0]);
-										message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
-									}
-									printf(RED"Checkpoint authed a CTRL\n"RESET);
-								}
-							}
-						}
-						int nn;
-						if(group_peer_n > -1)
-							nn = group_peer_n; // save message to GROUP_PEER not GROUP_CTRL so that we know who sent it without having to determine it again
-						else
-							nn = n;
-						if(file_offer)
-						{ // Receive File offer, any type
-							if(process_file_offer_inbound(nn,p_iter,event_strc->buffer,event_strc->buffer_len) == -1)
-								continue; // important to discard invalid offer
-						}
-						else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-						{ // Receive File Request (acceptance) // TODO possible source of race conditions if actively transferring when received? (common scenario, not sure how dangerous)
-							const int f = set_f(nn,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
-							const uint8_t owner_nn = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-							uint64_t size;
-							char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
-							uint8_t file_status;
-							if(file_path == NULL && owner_nn == ENUM_OWNER_GROUP_PEER)
-							{ // Triggers on requests for group files (non-pm)
-								printf("Checkpoint group file request trigger 1\n");
-								const int g = set_g(nn,NULL);
-								const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-								const int group_n_f = set_f(group_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
-								file_path = getter_string(NULL,group_n,INT_MIN,group_n_f,offsetof(struct file_list,file_path));
-								size = getter_uint64(group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,size));
-								setter(nn,INT_MIN,f,-1,offsetof(struct file_list,size),&size,sizeof(size)); // XXX see below NOTICE. this might be necessary for a peer specific transfer_progress, or something
-								file_status = getter_uint8(group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,status));
-							}
-							else
-							{ // pm or regular transfer
-								printf("Checkpoint non-group (or pm) file request trigger 2\n");
-								size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
-								file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
-							}
-							if(file_status != ENUM_FILE_OUTBOUND_PENDING && file_status != ENUM_FILE_OUTBOUND_ACCEPTED && file_status != ENUM_FILE_OUTBOUND_COMPLETED && file_status != ENUM_FILE_INBOUND_PENDING && file_status != ENUM_FILE_INBOUND_ACCEPTED && file_status != ENUM_FILE_INBOUND_COMPLETED)
-							{ // Do not modify without extensive testing and thinking
-								error_simple(0,"Peer requested a file that is of a status we're not willing to send.");
-								printf("Checkpoint status=%d\n",file_status);
-								torx_free((void*)&file_path);
-								continue;
-							}
-							//	const uint8_t owner_real = getter_uint8(n_real,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-							const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
-							const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
-							if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
-							{ // Sanity check on request. File might not exist if size is 0
-								error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
-								printf("Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"\n",requested_start,requested_end,size);
-								printf("Checkpoint path: %s\n",file_path);
-								torx_free((void*)&file_path);
-								continue;
-							}
-							if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
-							{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
-								struct stat file_stat = {0};
-								if(stat(file_path, &file_stat) || file_stat.st_mtime != getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified)))
-								{ // File cannot be accessed or has an unexpected modification time
-									error_simple(0,"Requested file cannot be accessed or has been modified since offer. Try re-offering it.");
-									torx_free((void*)&file_path);
-									continue;
-								}
-							}
-							// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
-							torx_write(nn) // XXX
-							peer[nn].file[f].outbound_start[fd_type] = requested_start;
-							peer[nn].file[f].outbound_end[fd_type] = requested_end;
-							peer[nn].file[f].outbound_transferred[fd_type] = 0;
-							peer[nn].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
-							torx_unlock(nn) // XXX
-							// file pipe START (useful for resume) Section 6RMA8obfs296tlea
-							FILE **fd_active = {0};
-							torx_read(nn) // XXX
-							if(fd_type == 0) // recvfd, outbound
-								fd_active = &peer[nn].file[f].fd_out_recvfd;
-							else /*if(fd_type == 1)*/ // sendfd, outbound
-								fd_active = &peer[nn].file[f].fd_out_sendfd;
-							torx_unlock(nn) // XXX
-							torx_fd_lock(nn,f) // XXX
-							*fd_active = fopen(file_path, "r");
-							torx_fd_unlock(nn,f) // XXX
-							if(*fd_active == NULL)
-							{ // NULL sanity check is important TODO triggered 2023/11/10
-								error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
-								torx_free((void*)&file_path);
-								continue;
-							}
-							printf("Checkpoint read_conn sending: %s from %"PRIu64" to %"PRIu64" on fd_type==%d owner==%d\n",file_path,requested_start,requested_end,fd_type,owner_nn);
-							torx_free((void*)&file_path);
-					/* jwofe9j20w*/	torx_fd_lock(nn,f) // XXX
-							fseek(*fd_active,(long int)requested_start,SEEK_SET);
-							torx_fd_unlock(nn,f) // XXX
-							send_prep(nn,f,protocol_lookup(ENUM_PROTOCOL_FILE_PIECE),fd_type);
-							// file pipe END (useful for resume) Section 6RMA8obfs296tlea
-						}
-						else if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
-						{
-						//	printf("Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d\n",owner);
-							int f = set_f(n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
-							int relevant_n = n;
-							if(f < 0 && owner == ENUM_OWNER_GROUP_PEER)
-							{ // potential group file transfer, non-pm
-								const int g = set_g(n,NULL);
-								relevant_n = getter_group_int(g,offsetof(struct group_list,n));
-								f = set_f(relevant_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
-							}
-							if(f < 0) // NOT else if, we set f again above
-							{
-								error_simple(0,"Received a pause or cancel for an unknown file. Bailing out.");
-								continue;
-							}
-							torx_read(relevant_n) // XXX
-							const unsigned char *split_hashes = peer[relevant_n].file[f].split_hashes;
-							torx_unlock(relevant_n) // XXX
-							section_unclaim(relevant_n,f,n,-1); // must go before process_pause_cancel
-							if(split_hashes == NULL) // avoid triggering for group (non-pm) file transfer
-								process_pause_cancel(relevant_n,f,protocol,ENUM_MESSAGE_RECV);
-							const uint8_t file_status = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel
-							if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
-							{ // Delete partial inbound files + split. Must go after process_pause_cancel (which sets file_status and closes fd)
-								char *file_path = getter_string(NULL,relevant_n,INT_MIN,f,offsetof(struct file_list,file_path));
-								destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
-								torx_free((void*)&file_path);
-								split_update(relevant_n,f,-1); // destroys split file and frees/nulls resources
-							}
-							if(owner == ENUM_OWNER_GROUP_PEER && split_hashes && is_inbound_transfer(file_status))
-							{ // Group transfer (non-pm). Build a fake 0/0/0/0 offer to process, as if we received it from peer, to show peer is now offering nothing
-								const int p_iter_partial = protocol_lookup(ENUM_PROTOCOL_FILE_OFFER_PARTIAL);
-								const uint8_t splits = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-								const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
-								char fake_message[FILE_OFFER_PARTIAL_LEN];
-								torx_read(relevant_n) // XXX
-								memcpy(fake_message,peer[relevant_n].file[f].checksum,CHECKSUM_BIN_LEN); // checksum
-								*(uint8_t*)(void*)&fake_message[CHECKSUM_BIN_LEN] = splits; // splits
-								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[relevant_n].file[f].split_hashes,split_hashes_len); // split hashes
-								uint64_t trash = htobe64(peer[relevant_n].file[f].size); // size
-								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash,sizeof(trash)); // size
-								torx_unlock(relevant_n) // XXX
-								trash = htobe64(0);
-								for(uint8_t section = 0; section <= splits; section++) // 0/0/0/0
-									memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + section*sizeof(uint64_t)],&trash,sizeof(trash));
-								process_file_offer_inbound(n,p_iter_partial,fake_message,FILE_OFFER_PARTIAL_LEN);
-							}
-							const uint64_t last_transferred = getter_uint64(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[n].file[f].last_transferred;
-							transfer_progress(relevant_n,f,last_transferred); // triggering a stall
-						}
-						else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
-						{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
-							const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
-							const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-							if(new_peerversion > peerversion)
-							{ // Note: currently not facilitating downgrades because we would have to take down sendfd
-								error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
-								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
-								sql_update_peer(n);
-							/*	if(fd_type == 0 && new_peerversion < 2)
-									event_strc->authenticated = 0; */
-							}
-						}
-						else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
-						{ // Receive GROUP_OFFER
-							const int g = set_g(-1,event_strc->buffer); // reserved
-							const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-							if(group_n < 0)
-							{ // new group, never received offer before
-								if(be32toh(align_uint32((void*)&event_strc->buffer[GROUP_ID_SIZE])) > MAX_STREAMS_GROUP)
-								{ // rudementary sanity check
-									error_simple(0,"Received obviously invalid group size in offer from buggy or malicious peer. Bailing out.");
-									continue;
-								}
-								const uint8_t invite_required = *(uint8_t*)&event_strc->buffer[GROUP_ID_SIZE+sizeof(uint32_t)];
-								setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
-							}
-						}
-						else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
-						{ // Format: group_id + accepter's onion + accepter's ed25519_pk (NOTE: These protocols are exclusively between two OWNER_CTRL)
-						 // TODO should ONLY respond IF we verify that we already sent this peer an invitation, otherwise could be issues (ie, a malicious peer could accept multiple times and bring in a bunch of people)
-							const int g = set_g(-1,event_strc->buffer); // reserved, already existing
-							const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-							if(group_n < -1)
-							{
-								error_simple(0,"Sanity check failed on a received Group Offer Accept.");
-								continue;
-							}
-							const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-							if(g_invite_required == 0)
-							{ // Sanity check continued
-								error_simple(0,"Public groups are not accepted in this manner. One client is buggy. Coding error. Report this.");
-								breakpoint(); // 2024/03/11 triggered upon startup after deleting a group that didn't complete handshake
-							}
-							else
-							{
-								unsigned char invitation[crypto_sign_BYTES];
-								getter_array(&invitation,sizeof(invitation),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
-								const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56];
-								pthread_rwlock_rdlock(&mutex_expand_group);
-								const int *peerlist = group[g].peerlist;
-								pthread_rwlock_unlock(&mutex_expand_group);
-								if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
-								{
-									if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
-									{ // NOTE: race condition. Once we set the invitation, anyone else who accepts our invite ... umm... lost thought there.
-										unsigned char verification_message[56+crypto_sign_PUBLICKEYBYTES];
-										getter_array(verification_message,56,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
-										unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-										getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
-										crypto_sign_ed25519_sk_to_pk(&verification_message[56],sign_sk);
-										sodium_memzero(sign_sk,sizeof(sign_sk));
-										// XXX 2023/10/21 I think we have no signed protocol to be checking here, because this is not a signed message... its different
-										if(crypto_sign_verify_detached((unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],verification_message,sizeof(verification_message),group_peer_ed25519_pk) != 0)
-										{ // verify inbound invitation with our group_n onion + group_n pk, against their provided group_peer_ed25519_pk, before saving
-											error_simple(0,"Failure to receive a valid incoming signature. Peer error.");
-											sodium_memzero(invitation,sizeof(invitation));
-											sodium_memzero(verification_message,sizeof(verification_message));
-											continue;
-										}
-										sodium_memzero(verification_message,sizeof(verification_message));
-										error_simple(2,"Receiving a valid group invitation signature.");
-										memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
-										setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
-										sql_update_peer(group_n);
-									}
-								//	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
-								//		message_send(n,ENUM_PROTOCOL_GROUP_PEERLIST,itoa(g)); // send a peerlist because this person doesn't have one
-								//	group_add_peer(g,group_peeronion,peer[n].peernick,group_peer_ed25519_pk,invitation); // note: was in message_send, moving up instead
-									if(invitee_remove(g,n))
-									{
-										error_simple(0,"Peer requested invitation into a group we have no record of inviting them into, or requested multiple invites. Refusing.");
-										sodium_memzero(invitation,sizeof(invitation));
-										continue;
-									}
-									struct int_char int_char;
-									int_char.i = g;
-									int_char.p = &event_strc->buffer[GROUP_ID_SIZE]; // group_peeronion;
-									int_char.up = group_peer_ed25519_pk;
-								//	printf("Checkpoint sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY. If this was sent as a private message, this needs to be sent to group_peer_n not n\n"); // TODO delete message if non-applicable
-									message_send(n,ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,&int_char,GROUP_OFFER_ACCEPT_REPLY_LEN); // this calls group_add_peer
-								}
-								else if(peerlist == NULL) // ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY
-								{ // If peerlist not NULL, this is a malicious message possibly.
-									if(is_null(invitation,crypto_sign_BYTES))
-									{ // collect their signature of our group ctrl ( will always be passed, but we don't always need to take it if we already have one )
-									// TODO TODO TODO XXX Exploitable??? if this is *always* passed, then malicious actors can switch theirs and change who invited them to the channel??
-									// TODO Prevent by not sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY unless we already sent them an offer. So, we need to track offers.
-										error_simple(2,"Receiving a group invitation signature.");
-										memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
-										setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
-										sql_update_peer(group_n);
-									}
-									unsigned char invitor_invitation[crypto_sign_BYTES];
-									memcpy(invitor_invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES);
-									char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
-									const int peer_n = group_add_peer(g,&event_strc->buffer[GROUP_ID_SIZE],peernick,group_peer_ed25519_pk,invitor_invitation);
-									if(peer_n > -1)
-									{
-										error_simple(0,RED"Checkpoint New group peer!(read_conn 2)"RESET);
-									//	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-									//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
-									//		message_send(peer_n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,NULL,0);
-									//	else
-									//		printf("Checkpoint NOT REQUESTING peerlist2. Peercount==%u\n",peercount);
-									}
-									torx_free((void*)&peernick);
-									sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
+										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PUBLIC_LEN);
 								}
 								else
-									breakpoint();
-								sodium_memzero(invitation,sizeof(invitation));
+									error_printf(0,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
+							}
+							else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
+							{ // Audited 2024/02/16 // Format: g_peercount + onions + ed25519 keys + invitation sigs
+								if(event_strc->buffer_len < sizeof(uint32_t) + DATE_SIGN_LEN)
+								{
+									error_simple(0,"Peer sent totally empty PEERLIST. Buggy peer.");
+									continue;
+								}
+								const uint32_t g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
+								size_t expected_len;
+								if(event_strc->invite_required)
+									expected_len = GROUP_PEERLIST_PRIVATE_LEN;
+								else
+									expected_len = GROUP_PEERLIST_PUBLIC_LEN;
+								if(!g_peercount || expected_len + DATE_SIGN_LEN != event_strc->buffer_len)
+								{ // Prevent illegal reads from malicious message
+									error_printf(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing. %u: %zu != %u\n",g_peercount,expected_len,event_strc->buffer_len);
+									continue;
+								}
+								int added_one = 1;
+								while(added_one)
+								{ // need to re-do the whole loop every time one or more is added because it might have invited someone
+									for(uint32_t nnn = 0 ; nnn < g_peercount ; nnn++)
+									{ // Try each proposed peeronion...
+										added_one = 0;
+										const char *proposed_peeronion = &event_strc->buffer[sizeof(int32_t)+nnn*56];
+										const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*56+nnn*crypto_sign_PUBLICKEYBYTES];
+										int ret;
+										if(event_strc->invite_required) // pass inviter's signature
+										{
+											const unsigned char *group_peer_invitation = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES];
+										//	printf("Checkpoint invitation/sig in at %lu of %u: %s\n",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES,event_strc->buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
+											ret = group_add_peer(event_strc->g,proposed_peeronion,NULL,group_peer_ed25519_pk,group_peer_invitation);
+										}
+										else
+											ret = group_add_peer(event_strc->g,proposed_peeronion,NULL,group_peer_ed25519_pk,NULL);
+										if(ret == -1)
+										{
+											error_simple(0,"Incoming peerlist has errors. Bailing.");
+											break;
+										}
+										else if(ret != -2)
+										{ // -2 is "already have it"
+											added_one++;
+											error_simple(0,RED"Checkpoint New group peer! (read_conn 1)"RESET);
+											if(event_strc->invite_required)
+												message_send(ret,ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,itovp(event_strc->g),GROUP_PRIVATE_ENTRY_REQUEST_LEN);
+											else
+											{
+												unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
+												broadcast_prep(ciphertext_new,event_strc->g);
+												message_send(ret,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
+												sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
+											}
+										}
+									}
+								}
 							}
 						}
-						else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST) // New peer wants to connect to a group we are in. 
-						{ // Format: their onion + their ed25519_pk + invitation signature of their onion+pk (by someone already in group). Message itself is not signed but the onion+pk they pass is signed
-							if(owner != ENUM_OWNER_GROUP_CTRL) // should ONLY come in on a GROUP_CTRL
+						else
+						{ // Check signatures of non-group messages (known sender)
+							unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
+							getter_array(&peer_sign_pk,sizeof(peer_sign_pk),n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
+							char *prefixed_message = affix_protocol_len(protocol,event_strc->buffer,event_strc->buffer_len - crypto_sign_BYTES);
+							if(crypto_sign_verify_detached((unsigned char *)&event_strc->buffer[event_strc->buffer_len - crypto_sign_BYTES],(unsigned char *)prefixed_message,2+4+event_strc->buffer_len - crypto_sign_BYTES,peer_sign_pk) != 0)
 							{
-								error_simple(0,"Received private entry request on wrong owner type. Possibly malicious intent or buggy peer.");
-								printf("Checkpoint received request on owner: %d\n",owner);
-								breakpoint();
+								sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+								error_printf(0,"Invalid signed (%u) message of len (%u) received from peer.",protocol,event_strc->buffer_len);
+								char *signature_b64 = b64_encode(event_strc->buffer,crypto_sign_BYTES);
+								error_printf(3,"Inbound Signature: %s",signature_b64);
+								torx_free((void*)&signature_b64);
+								torx_free((void*)&prefixed_message);
 								continue;
 							}
-							const int g = set_g(n,NULL); // should be existing but reserving anyway.
-							const int invitor_n = group_check_sig(g,event_strc->buffer,56+crypto_sign_PUBLICKEYBYTES,0,(unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES],NULL); // 0 is fine for protocol here because protocol is not signed
-							if(invitor_n < 0)// (1) We should verify the signature is from some peer we have
+							sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+							torx_free((void*)&prefixed_message);
+							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
 							{
-								error_simple(0,"Disregarding a GROUP_PRIVATE_ENTRY_REQUEST from someone.");
-								continue; // Disgard if not signed by someone in group
-							}				
-						//	else
-						//		error_simple(0,"New private group peer connected with invitation.");
-							const char *proposed_peeronion = event_strc->buffer;
-							const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[56];
-							const unsigned char *inviter_signature = (unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES];
-		 					const int new_peer = group_add_peer(g,proposed_peeronion,NULL,group_peer_ed25519_pk,inviter_signature); // (2) We group_add_peer them.
-							if(new_peer == -1)
-							{ // Error
-								error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
-								continue;
-							}
-							else if(new_peer != -2)
-							{ // Approved a new peer
-								error_simple(0,RED"Checkpoint New group peer! (read_conn 3)"RESET);
-						//		error_simple(3,"Received ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST. Responding with peerlist.");
-						//		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-						//		message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(g),GROUP_PEERLIST_PRIVATE_LEN); // (3) respond with peerlist
+								if(pipe_auth_inbound(n,fd_type,event_strc->buffer,event_strc->buffer_len) < 0)
+								{
+									error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on CTRL: fd_type=%d owner=%u len=%u",fd_type,owner,event_strc->buffer_len);
+									break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
+								}
+								event_strc->authenticated = 1;
+								const uint8_t recvfd_connected = 1;
+								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+								begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
+								peer_online(n);
+								if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
+								{ // propose upgrade
+									printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2\n"RESET);
+									const uint16_t trash_version = htobe16(torx_library_version[0]);
+									message_send(n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+								}
+								printf(RED"Checkpoint authed a CTRL\n"RESET);
 							}
 						}
-						else if(protocol == ENUM_PROTOCOL_GROUP_BROADCAST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+					}
+					int nn;
+					if(group_peer_n > -1)
+						nn = group_peer_n; // save message to GROUP_PEER not GROUP_CTRL so that we know who sent it without having to determine it again
+					else
+						nn = n;
+					if(file_offer)
+					{ // Receive File offer, any type
+						if(process_file_offer_inbound(nn,p_iter,event_strc->buffer,event_strc->buffer_len) == -1)
+							continue; // important to discard invalid offer
+					}
+					else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+					{ // Receive File Request (acceptance) // TODO possible source of race conditions if actively transferring when received? (common scenario, not sure how dangerous)
+						if(event_strc->buffer_len != FILE_REQUEST_LEN)
 						{
-							if(event_strc->buffer_len == GROUP_BROADCAST_LEN)
-								broadcast_inbound(n,(unsigned char *)event_strc->buffer); // this can rebroadcast or handle
-							else
-							{
-								error_printf(0,"Requested rebroadcast of bad broadcast. Bailing. Protocol: %u with an odd lengthed broadcast: %u instead of expected %u.",protocol,event_strc->buffer_len,GROUP_BROADCAST_LEN);
-								breakpoint(); // TODO NOTICE: if this gets hit, its probably due to our DATE_SIGN_LEN. delete it if the math permits.
-								continue;
-							}
-						}
-						else if(null_terminated_len && utf8 && !utf8_valid(event_strc->buffer,event_strc->buffer_len - (null_terminated_len + date_len + signature_len)))
-						{
-							error_simple(0,"Non-UTF8 message received. Discarding entire message.");
+							error_simple(0,"File request of bad size received.");
 							continue;
 						}
-						if(stream)
-						{ // certain protocols discarded after processing, others stream_cb to UI
-							if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
-								stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len);
+						const int f = set_f(nn,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
+						const uint8_t owner_nn = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+						uint64_t size;
+						char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
+						uint8_t file_status;
+						if(file_path == NULL && owner_nn == ENUM_OWNER_GROUP_PEER)
+						{ // Triggers on requests for group files (non-pm)
+							printf("Checkpoint group file request trigger 1\n");
+							const int group_n_f = set_f(event_strc->group_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
+							file_path = getter_string(NULL,event_strc->group_n,INT_MIN,group_n_f,offsetof(struct file_list,file_path));
+							size = getter_uint64(event_strc->group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,size));
+							setter(nn,INT_MIN,f,-1,offsetof(struct file_list,size),&size,sizeof(size)); // XXX see below NOTICE. this might be necessary for a peer specific transfer_progress, or something
+							file_status = getter_uint8(event_strc->group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,status));
 						}
-						else if(protocol == ENUM_PROTOCOL_KILL_CODE)
-						{ // Receive Kill Code (note: it is here, not above, because we want the utf8_valid check) NOTE: Will not be saved, like stream.
-							if(threadsafe_read_uint8(&mutex_global_variable,&kill_delete))
-							{
-								error_printf(0,"Received a kill code with reason: %s. Deleting peer.",event_strc->buffer);
-								const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-								takedown_onion(peer_index,1);
+						else
+						{ // pm or regular transfer
+							printf("Checkpoint non-group (or pm) file request trigger 2\n");
+							size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
+							file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
+						}
+						if(file_status != ENUM_FILE_OUTBOUND_PENDING && file_status != ENUM_FILE_OUTBOUND_ACCEPTED && file_status != ENUM_FILE_OUTBOUND_COMPLETED && file_status != ENUM_FILE_INBOUND_PENDING && file_status != ENUM_FILE_INBOUND_ACCEPTED && file_status != ENUM_FILE_INBOUND_COMPLETED)
+						{ // Do not modify without extensive testing and thinking
+							error_printf(0,"Peer requested a file that is of a status we're not willing to send: %d",file_status);
+							torx_free((void*)&file_path);
+							continue;
+						}
+						const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
+						const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
+						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
+						{ // Sanity check on request. File might not exist if size is 0
+							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
+							printf("Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"\n",requested_start,requested_end,size);
+							printf("Checkpoint path: %s\n",file_path);
+							torx_free((void*)&file_path);
+							continue;
+						}
+						if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
+						{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
+							struct stat file_stat = {0};
+							if(stat(file_path, &file_stat) || file_stat.st_mtime != getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified)))
+							{ // File cannot be accessed or has an unexpected modification time
+								error_simple(0,"Requested file cannot be accessed or has been modified since offer. Try re-offering it.");
+								torx_free((void*)&file_path);
+								continue;
 							}
-							else // just block, dont delete user and history (BAD IDEA)
-							{ // Generate fake privkey, onion, peeronion. They look real.
-								error_printf(0,"Received a kill code with reason: %s. Generating junk data and blocking peer.",event_strc->buffer);
-								char onion[56+1];
-								char privkey[88+1];
-								char peeronion[56+1];
-								generate_onion_simple(onion,privkey);
-								generate_onion_simple(peeronion,NULL);
-								torx_write(n) // XXX
-								memcpy(peer[n].onion,onion,sizeof(onion));
-								memcpy(peer[n].privkey,privkey,sizeof(privkey));
-								memcpy(peer[n].peeronion,peeronion,sizeof(peeronion));
-								torx_unlock(n) // XXX
-								sodium_memzero(onion,sizeof(onion));
-								sodium_memzero(privkey,sizeof(privkey));
-								sodium_memzero(peeronion,sizeof(peeronion));
-								block_peer(n); // this calls sql_update_peer, so no need to call again.
+						}
+						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
+						torx_write(nn) // XXX
+						peer[nn].file[f].outbound_start[fd_type] = requested_start;
+						peer[nn].file[f].outbound_end[fd_type] = requested_end;
+						peer[nn].file[f].outbound_transferred[fd_type] = 0;
+						peer[nn].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
+						torx_unlock(nn) // XXX
+						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
+						FILE **fd_active = {0};
+						torx_read(nn) // XXX
+						if(fd_type == 0) // recvfd, outbound
+							fd_active = &peer[nn].file[f].fd_out_recvfd;
+						else /*if(fd_type == 1)*/ // sendfd, outbound
+							fd_active = &peer[nn].file[f].fd_out_sendfd;
+						torx_unlock(nn) // XXX
+						torx_fd_lock(nn,f) // XXX
+						*fd_active = fopen(file_path, "r");
+						torx_fd_unlock(nn,f) // XXX
+						if(*fd_active == NULL)
+						{ // NULL sanity check is important TODO triggered 2023/11/10
+							error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
+							torx_free((void*)&file_path);
+							continue;
+						}
+						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on fd_type==%d owner==%d\n",requested_start,requested_end,fd_type,owner_nn);
+						torx_free((void*)&file_path);
+				/* jwofe9j20w*/	torx_fd_lock(nn,f) // XXX
+						fseek(*fd_active,(long int)requested_start,SEEK_SET);
+						torx_fd_unlock(nn,f) // XXX
+						send_prep(nn,f,protocol_lookup(ENUM_PROTOCOL_FILE_PIECE),fd_type);
+						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
+					}
+					else if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
+					{
+					//	printf("Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d\n",owner);
+						if(event_strc->buffer_len != CHECKSUM_BIN_LEN)
+						{
+							error_simple(0,"File pause or cancel of bad size received.");
+							continue;
+						}
+						int f = set_f(n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
+						int relevant_n = n;
+						if(f < 0 && owner == ENUM_OWNER_GROUP_PEER)
+						{ // potential group file transfer, non-pm
+							relevant_n = event_strc->group_n;
+							f = set_f(relevant_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
+						}
+						if(f < 0) // NOT else if, we set f again above
+						{
+							error_simple(0,"Received a pause or cancel for an unknown file. Bailing out.");
+							continue;
+						}
+						torx_read(relevant_n) // XXX
+						const unsigned char *split_hashes = peer[relevant_n].file[f].split_hashes;
+						torx_unlock(relevant_n) // XXX
+						section_unclaim(relevant_n,f,n,-1); // must go before process_pause_cancel
+						if(split_hashes == NULL) // avoid triggering for group (non-pm) file transfer
+							process_pause_cancel(relevant_n,f,protocol,ENUM_MESSAGE_RECV);
+						const uint8_t file_status = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel
+						if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
+						{ // Delete partial inbound files + split. Must go after process_pause_cancel (which sets file_status and closes fd)
+							char *file_path = getter_string(NULL,relevant_n,INT_MIN,f,offsetof(struct file_list,file_path));
+							destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
+							torx_free((void*)&file_path);
+							split_update(relevant_n,f,-1); // destroys split file and frees/nulls resources
+						}
+						if(owner == ENUM_OWNER_GROUP_PEER && split_hashes && is_inbound_transfer(file_status))
+						{ // Group transfer (non-pm). Build a fake 0/0/0/0 offer to process, as if we received it from peer, to show peer is now offering nothing
+							const int p_iter_partial = protocol_lookup(ENUM_PROTOCOL_FILE_OFFER_PARTIAL);
+							const uint8_t splits = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+							const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
+							char fake_message[FILE_OFFER_PARTIAL_LEN];
+							torx_read(relevant_n) // XXX
+							memcpy(fake_message,peer[relevant_n].file[f].checksum,CHECKSUM_BIN_LEN); // checksum
+							*(uint8_t*)(void*)&fake_message[CHECKSUM_BIN_LEN] = splits; // splits
+							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[relevant_n].file[f].split_hashes,split_hashes_len); // split hashes
+							uint64_t trash = htobe64(peer[relevant_n].file[f].size); // size
+							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash,sizeof(trash)); // size
+							torx_unlock(relevant_n) // XXX
+							trash = htobe64(0);
+							for(uint8_t section = 0; section <= splits; section++) // 0/0/0/0
+								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + section*sizeof(uint64_t)],&trash,sizeof(trash));
+							process_file_offer_inbound(n,p_iter_partial,fake_message,FILE_OFFER_PARTIAL_LEN);
+						}
+						const uint64_t last_transferred = getter_uint64(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[n].file[f].last_transferred;
+						transfer_progress(relevant_n,f,last_transferred); // triggering a stall
+					}
+					else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
+					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
+						if(event_strc->buffer_len != sizeof(uint16_t) + crypto_sign_BYTES)
+						{
+							error_simple(0,"Propose upgrade of bad size received.");
+							continue;
+						}
+						const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
+						const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+						if(new_peerversion > peerversion)
+						{ // Note: currently not facilitating downgrades because we would have to take down sendfd
+							error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
+							setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
+							sql_update_peer(n);
+						/*	if(fd_type == 0 && new_peerversion < 2)
+								event_strc->authenticated = 0; */
+						}
+					}
+					else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
+					{ // Receive GROUP_OFFER
+						if((protocol == ENUM_PROTOCOL_GROUP_OFFER && event_strc->buffer_len != GROUP_OFFER_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST && event_strc->buffer_len != GROUP_OFFER_FIRST_LEN))
+						{
+							error_simple(0,"Group offer of bad size received.");
+							continue;
+						}
+						const int g = set_g(-1,event_strc->buffer); // reserved
+						const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+						if(group_n < 0)
+						{ // new group, never received offer before
+							if(be32toh(align_uint32((void*)&event_strc->buffer[GROUP_ID_SIZE])) > MAX_STREAMS_GROUP)
+							{ // rudementary sanity check
+								error_simple(0,"Received obviously invalid group size in offer from buggy or malicious peer. Bailing out.");
+								continue;
 							}
-							disconnect_forever(bev,ctx);
-							error_simple(0,"TODO should probably return here to avoid actions on deleted n.2");
-							continue; // TODO added 2023/10/27 without testing TODO 
+							const uint8_t invite_required = *(uint8_t*)&event_strc->buffer[GROUP_ID_SIZE+sizeof(uint32_t)];
+							setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
+						}
+					}
+					else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
+					{ // Format: group_id + accepter's onion + accepter's ed25519_pk (NOTE: These protocols are exclusively between two OWNER_CTRL)
+					 // TODO should ONLY respond IF we verify that we already sent this peer an invitation, otherwise could be issues (ie, a malicious peer could accept multiple times and bring in a bunch of people)
+						if((protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT && event_strc->buffer_len != GROUP_OFFER_ACCEPT_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && event_strc->buffer_len != GROUP_OFFER_ACCEPT_FIRST_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY && event_strc->buffer_len != GROUP_OFFER_ACCEPT_REPLY_LEN))
+						{
+							error_simple(0,"Group offer accept or accept reply of bad size received.");
+							continue;
+						}
+						const int g = set_g(-1,event_strc->buffer); // reserved, already existing
+						const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+						if(group_n < -1)
+						{
+							error_simple(0,"Sanity check failed on a received Group Offer Accept.");
+							continue;
+						}
+						const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
+						if(g_invite_required == 0)
+						{ // Sanity check continued
+							error_simple(0,"Public groups are not accepted in this manner. One client is buggy. Coding error. Report this.");
+							breakpoint(); // 2024/03/11 triggered upon startup after deleting a group that didn't complete handshake
 						}
 						else
 						{
-							time_t time = 0;
-							time_t nstime = 0;
-							if(signature_len && date_len)
-							{ // handle messages that come with date (typically any group messages)
-								time = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (2*sizeof(uint32_t) + crypto_sign_BYTES)]));
-								nstime = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (sizeof(uint32_t) + crypto_sign_BYTES)]));
-							}
-							else
-								set_time(&time,&nstime);
-							const int i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1; // need to set this to prevent issues with full-duplex
-							expand_message_struc(nn,i);
-							torx_write(nn) // XXX
-							peer[nn].max_i++; // NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
-							if(group_peer_n > -1 && group_peer_n == group_ctrl_n) // we received a message that we signed... it as resent to us.
-								peer[nn].message[i].stat = ENUM_MESSAGE_SENT;
-							else
-								peer[nn].message[i].stat = ENUM_MESSAGE_RECV;
-							peer[nn].message[i].p_iter = p_iter;
-							peer[nn].message[i].message = event_strc->buffer;
-							peer[nn].message[i].message_len = event_strc->buffer_len;
-							peer[nn].message[i].time = time;
-							peer[nn].message[i].nstime = nstime;
-							torx_unlock(nn) // XXX
-						//	const char *name = protocols[p_iter].name;
-						//	printf("Checkpoint read_conn nn=%d i=%d proto=%s\n",nn,i,name);
-							int repeated = 0; // same time/nstime as another
-							if(owner == ENUM_OWNER_GROUP_PEER && (group_msg || group_pm))
-							{ // Handle group messages
-								const int g = set_g(n,NULL);
-								repeated = message_insert(g,nn,i);
-							}
-							if(repeated)
+							unsigned char invitation[crypto_sign_BYTES];
+							getter_array(&invitation,sizeof(invitation),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
+							const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56];
+							pthread_rwlock_rdlock(&mutex_expand_group);
+							const int *peerlist = group[g].peerlist;
+							pthread_rwlock_unlock(&mutex_expand_group);
+							if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
 							{
-								torx_write(nn) // XXX
-								zero_i(nn,i);
-								torx_unlock(nn) // XXX
+								if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
+								{ // NOTE: race condition. Once we set the invitation, anyone else who accepts our invite ... umm... lost thought there.
+									unsigned char verification_message[56+crypto_sign_PUBLICKEYBYTES];
+									getter_array(verification_message,56,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+									unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
+									getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
+									crypto_sign_ed25519_sk_to_pk(&verification_message[56],sign_sk);
+									sodium_memzero(sign_sk,sizeof(sign_sk));
+									// XXX 2023/10/21 I think we have no signed protocol to be checking here, because this is not a signed message... its different
+									if(crypto_sign_verify_detached((unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],verification_message,sizeof(verification_message),group_peer_ed25519_pk) != 0)
+									{ // verify inbound invitation with our group_n onion + group_n pk, against their provided group_peer_ed25519_pk, before saving
+										error_simple(0,"Failure to receive a valid incoming signature. Peer error.");
+										sodium_memzero(invitation,sizeof(invitation));
+										sodium_memzero(verification_message,sizeof(verification_message));
+										continue;
+									}
+									sodium_memzero(verification_message,sizeof(verification_message));
+									error_simple(2,"Receiving a valid group invitation signature.");
+									memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
+									setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
+									sql_update_peer(group_n);
+								}
+							//	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
+							//		message_send(n,ENUM_PROTOCOL_GROUP_PEERLIST,itoa(g)); // send a peerlist because this person doesn't have one
+							//	group_add_peer(g,group_peeronion,peer[n].peernick,group_peer_ed25519_pk,invitation); // note: was in message_send, moving up instead
+								if(invitee_remove(g,n))
+								{
+									error_simple(0,"Peer requested invitation into a group we have no record of inviting them into, or requested multiple invites. Refusing.");
+									sodium_memzero(invitation,sizeof(invitation));
+									continue;
+								}
+								struct int_char int_char;
+								int_char.i = g;
+								int_char.p = &event_strc->buffer[GROUP_ID_SIZE]; // group_peeronion;
+								int_char.up = group_peer_ed25519_pk;
+							//	printf("Checkpoint sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY. If this was sent as a private message, this needs to be sent to group_peer_n not n\n"); // TODO delete message if non-applicable
+								message_send(n,ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,&int_char,GROUP_OFFER_ACCEPT_REPLY_LEN); // this calls group_add_peer
+							}
+							else if(peerlist == NULL) // ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY
+							{ // If peerlist not NULL, this is a malicious message possibly.
+								if(is_null(invitation,crypto_sign_BYTES))
+								{ // collect their signature of our group ctrl ( will always be passed, but we don't always need to take it if we already have one )
+								// TODO TODO TODO XXX Exploitable??? if this is *always* passed, then malicious actors can switch theirs and change who invited them to the channel??
+								// TODO Prevent by not sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY unless we already sent them an offer. So, we need to track offers.
+									error_simple(2,"Receiving a group invitation signature.");
+									memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
+									setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
+									sql_update_peer(group_n);
+								}
+								unsigned char invitor_invitation[crypto_sign_BYTES];
+								memcpy(invitor_invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES);
+								char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+								const int peer_n = group_add_peer(g,&event_strc->buffer[GROUP_ID_SIZE],peernick,group_peer_ed25519_pk,invitor_invitation);
+								if(peer_n > -1)
+								{
+									error_simple(0,RED"Checkpoint New group peer!(read_conn 2)"RESET);
+								//	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+								//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
+								//		message_send(peer_n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,NULL,0);
+								//	else
+								//		printf("Checkpoint NOT REQUESTING peerlist2. Peercount==%u\n",peercount);
+								}
+								torx_free((void*)&peernick);
+								sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
 							}
 							else
-							{ // unique same time/nstime
-								message_new_cb(nn,i);
-								sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
-							}
+								breakpoint();
+							sodium_memzero(invitation,sizeof(invitation));
 						}
-						event_strc->buffer = NULL; // XXX IMPORTANT: to prevent the message from being torx_free'd if we hit a continue;
-						event_strc->buffer_len = 0;
+					}
+					else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST) // New peer wants to connect to a group we are in.
+					{ // Format: their onion + their ed25519_pk + invitation signature of their onion+pk (by someone already in group). Message itself is not signed but the onion+pk they pass is signed
+						if(owner != ENUM_OWNER_GROUP_CTRL) // should ONLY come in on a GROUP_CTRL
+						{
+							error_printf(0,"Received private entry request on wrong owner type. Possibly malicious intent or buggy peer: %u",owner);
+							breakpoint();
+							continue;
+						}
+						const int invitor_n = group_check_sig(event_strc->g,event_strc->buffer,56+crypto_sign_PUBLICKEYBYTES,0,(unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES],NULL); // 0 is fine for protocol here because protocol is not signed
+						if(invitor_n < 0)// (1) We should verify the signature is from some peer we have
+						{
+							error_simple(0,"Disregarding a GROUP_PRIVATE_ENTRY_REQUEST from someone.");
+							continue; // Disgard if not signed by someone in group
+						}
+						const char *proposed_peeronion = event_strc->buffer;
+						const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[56];
+						const unsigned char *inviter_signature = (unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES];
+						const int new_peer = group_add_peer(event_strc->g,proposed_peeronion,NULL,group_peer_ed25519_pk,inviter_signature); // (2) We group_add_peer them.
+						if(new_peer == -1)
+						{ // Error
+							error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
+							continue;
+						}
+						else if(new_peer != -2)
+						{ // Approved a new peer
+							error_simple(0,RED"Checkpoint New group peer! (read_conn 3)"RESET);
+					//		error_simple(3,"Received ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST. Responding with peerlist.");
+					//		const uint32_t g_peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
+					//		message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PRIVATE_LEN); // (3) respond with peerlist
+						}
+					}
+					else if(protocol == ENUM_PROTOCOL_GROUP_BROADCAST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+					{
+						if(event_strc->buffer_len == GROUP_BROADCAST_LEN)
+							broadcast_inbound(n,(unsigned char *)event_strc->buffer); // this can rebroadcast or handle
+						else
+						{
+							error_printf(0,"Requested rebroadcast of bad broadcast. Bailing. Protocol: %u with an odd lengthed broadcast: %u instead of expected %u.",protocol,event_strc->buffer_len,GROUP_BROADCAST_LEN);
+							breakpoint(); // TODO NOTICE: if this gets hit, its probably due to our DATE_SIGN_LEN. delete it if the math permits.
+							continue;
+						}
+					}
+					else if(null_terminated_len && utf8 && !utf8_valid(event_strc->buffer,event_strc->buffer_len - (null_terminated_len + date_len + signature_len)))
+					{
+						error_simple(0,"Non-UTF8 message received. Discarding entire message.");
+						continue;
+					}
+					if(stream)
+					{ // certain protocols discarded after processing, others stream_cb to UI
+						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
+							stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len - (/*null_terminated_len + */date_len + signature_len));
+					}
+					else if(protocol == ENUM_PROTOCOL_KILL_CODE)
+					{ // Receive Kill Code (note: it is here, not above, because we want the utf8_valid check) NOTE: Will not be saved, like stream.
+						if(threadsafe_read_uint8(&mutex_global_variable,&kill_delete))
+						{
+							error_printf(0,"Received a kill code with reason: %s. Deleting peer.",event_strc->buffer);
+							const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+							takedown_onion(peer_index,1);
+						}
+						else // just block, dont delete user and history (BAD IDEA)
+						{ // Generate fake privkey, onion, peeronion. They look real.
+							error_printf(0,"Received a kill code with reason: %s. Generating junk data and blocking peer.",event_strc->buffer);
+							char onion[56+1];
+							char privkey[88+1];
+							char peeronion[56+1];
+							generate_onion_simple(onion,privkey);
+							generate_onion_simple(peeronion,NULL);
+							torx_write(n) // XXX
+							memcpy(peer[n].onion,onion,sizeof(onion));
+							memcpy(peer[n].privkey,privkey,sizeof(privkey));
+							memcpy(peer[n].peeronion,peeronion,sizeof(peeronion));
+							torx_unlock(n) // XXX
+							sodium_memzero(onion,sizeof(onion));
+							sodium_memzero(privkey,sizeof(privkey));
+							sodium_memzero(peeronion,sizeof(peeronion));
+							block_peer(n); // this calls sql_update_peer, so no need to call again.
+						}
+						sodium_memzero(read_buffer,packet_len);
+						disconnect_forever(bev,ctx);
+						return;
 					}
 					else
-						continued = 0; // important or oversized messages will break
+					{
+						time_t time = 0;
+						time_t nstime = 0;
+						if(signature_len && date_len)
+						{ // handle messages that come with date (typically any group messages)
+							time = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (2*sizeof(uint32_t) + crypto_sign_BYTES)]));
+							nstime = (time_t)be32toh(align_uint32((void*)&event_strc->buffer[event_strc->buffer_len - (sizeof(uint32_t) + crypto_sign_BYTES)]));
+						}
+						else
+							set_time(&time,&nstime);
+						const int i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1; // need to set this to prevent issues with full-duplex
+						expand_message_struc(nn,i);
+						torx_write(nn) // XXX
+						peer[nn].max_i++; // NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
+						if(group_peer_n > -1 && group_peer_n == event_strc->group_n) // we received a message that we signed... it was resent to us.
+							peer[nn].message[i].stat = ENUM_MESSAGE_SENT;
+						else
+							peer[nn].message[i].stat = ENUM_MESSAGE_RECV;
+						peer[nn].message[i].p_iter = p_iter;
+						peer[nn].message[i].message = event_strc->buffer;
+						peer[nn].message[i].message_len = event_strc->buffer_len;
+						peer[nn].message[i].time = time;
+						peer[nn].message[i].nstime = nstime;
+						torx_unlock(nn) // XXX
+					//	const char *name = protocols[p_iter].name;
+					//	printf("Checkpoint read_conn nn=%d i=%d proto=%s\n",nn,i,name);
+						int repeated = 0; // same time/nstime as another
+						if(owner == ENUM_OWNER_GROUP_PEER && (group_msg || group_pm)) // Handle group messages
+							repeated = message_insert(event_strc->g,nn,i);
+						if(repeated)
+						{
+							torx_write(nn) // XXX
+							zero_i(nn,i);
+							torx_unlock(nn) // XXX
+						}
+						else
+						{ // unique same time/nstime
+							message_new_cb(nn,i);
+							sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
+						}
+					}
+					event_strc->buffer = NULL; // XXX IMPORTANT: to prevent the message from being torx_free'd if we hit a continue;
+					event_strc->buffer_len = 0;
 				}
+				else
+					continued = 0; // important or oversized messages will break
 			}
-		}
+		} // We only leave while() in the event of an error (via break;)
+		breakpoint();
+		event_strc->buffer_len = 0; // Necessary because this will be re-used on fd_type = 0
+		torx_free((void*)&event_strc->buffer); // Necessary because this will be re-used on fd_type = 0
+		if(packet_len < sizeof(read_buffer)) // Necessary safety check
+			sodium_memzero(read_buffer,packet_len);
+		else
+			sodium_memzero(read_buffer,sizeof(read_buffer));
+		bufferevent_free(bev); // close a connection and await a new accept_conn
 	}
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 	{ // Handle incoming friend request
 		char buffer_ln[2+56+crypto_sign_PUBLICKEYBYTES];
-		int removed;
-		if((removed = evbuffer_remove(input,buffer_ln,sizeof(buffer_ln))) < 1)
-		{ // TODO Should spoil onion.
-			error_simple(0,"This should not occur 830302. should never occur under any circumstances. report this.");
-			return;
-		}
-		size_t len = (size_t)removed;
-		if(len == sizeof(buffer_ln))
+		const int len = evbuffer_remove(input,buffer_ln,sizeof(buffer_ln));
+		while(len == (int)sizeof(buffer_ln)) // not a real while loop, just to avoid goto
 		{ // Generate, send, and save ctrl
 			uint8_t former_owner = owner; // use to mitigate race condition caused by deletion of SING
 			char fresh_privkey[88+1] = {0};
@@ -1371,7 +1371,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 				sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 				sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-				return;
+				break; // Unable to generate onion. Bail out and spoil or disconnect.
 			}
 			load_onion(fresh_n);
 			// XXX WARNING: Use event_strc->fresh_n (ctrl) not n (SING/MULT) XXX Note that saving occurs in write_finished not here
@@ -1392,8 +1392,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 			sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+			break; // All good, bail out
 		}
-		else if(owner == ENUM_OWNER_SING)
+		if(owner == ENUM_OWNER_SING)
 		{ // Spoil SING after bad handshake
 			error_printf(0,"Wrong size connection attempt of size %lu received. Onion spoiled. Report this.",len);
 			const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
@@ -1401,10 +1402,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			disconnect_forever(bev,ctx);
 		}
 		else if(owner == ENUM_OWNER_MULT)
+		{ // Disconnect MULT after bad handshake
 			error_printf(0,"Invalid attempt of size %lu received on mult. Should notify user of this.",len);
+			bufferevent_free(bev); // close a connection and await a new accept_conn
+		}
 	}
 	else
-	{
+	{ // Should never happen
 		error_simple(0,"Received a message on an unexpected owner. Coding error. Report this.");
 		breakpoint();
 	}
@@ -1542,7 +1546,7 @@ void *torx_events(void *arg)
 				uint8_t have_triggered_cascade = 0;
 				if(local_v3auth_enabled == 0 || peerversion < 2)
 				{
-					pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
+					pipe_auth_and_request_peerlist(n,-1); // send ENUM_PROTOCOL_PIPE_AUTH
 					have_triggered_cascade = 1;
 				}
 				if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
@@ -1572,7 +1576,7 @@ void *torx_events(void *arg)
 					}
 				}
 				if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
-					pipe_auth_and_request_peerlist(n); // send ENUM_PROTOCOL_PIPE_AUTH
+					pipe_auth_and_request_peerlist(n,event_strc->g); // send ENUM_PROTOCOL_PIPE_AUTH
 			}
 			peer_online(n); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 		}

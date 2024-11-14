@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 16 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 17 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -568,6 +568,11 @@ void custom_setting_cb(const int n,char *setting_name,char *setting_value,const 
 {
 	if(custom_setting_registered)
 		custom_setting_registered(n,setting_name,setting_value,setting_value_len,plaintext);
+	else
+	{
+		torx_free((void*)&setting_name);
+		torx_free((void*)&setting_value);
+	}
 }
 void message_new_cb(const int n,const int i)
 {
@@ -588,6 +593,8 @@ void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t
 {
 	if(message_extra_registered)
 		message_extra_registered(n,i,data,data_len);
+	else
+		torx_free((void*)&data);
 }
 void login_cb(const int value)
 {
@@ -608,6 +615,13 @@ void stream_cb(const int n,const int p_iter,char *data,const uint32_t len)
 {
 	if(stream_registered)
 		stream_registered(n,p_iter,data,len);
+	else
+		torx_free((void*)&data);
+}
+void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t len)
+{
+	if(unknown_registered)
+		unknown_registered(n,protocol,data,len);
 	else
 		torx_free((void*)&data);
 }
@@ -778,6 +792,12 @@ void stream_setter(void (*callback)(int,int,char*,uint32_t))
 {
 	if(stream_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
 		stream_registered = callback;
+}
+
+void unknown_setter(void (*callback)(int,uint16_t,char*,uint32_t))
+{
+	if(unknown_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		unknown_registered = callback;
 }
 
 unsigned char *read_bytes(size_t *data_len,const char *path)
@@ -3772,23 +3792,9 @@ int group_online(const int g)
 }
 
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)
-{ // This function checks signatures of messages sent to a GROUP_CTRL and returns who sent them. NOTICE: message_len is peer struct message_len, so contains signature if appropriate
+{ // This function checks signatures of messages sent to a GROUP_CTRL and returns who sent them.
 // Any length of prefix can be passed, NULL / 0-56. If there are multiple matches (ex: short prefix), each will be tried.
 //TODO This could be a burden on file transfers and it might be worthwhile in the future to assign peers to a specific port or otherwise authenticate sockets/streams instead.
-	uint32_t signature_len = 0;
-	if(untrusted_protocol)
-	{
-		const int untrusted_p_iter = protocol_lookup(untrusted_protocol);
-		if(untrusted_p_iter < 0)
-		{
-			error_simple(0,"Peer sent an untrusted protocol that we don't recognize. We're not checking its signature validity because we don't know what it is.");
-			breakpoint();
-			return -1;
-		}
-		pthread_rwlock_rdlock(&mutex_protocols);
-		signature_len = protocols[untrusted_p_iter].signature_len;
-		pthread_rwlock_unlock(&mutex_protocols);
-	}
 	const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 	size_t peeronion_len = 0;
@@ -3814,7 +3820,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	size_t prefix_length = 0;
 	if(untrusted_protocol)
 	{
-		prefixed_message = affix_protocol_len(untrusted_protocol,message, message_len - signature_len);
+		prefixed_message = affix_protocol_len(untrusted_protocol,message, message_len);
 		prefix_length = 2+4;
 	}
 	if(peerlist) // NOTE: peerlist is null when adding first peer, so we skip and check for self-sign
@@ -3827,7 +3833,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
 			getter_array(&peer_sign_pk,sizeof(peer_sign_pk),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
-			if((peeronion_len == 0 || !memcmp(peeronion,peeronion_prefix,peeronion_len)) && crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len - signature_len, peer_sign_pk) == 0)
+			if((peeronion_len == 0 || !memcmp(peeronion,peeronion_prefix,peeronion_len)) && crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, peer_sign_pk) == 0)
 			{
 				sodium_memzero(peeronion,sizeof(peeronion));
 				sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
@@ -3849,7 +3855,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
 	crypto_sign_ed25519_sk_to_pk(ed25519_pk,sign_sk);
 	sodium_memzero(sign_sk,sizeof(sign_sk));
-	if(crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len - signature_len, ed25519_pk) == 0)
+	if(crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, ed25519_pk) == 0)
 	{ // Signed by us! (only applicable in the case that this message is an invitation_signature)
 		error_simple(4,"Success of group_check_sig: Signed by group_n (us).");
 	//	printf("Checkpoint SUCCESS of GROUP self-sign: %u\n",untrusted_protocol);
@@ -3862,7 +3868,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		error_printf(0,"Failure of group_check_sig. Unknown signer or bad signature. Protocol: %u",untrusted_protocol); // Unknown signer (bug, malicious peer, blocked peer, deleted peer)
 		error_printf(3,MAGENTA"Checkpoint failed signature: %s"RESET,b64_encode(sig,crypto_sign_BYTES));
 		error_printf(3,MAGENTA"Checkpoint failed signing pk key: %s"RESET,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %lu: %s"RESET,message_len-signature_len,b64_encode(message, message_len-signature_len));
+		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %lu: %s"RESET,message_len,b64_encode(message, message_len));
 	//	breakpoint();
 	}
 	else if(g_peercount != 0)

@@ -667,13 +667,13 @@ void setter(const int n,const int i,const int f,const int o,const size_t offset,
 { /* Suitable for ALL datatypes (string, int, void*, NULL, etc). Note: The (char*) is necessary because otherwise the offset is treated as an addition to the iterator: &peer[n+offset]. https://www.iso-9899.info/n1570.html#6.5.2.1p2
      Integer Usage:
 	int8_t value = 69;
-	setter(1,-1,-1,-1,offsetof(struct peer_list,v3auth),&value,sizeof(value));
+	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&value,sizeof(value));
      Array Usage:
 	char onion[56+1] = "hello i am a fish";
-	setter(1,-1,-1,-1,offsetof(struct peer_list,onion),&onion,sizeof(onion));
+	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,onion),&onion,sizeof(onion));
     Pointer Usage (pointer as argument): XXX do not use & argument is a pointer. THIS ERROR WILL NOT BE DETECTED BY COMPILER.
 	char *onion = "hello i am a fish";
-	setter(1,-1,-1,-1,offsetof(struct peer_list,onion),onion,sizeof(onion));
+	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,onion),onion,sizeof(onion));
     Pointer Usage (target):
 	not utilized so far / not tested / not sure
 */
@@ -727,7 +727,7 @@ void setter(const int n,const int i,const int f,const int o,const size_t offset,
 #define return_getter_group_value \
 	if(g < 0)\
 	{\
-		error_printf(0,"getter_group sanity check failed at offset: %lu",offset);\
+		error_printf(0,"getter_group sanity check failed at offset: %lu",offset);/* TODO should be fatal */\
 		breakpoint();\
 		return 0;\
 	}\
