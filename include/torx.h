@@ -674,6 +674,7 @@ struct event_strc { // XXX Do not sodium_malloc structs unless they contain sens
 	evutil_socket_t sockfd;
 	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
 	int8_t fd_type; // 0 recvfd, 1 sendfd
+	uint8_t owner;
 	uint8_t invite_required;
 	int g;
 	int group_n;

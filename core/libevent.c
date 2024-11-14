@@ -82,9 +82,8 @@ XXX	To Do		XXX
 //TODO: see "KNOWN BUG:" On a successful sing or MULT, the socket does not close due to the CTRL coming up. It is not the same socket nor the same port. We don't know what is going on.
 // Something to do with serv_init being a child process, I think. The socket doesn't close until the child process that called it ends.
 
-static void peer_online(const int n)
+static void peer_online(const uint8_t owner,const int n)
 { // Internal Function only. Use the callback. Note: We store our onion rather than peeronion because this will be checked on initiation where peeronion won't be ready yet.
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_CTRL && owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
 	const time_t last_seen = time(NULL); // current time
@@ -132,7 +131,7 @@ static void disconnect_forever(struct bufferevent *bev, void *ctx)
 	disconnect_forever(bev_recv,NULL);
 }*/
 
-static inline void pipe_auth_and_request_peerlist(const int n,const int g)
+static inline void pipe_auth_and_request_peerlist(const uint8_t owner,const int n,const int g)
 { // Send ENUM_PROTOCOL_PIPE_AUTH && ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST
 	if(n < 0)
 	{
@@ -143,7 +142,7 @@ static inline void pipe_auth_and_request_peerlist(const int n,const int g)
 	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	message_send(n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
 	sodium_memzero(peeronion,sizeof(peeronion));
-	if(g > -1 && getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) == ENUM_OWNER_GROUP_PEER)
+	if(g > -1 && owner == ENUM_OWNER_GROUP_PEER)
 	{ // sanity check, more or less.
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		const uint32_t trash = htobe32(peercount);
@@ -185,7 +184,7 @@ static inline void begin_cascade(const int n,const int8_t fd_type)
 	}
 }
 
-static inline size_t packet_removal(const int n,const int g,const int8_t fd_type,const size_t drain_len)
+static inline size_t packet_removal(const uint8_t owner,const int n,const int g,const int8_t fd_type,const size_t drain_len)
 {
 	size_t drained = 0;
 	time_t time_oldest = LONG_MAX; // must initialize as a very high value
@@ -317,7 +316,7 @@ static inline size_t packet_removal(const int n,const int g,const int8_t fd_type
 							error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
 							error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-								pipe_auth_and_request_peerlist(n,g); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
+								pipe_auth_and_request_peerlist(owner,n,g); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 							else
 							{
 								const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -357,25 +356,11 @@ static inline size_t packet_removal(const int n,const int g,const int8_t fd_type
 	return drained;
 }
 
-static inline void output_cb(void *ctx)
-{ // Note: A *lot* of redundancy with packet_removal()
-	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	packet_removal(event_strc->n,event_strc->g,event_strc->fd_type,0);
-}
-
 static void write_finished(struct bufferevent *bev, void *ctx)
 { /* This write callback is triggered when write buffer has depleted (bufferevent.h) */ // It follows read_conn()
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
 	const int n = event_strc->n;
-	output_cb(ctx);
-	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-	if(status != ENUM_STATUS_FRIEND)
-	{
-		disconnect_forever(bev,ctx); // Run last, will exit event base
-		error_simple(0,"Peer is not a friend. Disconnecting from write_finished.");
-		return;
-	}
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = event_strc->owner;
 	if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 	{
 		if(event_strc->fresh_n > -1) // sanity check of n returned by load_onion()
@@ -407,7 +392,17 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 			const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,1); // XXX NOTE: n is just going to show 000000 after takedown(onion,1) and be useless.
 			disconnect_forever(bev,ctx);
+			return;
 		}
+	}
+	else // SING and MULT don't use the packet struct, so there is nothing to remove
+		packet_removal(event_strc->owner,event_strc->n,event_strc->g,event_strc->fd_type,0);
+	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	if(status != ENUM_STATUS_FRIEND)
+	{ // Must be after packet_removal
+		disconnect_forever(bev,ctx); // Run last, will exit event base
+		error_simple(0,"Peer is not a friend. Disconnecting from write_finished.");
+		return;
 	}
 }
 
@@ -416,7 +411,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
 	const int n = event_strc->n;
 	const int8_t fd_type = event_strc->fd_type;
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = event_strc->owner;
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	error_printf(0,YELLOW"Close_conn: n=%d fd_type=%d owner=%u status=%u"RESET,n,fd_type,owner,status);
 	if(events & BEV_EVENT_ERROR)
@@ -449,7 +444,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		if(to_drain)
 		{ // Note: there is an infinately small chance of a race condition by calling packet_removal before ev_buffer_drain. Unavoidable unless we use evbuffer locks.
 			printf("Checkpoint draining up to n=%d bytes=%zu\n",n,to_drain);
-			const size_t to_actually_drain = packet_removal(n,event_strc->g,fd_type,to_drain);
+			const size_t to_actually_drain = packet_removal(event_strc->owner,n,event_strc->g,fd_type,to_drain);
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
 	}
@@ -482,7 +477,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	}
 	struct evbuffer *input = bufferevent_get_input(bev);
 	const int8_t local_debug = torx_debug_level(-1);
-	uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	uint8_t owner = event_strc->owner;
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 	{ // Bytes to Read on CTRL
 		unsigned char read_buffer[PACKET_SIZE_MAX]; // free'd // == "EVBUFFER_MAX_READ_DEFAULT" variable from libevent. could set this to 64kb to be safe, in case libevent increases one day
@@ -781,11 +776,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								peer[n].bev_recv = NULL; // 2nd, order important. do not free.
 								torx_unlock(n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
 								n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
-								owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // should 100% be ENUM_OWNER_GROUP_PEER ?
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
 								const uint8_t recvfd_connected = 1; // important
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								event_strc->n = n; // important
+								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
 							} // no need to break here, can carry on evaluating further data in buffer.
 							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 							{
@@ -893,7 +888,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								const uint8_t recvfd_connected = 1;
 								setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
-								peer_online(n);
+								peer_online(event_strc->owner,n);
 								if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
 								{ // propose upgrade
 									printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2\n"RESET);
@@ -1339,7 +1334,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		const int len = evbuffer_remove(input,buffer_ln,sizeof(buffer_ln));
 		while(len == (int)sizeof(buffer_ln)) // not a real while loop, just to avoid goto
 		{ // Generate, send, and save ctrl
-			uint8_t former_owner = owner; // use to mitigate race condition caused by deletion of SING
+			const uint8_t former_owner = owner; // use to mitigate race condition caused by deletion of SING
 			char fresh_privkey[88+1] = {0};
 			char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			event_strc->fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
@@ -1392,7 +1387,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 			sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-			break; // All good, bail out
+			return; // All good, bail out (Note: see write_finished() for what happens next)
 		}
 		if(owner == ENUM_OWNER_SING)
 		{ // Spoil SING after bad handshake
@@ -1438,7 +1433,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		bufferevent_free(peer[n].bev_recv);
 		torx_unlock(n) // XXX
 		peer[n].bev_recv = NULL; */ // DO NOT DELETE THIS BLOCK. We probably have to make it work.
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner = event_strc->owner;
 		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
 		if(owner == ENUM_OWNER_CTRL && (!local_v3auth_enabled || peerversion < 2))
@@ -1460,7 +1455,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 
 	if(event_strc->authenticated)
 	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner = event_strc->owner;
 		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 			error_simple(1,"Existing Peer has connected to us.");
 		else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
@@ -1470,7 +1465,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		if(owner == ENUM_OWNER_CTRL)
 			begin_cascade(n,0); // should go immediately after <fd_type>_connected = 1
 		if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
-			peer_online(n); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
+			peer_online(owner,n); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 	}
 }
 
@@ -1507,7 +1502,7 @@ void *torx_events(void *arg)
 		torx_free((void*)&arg); // free CTX
 		return 0;
       	}
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = event_strc->owner;
 	while(1)
 	{ // not a real while loop, just to avoid goto
 		if(fd_type == 0)
@@ -1546,7 +1541,7 @@ void *torx_events(void *arg)
 				uint8_t have_triggered_cascade = 0;
 				if(local_v3auth_enabled == 0 || peerversion < 2)
 				{
-					pipe_auth_and_request_peerlist(n,-1); // send ENUM_PROTOCOL_PIPE_AUTH
+					pipe_auth_and_request_peerlist(event_strc->owner,n,-1); // send ENUM_PROTOCOL_PIPE_AUTH
 					have_triggered_cascade = 1;
 				}
 				if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
@@ -1576,9 +1571,9 @@ void *torx_events(void *arg)
 					}
 				}
 				if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
-					pipe_auth_and_request_peerlist(n,event_strc->g); // send ENUM_PROTOCOL_PIPE_AUTH
+					pipe_auth_and_request_peerlist(event_strc->owner,n,event_strc->g); // send ENUM_PROTOCOL_PIPE_AUTH
 			}
-			peer_online(n); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
+			peer_online(event_strc->owner,n); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 		}
 		else
 		{

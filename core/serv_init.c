@@ -397,6 +397,7 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 		event_strc->g = -1;
 		event_strc->group_n = -1;
 	}
+	event_strc->owner = owner;
 	event_strc->n = n;
 	event_strc->fresh_n = -1;
 	event_strc->buffer = NULL;
