@@ -602,7 +602,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		zero_i(nnnn,iiii);
 		torx_unlock(nnnn) // XXX
 	} */
-	return 0;
+	return i;
 	error: {}
 	torx_free((void*)&message);
 	return -1;
@@ -711,9 +711,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		g = set_g(n,NULL);
 	// XXX Step 3:
-	if(message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0) == -1)
-		return -1;
-	return 0; // could also return i
+	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0); // i or -1 upon error
 }
 
 void kill_code(const int n,const char *explanation)

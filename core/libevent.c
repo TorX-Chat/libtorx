@@ -1559,7 +1559,7 @@ void *torx_events(void *arg)
 				const uint8_t stat = getter_uint8(n,0,-1,-1,offsetof(struct message_list,stat));
 				uint8_t first_connect = 0;
 				int p_iter;
-				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter)) > -1))
+				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(n,0,-1,-1,offsetof(struct message_list,p_iter))) > -1)
 				{ // Put queue skipping protocols first, if unsent, before pipe auth
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
