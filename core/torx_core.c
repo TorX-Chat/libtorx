@@ -2332,14 +2332,14 @@ void zero_g(const int g)
 // TODO probably need a callback to UI ( for what ? )
 }
 
-static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
+static inline void sort_n(int sorted_n[],const int size)
 { // Produces an array of N index values that will order our peer[n]. struct from newest to oldest message, without regard to online status or owner (ie, not just CTRL)
-// XXX used to work prior to 2022/11/24, but stopped having effect for unknown reason due to our new implementation of refined_list. Totally unsure why and not fully tested.
 	if(!sorted_n || size < 0)
 		error_simple(-1,"Sanity check failed in sort_n. Coding error. Report this.");
 	time_t last_time[size]; // things get moved around in here (will contain sorted selection)
 	for(int nn = 0; nn < size; nn++)
 	{
+		const uint8_t owner = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
 			const int g = set_g(nn,NULL);
@@ -2351,6 +2351,8 @@ static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
 				last_time[nn] = 0;
 			pthread_rwlock_unlock(&mutex_expand_group);
 		}
+		/* else if(owner == ENUM_OWNER_GROUP_PEER) */
+			// TODO Consider: If GROUP_PEER, we should sort by last private message time. This would add (potentially lots of) CPU cycles though and would only be useful if we have a UI developer who wants to seperate private chats into a seperate sorted list.
 		else
 		{
 			const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -2363,7 +2365,6 @@ static inline void sort_n(int sorted_n[],const uint8_t owner,const int size)
 	}
 	for(int remaining = size; remaining > 1; remaining--)
 	{
-
 		time_t highest_time = 0;
 		int highest_n = 0;
 		int highIndex = 0;
@@ -2459,7 +2460,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 	if((owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) || (owner == ENUM_OWNER_CTRL && (peer_status == ENUM_STATUS_BLOCKED || peer_status == ENUM_STATUS_FRIEND || peer_status == ENUM_STATUS_PENDING)))
 	{
 		int sorted_n[nn];
-		sort_n(sorted_n,owner,nn);
+		sort_n(sorted_n,nn);
 		if(owner == ENUM_OWNER_GROUP_PEER || (owner == ENUM_OWNER_CTRL && peer_status == ENUM_STATUS_FRIEND))
 		{
 			for(int z = 0; z < 4; z++)
@@ -3620,20 +3621,29 @@ int set_g(const int n,const void *arg)
 	int g = 0;
 	uint8_t owner = 0; // initializing for clang. doesnt need to be.
 	pthread_rwlock_rdlock(&mutex_expand_group); // XXX
-	if(n > -1 && (owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) == ENUM_OWNER_GROUP_CTRL) // search for a GROUP_CTRL by n
-		while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && group[g].n != n)
-			g++;
-	else if(n > -1 && owner == ENUM_OWNER_GROUP_PEER) // search for a GROUP_PEER by n
-		while(group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE))
-		{ // XXX EXPERIMENTAL
-			uint32_t gg = 0;
-			while(gg < group[g].peercount && group[g].peerlist[gg] != n)
-				gg++;
-			if(gg == group[g].peercount)
-				g++; // was not in this group
-			else
-				break; // winner! set peer[n].associated_group here so that it only need be set once
+	if(n > -1)
+	{
+		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		if(owner == ENUM_OWNER_GROUP_CTRL) // search for a GROUP_CTRL by n
+			while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && group[g].n != n)
+				g++;
+		else if(owner == ENUM_OWNER_GROUP_PEER) // search for a GROUP_PEER by n
+			while(group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE))
+			{ // XXX EXPERIMENTAL
+				uint32_t gg = 0;
+				while(gg < group[g].peercount && group[g].peerlist[gg] != n)
+					gg++;
+				if(gg == group[g].peercount)
+					g++; // was not in this group
+				else
+					break; // winner! set peer[n].associated_group here so that it only need be set once
+			}
+		else
+		{ // MUST BE FATAL or it will cause weird problems. Don't call set_g on non-group peer types.
+			pthread_rwlock_unlock(&mutex_expand_group); // XXX
+			error_simple(-1,"set_g called on a non-group peer. Coding error. Report this. (include backtrace in report)"); // NOTE: Highly likely a UI dev error. Get a backtrace.
 		}
+	}
 	else if(group_id)// search by group_id
 		while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && memcmp(group[g].id,group_id,GROUP_ID_SIZE))
 			g++;
@@ -3662,6 +3672,16 @@ int set_g(const int n,const void *arg)
 			group[g].n = n;
 	if(group_id) // do NOT set 'else if'
 		memcpy(group[g].id,group_id,GROUP_ID_SIZE);
+	// TODO --> DEBUGGING 2024/11/15 REMOVE --> TODO /* RABBITS */
+	if(owner == ENUM_OWNER_GROUP_PEER && is_null(group[g].id,GROUP_ID_SIZE))
+	{ // This will probably lead to severe bugs elsewhere, so we should detect it. TODO note: its not triggering, so this can't be the issue.
+		error_simple(0,"Returning a g with a null ID. Likely coding error. Report this.");
+		breakpoint();
+	}
+	error_printf(0,PINK"Checkpoint set_g = %d n=%d arg=%s"RESET,g,n,arg?"ARG":"NULL"); // TODO NOTE: SHOULD NOT BE >0 when there is only one group. XXX XXX XXX
+//	if(g > 0)
+//		breakpoint(); // TODO hit times: 4+
+	// TODO <-- DEBUGGING 2024/11/15 REMOVE <-- TODO /* RABBITS */
 //	if(group_id)
 //		printf("Checkpoint GID: %s\n",b64_encode(group_id,GROUP_ID_SIZE));
 /*	if(n > -1)
@@ -3872,10 +3892,12 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	//	breakpoint();
 	}
 	else if(g_peercount != 0)
-	{ // old depreciated note: this occurs when joining a new group.... its not fatal error always (TODO remove this note)
-		error_simple(0,"Failure of sanity check in group_check_sig: Peerlist is null while peercount is not 0. Report this.");
+	{
+		error_simple(0,"Failure of sanity check in group_check_sig: Peerlist is null while peercount is not 0. Coding error. Report this.");
 		breakpoint();
 	}
+	else
+		error_printf(0,"Group=%d has no peerlist and peercount=%d. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	torx_free((void*)&prefixed_message);
 	return -1;

@@ -200,56 +200,50 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 		breakpoint();
 		return;
 	}
+	unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
+	unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int group_n,g = 0 ; (group_n = group[g].n) > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
 	{ // Attempt decryption of ciphertext, in all circumstances
-		if(group_n < 0)
-			continue; // this group is deleted, skip checking it
+		if(group_n < 0 || group[g].invite_required)
+			continue; // this group is deleted or private, skip checking it
+		memcpy(x25519_sk,group[g].id,sizeof(x25519_sk));
 		pthread_rwlock_unlock(&mutex_expand_group);
-		const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-		if(!g_invite_required)
-		{ // Only try public groups
-			unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
-			unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32
-			pthread_rwlock_rdlock(&mutex_expand_group);
-			memcpy(x25519_sk,group[g].id,sizeof(x25519_sk));
-			pthread_rwlock_unlock(&mutex_expand_group);
-			crypto_scalarmult_base(x25519_pk, x25519_sk); // convert sk_to_pk
-			unsigned char decrypted[GROUP_BROADCAST_DECRYPTED_LEN];
-			if(crypto_box_seal_open(decrypted,ciphertext,GROUP_BROADCAST_LEN,x25519_pk, x25519_sk) == 0)
-			{ // Successful decryption, meaning we have this group
-				sodium_memzero(x25519_pk,sizeof(x25519_pk));
-				sodium_memzero(x25519_sk,sizeof(x25519_sk));
-				char onion[56+1];
-				getter_array(&onion,sizeof(onion),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)); // TODO 2024/02/19 hit this with group_n being -1, which is a possible race because we *have* this group or we couldn't decrypt
-				if(!memcmp(onion,&decrypted[crypto_pwhash_SALTBYTES],56))
-					error_simple(1,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
-				else
-				{ // Some user wants into a group we are in.
-					const int new_peer = group_add_peer(g,(char*)&decrypted[crypto_pwhash_SALTBYTES],NULL,&decrypted[crypto_pwhash_SALTBYTES+56],NULL);
-					if(new_peer > -1)
-					{ // Send them a peerlist
-						error_simple(0,RED"Checkpoint New group peer!(broadcast_inbound)"RESET);
-						broadcast_remove(g);
-						unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
-						broadcast_prep(ciphertext_new,g);
-						const int i = message_send(new_peer,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
-						printf("Checkpoint GROUP_PUBLIC_ENTRY_REQUEST n=%d i=%d p_iter=%d\n",new_peer,i,getter_int(new_peer,i,-1,-1,offsetof(struct message_list,p_iter)));
-						sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
-					}
-					else if(new_peer == -1) // NOT ELSE: as == -2 is already have it
-						error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
+		crypto_scalarmult_base(x25519_pk, x25519_sk); // convert sk_to_pk
+		unsigned char decrypted[GROUP_BROADCAST_DECRYPTED_LEN];
+		if(crypto_box_seal_open(decrypted,ciphertext,GROUP_BROADCAST_LEN,x25519_pk, x25519_sk) == 0)
+		{ // Successful decryption, meaning we have this group
+			char onion[56+1];
+			getter_array(&onion,sizeof(onion),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)); // TODO 2024/02/19 hit this with group_n being -1, which is a possible race because we *have* this group or we couldn't decrypt
+			if(!memcmp(onion,&decrypted[crypto_pwhash_SALTBYTES],56))
+				error_simple(1,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
+			else
+			{ // Some user wants into a group we are in.
+				const int new_peer = group_add_peer(g,(char*)&decrypted[crypto_pwhash_SALTBYTES],NULL,&decrypted[crypto_pwhash_SALTBYTES+56],NULL);
+				if(new_peer > -1)
+				{ // Send them a peerlist
+					error_simple(0,RED"Checkpoint New group peer!(broadcast_inbound)"RESET);
+					broadcast_remove(g);
+					unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
+					broadcast_prep(ciphertext_new,g);
+					const int i = message_send(new_peer,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
+					printf("Checkpoint GROUP_PUBLIC_ENTRY_REQUEST g=%d n=%d i=%d p_iter=%d\n",g,new_peer,i,getter_int(new_peer,i,-1,-1,offsetof(struct message_list,p_iter)));
+					sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
 				}
-				sodium_memzero(onion,sizeof(onion));
-				sodium_memzero(decrypted,sizeof(decrypted));
-				return; // do not rebroadcast, since we have this group
+				else if(new_peer == -1) // NOT ELSE: as == -2 is already have it
+					error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
 			}
+			sodium_memzero(onion,sizeof(onion));
+			sodium_memzero(decrypted,sizeof(decrypted));
 			sodium_memzero(x25519_pk,sizeof(x25519_pk));
 			sodium_memzero(x25519_sk,sizeof(x25519_sk));
+			return; // do not rebroadcast, since we have this group
 		}
 		pthread_rwlock_rdlock(&mutex_expand_group);
 	} // If getting here, means unable to decrypt ciphertext with any public group ID. Carry on and rebroadcast it.
 	pthread_rwlock_unlock(&mutex_expand_group);
+	sodium_memzero(x25519_pk,sizeof(x25519_pk));
+	sodium_memzero(x25519_sk,sizeof(x25519_sk));
 	broadcast_add(origin_n,ciphertext);
 }
 

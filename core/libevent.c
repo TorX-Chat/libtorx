@@ -166,7 +166,7 @@ static inline void begin_cascade(const int n,const int8_t fd_type)
 	const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 	const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
 	if(sendfd_connected && recvfd_connected)
-		return; // Bail out because we assume cascade was already triggered on the other fd_type
+		return; // Bail out because we assume cascade was already triggered on the other fd_type TODO what about messages that are not socket swappable?
 	const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
@@ -318,17 +318,7 @@ static inline size_t packet_removal(const uint8_t owner,const int n,const int g,
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 								pipe_auth_and_request_peerlist(owner,n,g); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 							else
-							{
-								const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-								for(int next_i = i+1; next_i <= max_i ; next_i++)
-								{
-									const uint8_t next_stat = getter_uint8(n,next_i,-1,-1,offsetof(struct message_list,stat));
-									const int next_p_iter = getter_int(n,next_i,-1,-1,offsetof(struct message_list,p_iter));
-									if(next_stat == ENUM_MESSAGE_FAIL && next_p_iter > -1)
-										if(!send_prep(n,next_i,next_p_iter,fd_type))
-											break; // cascading effect
-								}
-							}
+								begin_cascade(n,fd_type);
 						}
 						else if(pos > message_len)
 						{ // 2024/05/04 This is happening when massive amounts of sticker requests come in on same peer. Unknown reason. Possibly caused by race on deleted (stream) i.
@@ -756,6 +746,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(group_peer_n < 0)
 							{ // Disgard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
 								error_simple(0,"Group received an anonymous message. Nothing we can do with it.");
+						/* RABBITS */	printf(PINK"Checkpoint set_g=%d ?= event_strc->g=%d\n"RESET,set_g(n,NULL),event_strc->g); // TODO if different, the bug is event_strc->g
 								break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 							}
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
@@ -1093,20 +1084,20 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if((protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT && event_strc->buffer_len != GROUP_OFFER_ACCEPT_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && event_strc->buffer_len != GROUP_OFFER_ACCEPT_FIRST_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY && event_strc->buffer_len != GROUP_OFFER_ACCEPT_REPLY_LEN))
 						{
 							error_simple(0,"Group offer accept or accept reply of bad size received.");
-							continue;
+							break;
 						}
 						const int g = set_g(-1,event_strc->buffer); // reserved, already existing
 						const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 						if(group_n < -1)
 						{
 							error_simple(0,"Sanity check failed on a received Group Offer Accept.");
-							continue;
+							break;
 						}
 						const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 						if(g_invite_required == 0)
 						{ // Sanity check continued
 							error_simple(0,"Public groups are not accepted in this manner. One client is buggy. Coding error. Report this.");
-							breakpoint(); // 2024/03/11 triggered upon startup after deleting a group that didn't complete handshake
+							break; // 2024/03/11 triggered upon startup after deleting a group that didn't complete handshake
 						}
 						else
 						{
@@ -1193,14 +1184,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(owner != ENUM_OWNER_GROUP_CTRL) // should ONLY come in on a GROUP_CTRL
 						{
 							error_printf(0,"Received private entry request on wrong owner type. Possibly malicious intent or buggy peer: %u",owner);
-							breakpoint();
-							continue;
+							break;
 						}
 						const int invitor_n = group_check_sig(event_strc->g,event_strc->buffer,56+crypto_sign_PUBLICKEYBYTES,0,(unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES],NULL); // 0 is fine for protocol here because protocol is not signed
 						if(invitor_n < 0)// (1) We should verify the signature is from some peer we have
-						{
+						{ // Disgard if not signed by someone in group
 							error_simple(0,"Disregarding a GROUP_PRIVATE_ENTRY_REQUEST from someone.");
-							continue; // Disgard if not signed by someone in group
+							break;
 						}
 						const char *proposed_peeronion = event_strc->buffer;
 						const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[56];
@@ -1209,7 +1199,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(new_peer == -1)
 						{ // Error
 							error_simple(0,"New peer is -1 therefore there was an error. Bailing.");
-							continue;
+							break;
 						}
 						else if(new_peer != -2)
 						{ // Approved a new peer
