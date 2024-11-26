@@ -3625,8 +3625,12 @@ int set_g(const int n,const void *arg)
 	{
 		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		if(owner == ENUM_OWNER_GROUP_CTRL) // search for a GROUP_CTRL by n
+		{
 			while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && group[g].n != n)
 				g++;
+			if(group[g].n != n && !arg && group[g-1].n == -1) // We didn't find the group
+				g--; // Roll-back in certain limited circumstances (such as when creating a group with group_generate) // TODO EXPERIMENTAL 2024/11/27 and subject to rare possibility of race condition (specifically if analyzing a group offer at the same moment as generating a group... there could be two most-recent groups that both have no group_n yet)
+		}
 		else if(owner == ENUM_OWNER_GROUP_PEER) // search for a GROUP_PEER by n
 			while(group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE))
 			{ // XXX EXPERIMENTAL
@@ -4133,9 +4137,12 @@ int group_generate(const uint8_t invite_required,const char *name)
 	unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
 	unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32 the group_id
 	crypto_box_keypair(x25519_pk,x25519_sk);
+printf("Checkpoint group_generate 0\n");
 	const int g = set_g(-1,x25519_sk); // get a blank g, reserves the group. DO NOT generate_onion before reserving and setting .invite_required
 	setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
+printf("Checkpoint group_generate 1\n");
 	const int group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,name); // must do this AFTER reserving group and setting invite_required
+printf("Checkpoint group_generate 2\n");
 	setter_group(g,offsetof(struct group_list,n),&group_n,sizeof(group_n));
 	const int peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(char*)x25519_sk,sizeof(x25519_sk)); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
