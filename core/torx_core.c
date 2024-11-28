@@ -144,7 +144,7 @@ uint32_t global_threads = 1; // for onion_gen(), cpu threads.
 uint32_t threads_max = 0; // max as detected by cpu_count()
 uint8_t auto_resume_inbound = 1; // automatically request resumption of inbound file transfers NOTE: only works on full_duplex transfers (relies on .split) TODO disabling this might be untested
 uint8_t full_duplex_requests = 1; // Requested files should utlize full duplex (split == 1), assuminng v3auth. Can interfere with receiving messages due to messages being added to end of buffer. // If 0, allowed for individual transfers to override this (from 0 to 1) for example if they are small and quick.
-uint8_t kill_delete = 0; // delete peer and history when receiving kill code (if zero, just block and keep history)
+uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if zero, just block and keep history). This can be set by UI.
 uint8_t hide_blocked_group_peer_messages = 0; // Note: blocking would require re-sorting, if hide is toggled
 uint8_t log_pm_according_to_group_setting = 1; // toggles whether or not PM logging should follow the logging settings of the group (useful to UI devs who might want to control group PM logging per-peer)
 double file_progress_delay = 1000000000; // nanoseconds (*1 billionth of a second)
@@ -3676,16 +3676,12 @@ int set_g(const int n,const void *arg)
 			group[g].n = n;
 	if(group_id) // do NOT set 'else if'
 		memcpy(group[g].id,group_id,GROUP_ID_SIZE);
-	// TODO --> DEBUGGING 2024/11/15 REMOVE --> TODO /* RABBITS */
-	if(owner == ENUM_OWNER_GROUP_PEER && is_null(group[g].id,GROUP_ID_SIZE))
-	{ // This will probably lead to severe bugs elsewhere, so we should detect it. TODO note: its not triggering, so this can't be the issue.
+/*	if(owner == ENUM_OWNER_GROUP_PEER && is_null(group[g].id,GROUP_ID_SIZE))
+	{ // This will probably lead to severe bugs elsewhere, so we should detect it. TODO note: its not triggering, so this can't be the issue. DEBUGGING 2024/11/15 REMOVE
 		error_simple(0,"Returning a g with a null ID. Likely coding error. Report this.");
 		breakpoint();
-	}
-	error_printf(0,PINK"Checkpoint set_g = %d n=%d arg=%s"RESET,g,n,arg?"ARG":"NULL"); // TODO NOTE: SHOULD NOT BE >0 when there is only one group. XXX XXX XXX
-//	if(g > 0)
-//		breakpoint(); // TODO hit times: 4+
-	// TODO <-- DEBUGGING 2024/11/15 REMOVE <-- TODO /* RABBITS */
+	} */
+//	error_printf(0,PINK"Checkpoint set_g = %d n=%d arg=%s"RESET,g,n,arg?b64_encode(arg,GROUP_ID_SIZE):"NULL"); // TODO NOTE: SHOULD NOT BE >0 when there is only one group. XXX XXX XXX
 //	if(group_id)
 //		printf("Checkpoint GID: %s\n",b64_encode(group_id,GROUP_ID_SIZE));
 /*	if(n > -1)
@@ -4137,12 +4133,9 @@ int group_generate(const uint8_t invite_required,const char *name)
 	unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
 	unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32 the group_id
 	crypto_box_keypair(x25519_pk,x25519_sk);
-printf("Checkpoint group_generate 0\n");
 	const int g = set_g(-1,x25519_sk); // get a blank g, reserves the group. DO NOT generate_onion before reserving and setting .invite_required
 	setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
-printf("Checkpoint group_generate 1\n");
 	const int group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,name); // must do this AFTER reserving group and setting invite_required
-printf("Checkpoint group_generate 2\n");
 	setter_group(g,offsetof(struct group_list,n),&group_n,sizeof(group_n));
 	const int peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(char*)x25519_sk,sizeof(x25519_sk)); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.

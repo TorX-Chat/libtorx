@@ -164,7 +164,7 @@ int message_edit(const int n,const int i,const char *message)
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.");
+		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.3");
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -860,7 +860,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.");
+		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.0");
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -941,7 +941,7 @@ int sql_insert_message(const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.");
+		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.1");
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -993,7 +993,7 @@ int sql_update_message(const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.");
+		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.2");
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
