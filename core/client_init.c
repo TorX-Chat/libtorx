@@ -584,7 +584,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			zero_i(nnnn,iiii);
 			torx_unlock(nnnn) // XXX
 			if(target_g < 0)
-				return -1; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
+				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
 
 		if(cycle == 0 && send_both)
@@ -605,7 +605,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	return i;
 	error: {}
 	torx_free((void*)&message);
-	return -1;
+	return INT_MIN;
 }
 
 int message_resend(const int n,const int i)
@@ -658,7 +658,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	{
 		error_printf(0,"message_send failed sanity check: %d %u %u %d. Coding error. Report this.",target_n,protocol,owner,p_iter);
 		breakpoint();
-		return -1;
+		return INT_MIN;
 	}
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint8_t group_msg = protocols[p_iter].group_msg;
@@ -675,7 +675,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		if(target_g_peercount < 1)
 		{ // this isn't necessarily an error. this would be an OK place to bail out in some circumstances like broadcast messages
 			error_printf(0,"Group has no users. Refusing to queue message. This is fine. Protocol: %u",protocol);
-			return -1;
+			return INT_MIN;
 		}
 	/*	pthread_rwlock_rdlock(&mutex_protocols);
 		const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
@@ -711,7 +711,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		g = set_g(n,NULL);
 	// XXX Step 3:
-	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0); // i or -1 upon error
+	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0); // i or INT_MIN upon error
 }
 
 void kill_code(const int n,const char *explanation)
@@ -884,7 +884,8 @@ void file_request_internal(const int n,const int f)
 		message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN);
 	else						// this check could be is_inbound_transfer ??
 		for(int target_n ; status != ENUM_FILE_OUTBOUND_PENDING && status != ENUM_FILE_OUTBOUND_ACCEPTED && (target_n = select_peer(n,f)) > -1 ; )
-			message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN);
+			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN) == INT_MIN)
+				break;
 }
 
 void file_set_path(const int n,const int f,const char *path)
