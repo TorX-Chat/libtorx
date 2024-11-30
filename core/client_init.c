@@ -165,6 +165,63 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	return was_transferring;
 }
 
+static inline int section_claim(const int n,const int f,const int peer_n,const int8_t fd_type)
+{ // This is used on ALL TYPES of file transfer (group, PM, p2p) // Returns section, or -1 on error
+	torx_read(n) // XXX
+	const int *split_status = peer[n].file[f].split_status;
+	const int8_t *split_status_fd = peer[n].file[f].split_status_fd;
+	torx_unlock(n) // XXX
+	if(split_status == NULL || split_status_fd == NULL)
+	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
+		error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
+		split_read(n,f);
+	}
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	torx_read(n) // XXX
+	for(int section = 0; section <= splits; section++)
+		if(peer[n].file[f].split_status_fd[section] == fd_type && peer[n].file[f].split_status[section] == peer_n)
+		{ // Catch where there is already a request for a section of this file on this FD from this peer. We need to catch this because otherwise they will corrupt each other.
+			torx_unlock(n) // XXX
+			error_printf(0,"File request already exists n=%d fd=%d. Bailing.",n,fd_type);
+			return -1;
+		}
+	torx_unlock(n) // XXX
+	int section = 0;
+	section_done: {}
+	int current_n;
+	torx_read(n) // XXX
+	while((current_n = peer[n].file[f].split_status[section]) != -1 && section < splits)
+		section++; // find an section not currently utilized for receiving
+	const uint64_t current = peer[n].file[f].split_info[section];
+	torx_unlock(n) // XXX
+	if(current_n != -1)
+	{ // very necessary check
+		error_simple(1,"No free sections to request from message_send. Bailing. (not necessarily error)"); // error message not required
+		return -1;
+	}
+	const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+	const uint64_t start = calculate_section_start(file_size,splits,section) + current;
+	const uint64_t end = calculate_section_start(file_size,splits,section+1)-1;
+	if(start >= file_size)
+		return -1; // last section, is done, do not request it (other sections might have been requested on cycle 0)
+	else if(start > end)
+	{
+		section++;
+		goto section_done;
+	}
+	if((int64_t)end == -1) // 18446744073709551615
+	{ // bail out. calculate_section_start returned an error (this can happen if we are requesting 1 byte files in full duplex)
+		error_simple(0,"Presently no support for requesting 1 and 0 byte length files.");
+		return -1; // abandoning attempts to support until we abolish message_send cycles
+	}
+	error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,section,peer_n,fd_type);
+	torx_write(n) // XXX
+	peer[n].file[f].split_status[section] = peer_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
+	peer[n].file[f].split_status_fd[section] = fd_type;
+	torx_unlock(n) // XXX
+	return section;
+}
+
 static inline char *message_prep(uint32_t *message_len_p,int *section_p,const int target_n,const int8_t fd_type,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
 { // Prepare messages
 	pthread_rwlock_rdlock(&mutex_protocols);
@@ -174,9 +231,6 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	pthread_rwlock_unlock(&mutex_protocols);
 	char *base_message = torx_secure_malloc(base_message_len + null_terminated_len);
-	uint64_t file_size = 0;
-	if(f > -1)
-		file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	int group_n = -1;
 	uint32_t peercount = 0;
 	uint8_t invite_required = 0;
@@ -193,6 +247,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	if(protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE)
 	{ // CHECKSUM[64] + SIZE[8] + MODIFIED[4] + FILENAME (no null termination)
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+		const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		const uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash64,sizeof(uint64_t));
 		const time_t modified = getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,modified));
@@ -220,6 +275,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		torx_read(n) // XXX
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[n].file[f].split_hashes,split_hashes_len);
 		torx_unlock(n) // XXX
+		const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash64,sizeof(uint64_t));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
@@ -244,64 +300,15 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{ // CHECKSUM[64] + START[8] + END[8]
-		torx_read(n) // XXX
-		const int *split_status = peer[n].file[f].split_status;
-		const int8_t *split_status_fd = peer[n].file[f].split_status_fd;
-		torx_unlock(n) // XXX
-		if(split_status == NULL || split_status_fd == NULL)
-		{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
-			error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
-			split_read(n,f);
-		}
-		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-		torx_read(n) // XXX
-		for(int section = 0; section <= splits; section++)
-			if(peer[n].file[f].split_status_fd[section] == fd_type && peer[n].file[f].split_status[section] == target_n)
-			{ // Catch where there is already a request for a section of this file on this FD from this peer. We need to catch this because otherwise they will corrupt each other.
-				torx_unlock(n) // XXX
-				error_printf(0,"File request already exists n=%d fd=%d. Bailing.",n,fd_type);
-				goto error;
-			}
-		torx_unlock(n) // XXX
-		int section = 0;
-		section_done: {}
-		int current_n;
-		torx_read(n) // XXX
-		while((current_n = peer[n].file[f].split_status[section]) != -1 && section < splits)
-			section++; // find an section not currently utilized for receiving
-		const uint64_t current = peer[n].file[f].split_info[section];
-		torx_unlock(n) // XXX
-		if(current_n != -1)
-		{ // very necessary check
-			error_simple(1,"No free sections to request from message_send. Bailing. (not necessarily error)"); // error message not required
+		*section_p = section_claim(n,f,target_n,fd_type);
+		if(*section_p < 0)
 			goto error;
-		}
-		const uint64_t start = calculate_section_start(file_size,splits,section) + current;
-		const uint64_t end = calculate_section_start(file_size,splits,section+1)-1;
-		if(start >= file_size)
-			goto error; // last section, is done, do not request it (other sections might have been requested on cycle 0)
-		else if(start > end)
-		{
-			section++;
-			goto section_done;
-		}
-		if((int64_t)end == -1) // 18446744073709551615
-		{ // bail out. calculate_section_start returned an error (this can happen if we are requesting 1 byte files in full duplex)
-			error_simple(0,"Presently no support for requesting 1 and 0 byte length files.");
-			goto error; // abandoning attempts to support until we abolish message_send cycles
-		}
-		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,section,target_n,fd_type);
-		torx_write(n) // XXX
-		peer[n].file[f].split_status[section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
-		peer[n].file[f].split_status_fd[section] = fd_type;
-		torx_unlock(n) // XXX
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd==%d",section,start,end,fd_type);
+		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd==%d",*section_p,start,end,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
 		memcpy(&base_message[CHECKSUM_BIN_LEN+sizeof(uint64_t)],&trash,sizeof(uint64_t));
-		*section_p = section;
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
 	{ // Audited 2024/02/16 // Format: Peercount[4] + onions (56*peercount) + ed25519_pk(56*peercount) (if relevant: + invitation signature(56*peercount)) // NOTE: If this is first-connect, ie peerlist == NULL, trust and connect to the owner. Otherwise, ignore the owner and group_add_peer everyone else only.
