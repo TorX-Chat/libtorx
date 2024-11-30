@@ -112,12 +112,12 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			const int utilized_recv = peer[n].socket_utilized[0];
 			const int utilized_send = peer[n].socket_utilized[1];
 			torx_unlock(n) // XXX
-			if(utilized_recv > -1 && utilized_send > -1)
+			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
 			{
 				error_printf(0,"Refusing to send_prep because sockets all utilized n=%d: %s",n,name);
 				return -1;
 			}
-			else if(fd_type == 0 && utilized_recv > -1)
+			else if(fd_type == 0 && utilized_recv > INT_MIN)
 			{
 				if(socket_swappable)
 					fd_type = 1;
@@ -127,7 +127,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 					return -1;
 				}
 			}
-			else if(fd_type == 1 && utilized_send > -1)
+			else if(fd_type == 1 && utilized_send > INT_MIN)
 			{
 				if(socket_swappable)
 					fd_type = 0;
@@ -323,9 +323,9 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	if(protocol != ENUM_PROTOCOL_FILE_PIECE && peer[n].socket_utilized[fd_type] == i)
 	{
 		torx_unlock(n) // XXX
-		error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+		error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
 		torx_write(n) // XXX
-		peer[n].socket_utilized[fd_type] = -1;
+		peer[n].socket_utilized[fd_type] = INT_MIN;
 	}
 	torx_unlock(n) // XXX
 	return -1;

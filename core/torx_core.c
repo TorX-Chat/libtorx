@@ -2277,8 +2277,8 @@ void zero_n(const int n) // XXX do not put locks in here
 	peer[n].last_seen = 0;
 	peer[n].vport = 0;
 	peer[n].tport = 0;
-	peer[n].socket_utilized[0] = -1;
-	peer[n].socket_utilized[1] = -1;
+	peer[n].socket_utilized[0] = INT_MIN;
+	peer[n].socket_utilized[1] = INT_MIN;
 	if(peer[n].sendfd > 0)
 		evutil_closesocket(peer[n].sendfd); // TODO TODO TODO added 2023/08/09.
 	peer[n].sendfd = 0;
@@ -3249,8 +3249,8 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].last_seen = 0;
 	peer[n].vport = 0;
 	peer[n].tport = 0;
-	peer[n].socket_utilized[0] = -1;
-	peer[n].socket_utilized[1] = -1;
+	peer[n].socket_utilized[0] = INT_MIN;
+	peer[n].socket_utilized[1] = INT_MIN;
 	peer[n].sendfd = 0;
 	peer[n].recvfd = 0;
 	peer[n].sendfd_connected = 0;
@@ -4192,8 +4192,6 @@ void initial(void)
 
 	// protocol, name, description,	null_terminated_len, date_len, signature_len, logged, notifiable, file_checksum, file_offer, exclusive_type, utf8, socket_swappable, stream XXX NOTE: cannot depreciate group mechanics, as stream is not suitable (stream deletes upon fail)
 	protocol_registration(ENUM_PROTOCOL_FILE_PIECE,"File Piece","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,0);
-	// TODO ENUM_PROTOCOL_AUDIO_WAV TODO
-	// TODO ENUM_PROTOCOL_AUDIO_WAV TODO
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);

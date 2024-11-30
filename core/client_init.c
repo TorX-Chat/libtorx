@@ -457,7 +457,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	pthread_rwlock_unlock(&mutex_protocols);
 	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
 	if(!skip_prep) // message is NOT resend, n is > -1
-		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
+		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (owner != ENUM_OWNER_GROUP_CTRL && protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
+	//if(protocol == ENUM_PROTOCOL_FILE_REQUEST) printf("Checkpoint send_both owner%u: %u = (%d < 0 && (%d || %d && %d && %u && %d))\n",owner,send_both,target_g,protocol == ENUM_PROTOCOL_KILL_CODE,owner != ENUM_OWNER_GROUP_CTRL,protocol == ENUM_PROTOCOL_FILE_REQUEST,getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)),getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0);
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
 	other_fd: {} // NOTE: This is a totally new message, unlike messages that just get sent to all peers in a group (see while below)
@@ -569,14 +570,20 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
 		int ret;
-		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1)
+		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1) // XXX SUPER BANANA XXX TODO this is bad.... we treat it as ENUM_STREAM_DISCARDABLE despite it not being so
 		{ // Unclaim section due to failure to immediately send, and delete the message. TODO TODO TODO inefficient, would be nice to prevent creating the message instead
-			const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-			sql_delete_message(peer_index,time,nstime);
-			torx_write(nnnn) // XXX
-			zero_i(nnnn,iiii);
+			torx_read(nnnn) // XXX
+			const int utilized = peer[nnnn].socket_utilized[fd_type];
 			torx_unlock(nnnn) // XXX
-			section_unclaim(n,f,nnnn,fd_type);
+			if(utilized == INT_MIN)
+			{ // TODO TODO TODO Checking for utilization is a dirty workaround to a problem in group chat file transfers
+				const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+				sql_delete_message(peer_index,time,nstime);
+				torx_write(nnnn) // XXX
+				zero_i(nnnn,iiii);
+				torx_unlock(nnnn) // XXX
+				section_unclaim(n,f,nnnn,fd_type);
+			}
 		}
 		else if(ret == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
@@ -885,7 +892,7 @@ void file_request_internal(const int n,const int f)
 	else						// this check could be is_inbound_transfer ??
 		for(int target_n ; status != ENUM_FILE_OUTBOUND_PENDING && status != ENUM_FILE_OUTBOUND_ACCEPTED && (target_n = select_peer(n,f)) > -1 ; )
 			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN) == INT_MIN)
-				break;
+				break; // XXX SUPER BANANA XXX TODO This break is not good. We should be relying entirely on select_peer > -1
 }
 
 void file_set_path(const int n,const int f,const char *path)
@@ -1013,7 +1020,7 @@ void file_accept(const int n,const int f)
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
 		torx_unlock(n) // XXX
 		if(threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests) && splits == 0 && split_hashes == NULL)
-		{ // set splits to 1 if not already, but not on group files
+		{ // set splits to 1 if not already, but not on group files (which will have split_hashes)
 			splits = 1; // set default before split_read, which might overwrite it.
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
 		}

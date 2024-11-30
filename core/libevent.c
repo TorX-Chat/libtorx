@@ -308,9 +308,9 @@ static inline size_t packet_removal(const uint8_t owner,const int n,const int g,
 								}
 							}
 							torx_write(n) // XXX
-							peer[n].socket_utilized[fd_type] = -1;
+							peer[n].socket_utilized[fd_type] = INT_MIN;
 							torx_unlock(n) // XXX
-							error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = -1"RESET,n,fd_type);
+							error_printf(0,WHITE"output_cb  peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
 							error_printf(0,CYAN"OUT%d-> %s %u"RESET,fd_type,name,message_len);
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 								pipe_auth_and_request_peerlist(owner,n,g); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
@@ -431,10 +431,10 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		}
 	}
 	torx_write(event_strc->n) // XXX
-	if(peer[event_strc->n].socket_utilized[event_strc->fd_type] > -1)
+	if(peer[event_strc->n].socket_utilized[event_strc->fd_type] > INT_MIN)
 	{
-		peer[event_strc->n].socket_utilized[event_strc->fd_type] = -1;
-		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = -1"RESET,event_strc->n,event_strc->fd_type);
+		peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 	}
 	torx_unlock(event_strc->n) // XXX
 	if(event_strc->fd_type == 0) // XXX added 2023/09 with authenticated_pipe_n

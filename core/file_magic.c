@@ -195,15 +195,11 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 	snprintf(peer[n].file[f].filename,filename_len+1,"%s",filename);
 	peer[n].file[f].file_path = torx_secure_malloc(file_path_len+1);
 	snprintf(peer[n].file[f].file_path,file_path_len+1,"%s",file_path);
+	peer[n].file[f].size = size;
+	peer[n].file[f].modified = modified;
+	if(!peer[n].file[f].status) // presumably this will always be true?
+		peer[n].file[f].status = ENUM_FILE_OUTBOUND_PENDING;
 	torx_unlock(n) // XXX
-	setter(n,INT_MIN,f,-1,offsetof(struct file_list,size),&size,sizeof(size));
-	uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
-	if(status == 0) // presumably this will always be true?
-	{
-		status = ENUM_FILE_OUTBOUND_PENDING;
-		setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-	}
-	setter(n,INT_MIN,f,-1,offsetof(struct file_list,modified),&modified,sizeof(modified));
 	sodium_memzero(path_copy,sizeof(path_copy)); // DO NOT DO THIS EARLIER as it modifies 'filename' variable
 	return f;
 }
@@ -782,17 +778,15 @@ int initialize_split_info(const int n,const int f)
 	const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	torx_read(n) // XXX
 	if(peer[n].file[f].split_path && peer[n].file[f].split_info)
-	{
+	{ // Split info appears already initialized. No need to do it again.
 		torx_unlock(n) // XXX
-	//	printf("Checkpoint split info appears already initialized. No need to do it again.\n");
 		return 0;
 	}
 	if(size == 0 || peer[n].file[f].file_path == NULL)
-	{
+	{ // Sanity check
 		torx_unlock(n) // XXX
 		error_simple(0,"Cannot initialize split info. Sanity check failed.");
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-		printf("Checkpoint owner==%d size==%"PRIu64"\n",owner,size);
+		printf("Checkpoint owner==%d size==%"PRIu64"\n",getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)),size);
 		return -1;
 	}
 	char *split_path = peer[n].file[f].split_path;
