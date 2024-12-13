@@ -157,8 +157,6 @@ typedef u_short in_port_t;
 #define PINK	"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
 #define RESET   "\x1b[0m"
 
-// #define LLTEST
-
 #define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
 #define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common
 // TODO 2024/03/12 SOCKET_SO_SNDBUF perhaps we make 2048 for libevent's/our library, and 40960 for Tor because its slow?
@@ -211,22 +209,6 @@ typedef u_short in_port_t;
 #define DATE_SIGN_LEN			sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES // time + nstime + sig
 
 /* Macros for wrapping access to peer struct, especially where not accessing an integer */
-#ifdef LLTEST
-#define torx_read(torx_peer) \
-{ \
-	pthread_rwlock_rdlock(&torx_peer->mutex_page); \
-}
-
-#define torx_write(torx_peer) \
-{ \
-	pthread_rwlock_wrlock(&torx_peer->mutex_page); \
-}
-
-#define torx_unlock(torx_peer) \
-{ \
-	pthread_rwlock_unlock(&torx_peer->mutex_page); \
-}
-#else
 #define torx_read(n) \
 { \
 	pthread_rwlock_rdlock(&mutex_expand); \
@@ -244,7 +226,7 @@ typedef u_short in_port_t;
 	pthread_rwlock_unlock(&peer[n].mutex_page); \
 	pthread_rwlock_unlock(&mutex_expand); \
 }
-#endif
+
 /* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. TODO TODO TODO currently holding page locks because simplicity (but will hang on io error/delay) 
 	Need to localize file descriptors ( .fd_ ) and then stop holding page locks */
 #define torx_fd_lock(n,f) \
@@ -291,116 +273,6 @@ typedef u_short in_port_t;
 	if(fd) { fclose(fd); fd = NULL; } \
 }
 
-#ifdef LLTEST
-struct torx_peer { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
-	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
-	uint8_t status; // 0 blocked, 1 friend, 2 pending acceptance
-	char privkey[88+1];
-	int peer_index; // For use with SQL functions only
-	char onion[56+1]; // our onion derrived from privkey, except for "peer", where it is peeronion, because this must ALWAYS exist
-	char torxid[52+1];
-	uint16_t peerversion;
-	char peeronion[56+1];
-	char *peernick;
-	int8_t log_messages; // -1 (override global), never log. 0 use global, 1 yes logging (override global)
-	time_t last_seen; // time. should be UTC.
-	uint16_t vport; // externally visible on onion
-	uint16_t tport; // internal
-	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i.
-	evutil_socket_t sendfd; // outgoing messages ( XXX NOT currently utilized by ENUM_OWNER_PEER )
-	evutil_socket_t recvfd; // incoming messages
-	uint8_t sendfd_connected;
-	uint8_t recvfd_connected;
-	struct bufferevent *bev_send; // currently only used in libevent.c by libevent thread because libevent is not threadsafe, even with such flags
-	struct bufferevent *bev_recv;
-//	int8_t oldest_message; // TODO currently unused, should be used. default: 0, this should be set to permit the cycling of messages. when there are too many to fit in the struct, it should start over at 0, overwritting the oldest and moving this start point
-	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
-	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES]; // ONLY use for CTRL + GROUP_PEER, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
-	unsigned char invitation[crypto_sign_BYTES]; // PRIVATE groups only. ONLY for GROUP_PEER, 64 this the SIGNATURE on our onion, from who invited us, which we will need when connecting to other peers.
-	uint8_t blacklisted; // blacklisted for giving us corrupt file sections in group transfers // note: alternative names:  denylist/disallowed https://web.archive.org/web/20221219160303/https://itcommunity.stanford.edu/ehli
-	pthread_rwlock_t mutex_page;
-	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
-	pthread_t thrd_recv; // for torx_events (recv)
-	uint32_t broadcasts_inbound;
-	uint32_t index_iter;
-	struct torx_message *index;
-	struct torx_message *message_first;
-	struct torx_message *message_last;
-	struct torx_file *file_first;
-	struct torx_file *file_last;
-};
-struct torx_message {
-	time_t time; // time since epoch in seconds
-	uint8_t stat;
-	int p_iter;
-	char *message; // should free on shutdown, in cleanup()
-	uint32_t message_len; // includes (where applicable only) applicable null terminator, date, untrusted protocol, signature
-	uint32_t pos; // amount sent TODO utilize for amount received also
-	time_t nstime; // nanoseconds (essentially after a decimal point of time)
-	struct torx_message *next;
-	struct torx_message *prior
-};
-struct torx_file { // variables contained within structs are called "Members"
-	unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
-	char *filename;
-	char *file_path;
-	uint64_t size;
-	uint8_t status; // see enum file_statuses for values
-	uint8_t full_duplex; // full_duplex is only applicable on the requestor side. file sender just sends on whatever socket the request is received. // Slows any outbound messages during transfer (since they are added to end of buffer), but inbound messages are unaffected (speed) 
-	time_t modified; // modification time (UTC, epoch time)
-	/* Exclusively Inbound transfer related */
-	uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
-	char *split_path; // sensitive, uses sodium_malloc
-	uint64_t *split_info; // not sensitive, only uses MALLOC not sodium_malloc. Contains section info, which is amount transferred in that section (incoming only)
-	int *split_status; // not sensitive, only uses MALLOC not sodium_malloc. GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
-	int8_t *split_status_fd; // not sensitive, only uses MALLOC not sodium_malloc.
-	/* Exclusively Outbound transfer related */
-	uint64_t outbound_start[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
-	uint64_t outbound_end[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
-	uint64_t outbound_transferred[2];	// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
-	/* Exclusively Group related */
-	unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
-	/* File descriptors */
-	FILE *fd_out_recvfd;	// fd_type == 0
-	FILE *fd_out_sendfd;	// fd_type == 1
-	FILE *fd_in_recvfd;	// fd_type == 2
-	FILE *fd_in_sendfd;	// fd_type == 3
-	struct offer_list {
-		int offerer_n;
-		uint64_t *offer_info; // == their split_info not sensitive, only uses MALLOC not sodium_malloc. Contains section info that the peer says they have.
-	//	uint8_t utilized; // TODO use for "currently in use" or something, to avoid sending excess requests to the same peer
-	} *offer;
-	time_t last_progress_update_time; // last time we updated progress bar
-	time_t last_progress_update_nstime; // last time we updated progress bar
-	uint64_t bytes_per_second; // larger than necessary but avoids casting when doing calcs
-	uint64_t last_transferred;
-	time_t time_left; // seconds TODO change integer type to ssize_t,time_t, or uint64_t
-	uint8_t speed_iter;
-	uint64_t last_speeds[256];
-	pthread_mutex_t mutex_file;
-	struct torx_file *next;
-	struct torx_file *prior
-};
-struct torx_group { // XXX NOTE: individual peers will be in peer struct but peer[n].owner != CTRL so they won't appear in peer list or show online notifications XXX
-	unsigned char id[GROUP_ID_SIZE]; // x25519_sk key, 32 bytes decoded, crypto_scalarmult_base to get _pk. PROBABLY SHOULD NOT CLEAR THIS WHEN DELETING (??? what)
-	int n; // n of our GROUP_CTRL
-	int invitees[MAX_INVITEES];
-	uint32_t hash; // only relevant to groups with 0 peers that we are broadcasting for
-	uint32_t peercount; // This is CONFIRMED PEERS, not reported by offers. Does NOT include us. DO NOT SET PEERCOUNT except with ++ or horrible things will happen.
-	uint32_t msg_count;
-	int *peerlist; // does NOT include us, can be list of onions OR peer_index TODO decide
-	uint8_t invite_required; // default 1. 0 is QR compatible. 2 is passed on network only and means that teh group is empty / we need first user to sign our onion
-	uint32_t msg_index_iter; // this is for group_get_index
-	struct msg_list *msg_index; // no space is allocated, do not free. this is for group_get_index
-	struct msg_list *msg_first;
-	struct msg_list *msg_last;
-};
-struct msg_list { // This is ONLY to be allocated by message_sort and message_insert
-	struct msg_list *message_prior; // if NULL, no prior notifiable message
-	struct torx_message *message;
-	struct msg_list *message_next; // if NULL, no next notifiable message
-};
-#else
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
 	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
@@ -416,7 +288,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	time_t last_seen; // time. should be UTC.
 	uint16_t vport; // externally visible on onion
 	uint16_t tport; // internal
-	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i.
+	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i. XXX NOT relevant to ENUM_PROTOCOL_FILE_PIECE
 	evutil_socket_t sendfd; // outgoing messages ( XXX NOT currently utilized by ENUM_OWNER_PEER )
 	evutil_socket_t recvfd; // incoming messages
 	uint8_t sendfd_connected;
@@ -428,6 +300,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	int min_i;
 	struct message_list {
 		time_t time; // time since epoch in seconds
+		int8_t fd_type; // -1 == swappable, 0 == recvfd, 1 == sendfd
 		uint8_t stat;
 		int p_iter;
 		char *message; // should free on shutdown, in cleanup()
@@ -505,7 +378,6 @@ struct msg_list { // This is ONLY to be allocated by message_sort and message_in
 	time_t nstime;
 	struct msg_list *message_next; // if NULL, no next notifiable message
 };
-#endif
 
 struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
@@ -513,7 +385,6 @@ struct packet_info {
 	uint16_t packet_len; // size of packet, or unsent size of packet if partial
 	int p_iter; // initialize at -1
 	int8_t fd_type; // -1 trash (ready for re-use??? but then out of order),0 recv, 1 send
-	uint64_t start; // is set from .pos for non-file-piece, and is set from start position for file piece
 	time_t time; // time added to packet struct
 	time_t nstime; // time added to packet struct
 } packet[SIZE_PACKET_STRC]; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 
@@ -573,7 +444,7 @@ enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed up
 	ENUM_PROTOCOL_FILE_OFFER_GROUP = 32918,			// Uses hash of section hashes, not whole file hash, unlike normal file_offer
 	ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED = 2125,	// Uses hash of section hashes, not whole file hash, unlike normal file_offer
 	ENUM_PROTOCOL_FILE_OFFER_PARTIAL = 56237,		// Uses hash of section hashes, not whole file hash, unlike normal file_offer. Includes all section hashes because otherwise we can't verify splits/size with hash of hashes, in case we haven't received a full offer yet.
-	ENUM_PROTOCOL_FILE_PIECE = 7795,
+	ENUM_PROTOCOL_FILE_PIECE = 7795,			// XXX DOES NOT CARE ABOUT .socket_utilized
 	ENUM_PROTOCOL_FILE_REQUEST = 27493,
 	ENUM_PROTOCOL_FILE_PAUSE = 38490,
 	ENUM_PROTOCOL_FILE_CANCEL = 22461, // cancel or reject
@@ -656,7 +527,6 @@ enum file_statuses
 	ENUM_FILE_INBOUND_CANCELLED = 10 // they no longer want to send it
 };
 
-	
 /* Struct Models/Types used for passing to specific pthread'd functions */ // Don't forget to initialize = {0} when calling these types.
 
 struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
@@ -846,15 +716,9 @@ uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg)__at
 /* torx_core.c */
 int protocol_lookup(const uint16_t protocol)__attribute__((warn_unused_result));
 int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
-#ifdef LLTEST
-void torx_fn_read(struct torx_peer *torx_peer);
-void torx_fn_write(struct torx_peer *torx_peer);
-void torx_fn_unlock(struct torx_peer *torx_peer);
-#else
 void torx_fn_read(const int n);
 void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);
-#endif
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
 unsigned char *read_bytes(size_t *data_len,const char *path)__attribute__((warn_unused_result));
@@ -909,7 +773,6 @@ int invitee_remove(const int g,const int n);
 char *mit_strcasestr(char *dumpster,const char *diver);
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
 size_t stripbuffer(char *buffer);
-void peer_offline(const int n,const int8_t fd_type);
 uint16_t randport(const uint16_t arg);
 char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
 void start_tor(void);

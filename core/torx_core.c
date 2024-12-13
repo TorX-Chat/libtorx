@@ -1410,7 +1410,7 @@ int *message_load_more(int *count,const int n)
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 		const int group_n_peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		loaded_array = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
-		int freshly_loaded = 0;
+		int freshly_loaded;
 		if((freshly_loaded = sql_populate_message(group_n_peer_index,0,0,since)))
 		{ // Do GROUP CTRL first
 			loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
@@ -2224,6 +2224,7 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 	peer[n].message[i].p_iter = -1; // must be -1
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].pos = 0;
+	peer[n].message[i].fd_type = -1;
 	peer[n].message[i].time = 0;
 	peer[n].message[i].nstime = 0;
 	while(peer[n].max_i == i && peer[n].message[i].p_iter == -1)
@@ -2660,40 +2661,6 @@ static inline int get_tor_version(void)
 		pthread_rwlock_unlock(&mutex_global_variable);
 		torx_free((void*)&ret);
 		return 0;
-	}
-}
-
-void peer_offline(const int n,const int8_t fd_type)
-{ // Internal Function only. Use the callback. Could combine with peer_online() to be peer_online_change() and peer_online_change_cb()
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	if(owner == ENUM_OWNER_GROUP_CTRL)
-	{
-		error_simple(0,"A group ctrl triggered peer_offline. Coding error. Report this.");
-		breakpoint();
-	}
-	torx_write(n) // XXX
-	if(fd_type == 0)
-	{
-		peer[n].recvfd_connected = 0;
-		peer[n].bev_recv = NULL; // XXX 2023/10/23 experimental to attempt to stop SQL error in GDB / valgrind error in serv_init
-	}
-	else /* if(fd_type == 1) */
-	{
-		peer[n].sendfd_connected = 0;
-		peer[n].bev_send = NULL; // XXX 2023/10/23 experimental to attempt to stop SQL error in GDB / valgrind error in serv_init
-	}
-	torx_unlock(n) // XXX
-	if(owner != ENUM_OWNER_CTRL && owner != ENUM_OWNER_GROUP_PEER)
-		return; // not CTRL
-	const time_t last_seen = time(NULL); // current time
-	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
-	peer_offline_cb(n);
-	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
-	{
-		char p1[21];
-		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
-		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
 }
 
@@ -3222,6 +3189,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 static void initialize_i(const int n,const int i) // XXX do not put locks in here
 { // initalize an iter of the messages struc
 	peer[n].message[i].time = 0;
+	peer[n].message[i].fd_type = -1;
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].p_iter = -1;
 	peer[n].message[i].message = NULL;
@@ -4349,7 +4317,6 @@ void initial(void)
 			packet[o].packet_len = 0;
 			packet[o].p_iter = -1;
 			packet[o].fd_type = -1;
-			packet[o].start = 0;
 			packet[o].time = 0;
 			packet[o].nstime = 0;
 			pthread_rwlock_unlock(&mutex_packet);

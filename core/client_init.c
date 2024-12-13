@@ -165,7 +165,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	return was_transferring;
 }
 
-static inline int section_claim(const int n,const int f,const int peer_n,const int8_t fd_type)
+static inline int section_claim(uint64_t *start_p,uint64_t *end_p,const int n,const int f,const int peer_n,const int8_t fd_type)
 { // This is used on ALL TYPES of file transfer (group, PM, p2p) // Returns section, or -1 on error
 	torx_read(n) // XXX
 	const int *split_status = peer[n].file[f].split_status;
@@ -182,7 +182,7 @@ static inline int section_claim(const int n,const int f,const int peer_n,const i
 		if(peer[n].file[f].split_status_fd[section] == fd_type && peer[n].file[f].split_status[section] == peer_n)
 		{ // Catch where there is already a request for a section of this file on this FD from this peer. We need to catch this because otherwise they will corrupt each other.
 			torx_unlock(n) // XXX
-			error_printf(0,"File request already exists n=%d fd=%d. Bailing.",n,fd_type);
+			error_printf(0,"Cannot claim. File request for this section already exists: peer_n=%d fd=%d section=%d",peer_n,fd_type,section);
 			return -1;
 		}
 	torx_unlock(n) // XXX
@@ -219,11 +219,15 @@ static inline int section_claim(const int n,const int f,const int peer_n,const i
 	peer[n].file[f].split_status[section] = peer_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 	peer[n].file[f].split_status_fd[section] = fd_type;
 	torx_unlock(n) // XXX
+	if(start_p)
+		*start_p = start;
+	if(end_p)
+		*end_p = end;
 	return section;
 }
 
 static inline char *message_prep(uint32_t *message_len_p,int *section_p,const int target_n,const int8_t fd_type,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
-{ // Prepare messages
+{ // Prepare messages // WARNING: There are no sanity checks. This function can easily de-reference a null pointer if bad/insufficient args are passed.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
@@ -300,11 +304,12 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{ // CHECKSUM[64] + START[8] + END[8]
-		*section_p = section_claim(n,f,target_n,fd_type);
+		uint64_t start,end;
+		*section_p = section_claim(&start,&end,n,f,target_n,fd_type);
 		if(*section_p < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd==%d",*section_p,start,end,fd_type);
+		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd=%d",*section_p,start,end,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -577,20 +582,15 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
 		int ret;
-		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1) // XXX SUPER BANANA XXX TODO this is bad.... we treat it as ENUM_STREAM_DISCARDABLE despite it not being so
-		{ // Unclaim section due to failure to immediately send, and delete the message. TODO TODO TODO inefficient, would be nice to prevent creating the message instead
-			torx_read(nnnn) // XXX
-			const int utilized = peer[nnnn].socket_utilized[fd_type];
+		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1)
+		{ // Unclaim section due to failure to immediately send, and delete the message. TODO inefficient, would be nice to prevent creating the message instead, rather than treating it as ENUM_STREAM_DISCARDABLE despite it not being so
+			const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			sql_delete_message(peer_index,time,nstime);
+			torx_write(nnnn) // XXX
+			zero_i(nnnn,iiii);
 			torx_unlock(nnnn) // XXX
-			if(utilized == INT_MIN)
-			{ // TODO TODO TODO Checking for utilization is a dirty workaround to a problem in group chat file transfers
-				const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-				sql_delete_message(peer_index,time,nstime);
-				torx_write(nnnn) // XXX
-				zero_i(nnnn,iiii);
-				torx_unlock(nnnn) // XXX
-				section_unclaim(n,f,nnnn,fd_type);
-			}
+			section_unclaim(n,f,nnnn,fd_type);
+			return INT_MIN; // cannot goto error because segfault apparently, probably due to zero_i
 		}
 		else if(ret == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
@@ -899,7 +899,7 @@ void file_request_internal(const int n,const int f)
 	else						// this check could be is_inbound_transfer ??
 		for(int target_n ; status != ENUM_FILE_OUTBOUND_PENDING && status != ENUM_FILE_OUTBOUND_ACCEPTED && (target_n = select_peer(n,f)) > -1 ; )
 			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN) == INT_MIN)
-				break; // XXX SUPER BANANA XXX TODO This break is not good. We should be relying entirely on select_peer > -1
+				break; // This break is necessary, though not idea, because otherwise if a message fails to send (because socket is currently utilized), it will go back to select_peer, be selected again, fail again, on repeat.
 }
 
 void file_set_path(const int n,const int f,const char *path)

@@ -567,6 +567,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		peer[n].max_i++;
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
+//	peer[n].message[i].fd_type = -1; // is already the default. This is redundant.
 	peer[n].message[i].stat = stat;
 	peer[n].message[i].p_iter = p_iter;
 	peer[n].message[i].message = tmp_message;

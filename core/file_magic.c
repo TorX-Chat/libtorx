@@ -942,6 +942,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		uint8_t send_partial = 0; // TODO workaround until we can avoid discarding ENUM_PROTOCOL_FILE_REQUEST when socket_utilized
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{ // Run checksum on the group file's individual section
 			const uint64_t start = calculate_section_start(size,splits,section);
@@ -966,8 +967,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			}
 			else
 			{
+				send_partial = 1; // TODO workaround until we can avoid discarding ENUM_PROTOCOL_FILE_REQUEST when socket_utilized
 				printf("Checkpoint VERIFIED checksum section==%d\n",section);
-				message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
 			}
 		}
 		section_unclaim(n,f,peer_n,fd_type); // must be before file_request_internal
@@ -1009,6 +1010,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		torx_free((void*)&file_path);
 		file_request_internal(n,f);
 		split_update(n,f,section); // should usually occur when a section is finished, ie == Writes may go slightly beyond a section. This might be OK (with non-malicious peers) because it will just incur minor overwrites later, since that overwrite area will still be requested again, but would be bad from a malicious peer TODO
+		if(send_partial) // Note: We moved this to after file_request_internal because otherwise the socket is utilized and the file request won't reliably send. // TODO workaround until we can avoid discarding ENUM_PROTOCOL_FILE_REQUEST when socket_utilized
+			message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
 	}
 	else if(splits && (section_info_current - wrote) / (120*SPLIT_DELAY*1024) != section_info_current / (120*SPLIT_DELAY*1024)) // Checking whether to call split_update
 		split_update(n,f,section); // ~8 times per 1mb with SPLIT_DELAY = 1

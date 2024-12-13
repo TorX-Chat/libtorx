@@ -105,6 +105,8 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			pthread_rwlock_unlock(&mutex_protocols);
 			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name); // 2024/09/30 Occurred after a possible GTK issue. Sticker Request != Propose Upgrade
 		}
+		if(!socket_swappable)
+			setter(n,i,-1,-1,offsetof(struct message_list,fd_type),&fd_type,sizeof(fd_type));
 		start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos));
 		if(start == 0)
 		{
@@ -117,22 +119,14 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				error_printf(0,"Refusing to send_prep because sockets all utilized n=%d: %s",n,name);
 				return -1;
 			}
-			else if(fd_type == 0 && utilized_recv > INT_MIN)
-			{
-				if(socket_swappable)
+			else if((utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1))
+			{ // Switch sockets
+				if(socket_swappable && fd_type == 0)
 					fd_type = 1;
-				else
-				{
-					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
-					return -1;
-				}
-			}
-			else if(fd_type == 1 && utilized_send > INT_MIN)
-			{
-				if(socket_swappable)
+				else if(socket_swappable && fd_type == 1)
 					fd_type = 0;
 				else
-				{
+				{ // !socket_swappable
 					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
 					return -1;
 				}
@@ -158,7 +152,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	else
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
 		torx_unlock(n) // XXX
-		error_printf(0,"Send_prep too early n=%d p_iter=%d protocol=%u fd=%d: %s",n,p_iter,protocol,fd_type,name);
+		error_printf(0,"Send_prep too early owner=%u n=%d f_i=%d fd=%d: %s",owner,n,f_i,fd_type,name);
 		return -1;
 	}
 	torx_unlock(n) // XXX
@@ -207,7 +201,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
-			{ // TODO entire block is legacy, no longer triggers because of refinements. File completion is in output_cb. 
+			{ // TODO entire block is legacy, no longer triggers because of refinements. File completion is in packet_removal.
 				error_simple(0,"File completed in a legacy manner. Coding error or IO error. Report this."); // could be falsely triggered by file shrinkage
 				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED;
 				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
@@ -219,6 +213,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		}
 		else
 		{ // only i is initialized
+			// printf(YELLOW"Checkpoint send_prep: n=%d i=%d\n"RESET,n,i); // FSojoasfoSO
 			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
@@ -267,7 +262,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			else if(protocol == ENUM_PROTOCOL_KILL_CODE && stat == ENUM_MESSAGE_SENT)
 				return -1; // Kill code already sent on other peer associated socket
 			else
-			{ // XXX XXX XXX NOTICE: This CANNOT catch ALL _SENT messages because send_prep can be called twice before output_cb. Therefore, the solution is to PREVENT SEND_PREP from being called twice on the same message, as we do for queue skipping protocols in torx_events.
+			{ // XXX XXX XXX NOTICE: This CANNOT catch ALL _SENT messages because send_prep can be called twice before packet_removal. Therefore, the solution is to PREVENT SEND_PREP from being called twice on the same message, as we do for queue skipping protocols in torx_events.
 				error_printf(0,"Issue in send_prep protocol=%u or unexpected stat: %u from owner: %u. Not sending. Coding error. Report this.",protocol,stat,owner);
 				return -1;
 			}
@@ -285,8 +280,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		{
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
-			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where output_cb can (and will on some devices) trigger before we register packet
-
+			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where packet_removal can (and will on some devices) trigger before we register packet
 			while(o < SIZE_PACKET_STRC && packet[o].n != -1) // find first re-usable or empty iter
 				o++;
 			if(o > highest_ever_o)
@@ -299,7 +293,6 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				error_simple(-1,"Fatal error. Exceeded size of SIZE_PACKET_STRC. Report this.");
 			}
 			packet[o].n = n; // claim it. set first.
-			packet[o].start = start;
 			packet[o].packet_len = packet_len;
 			packet[o].fd_type = fd_type;
 			packet[o].f_i = f_i;
@@ -443,12 +436,8 @@ static inline void *send_init(void *arg)
 		{ // this causes blocking only until connected TODO endless segfaults here for unexplained reasons
 			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep. MUST be before the sendfd_connected check to give libevent time to close.
 			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-			if(sendfd_connected)
-			{ // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
-				error_simple(0,"Nulling a .bev_send here possibly without doing any necessary free in libevent. Report this!!!");
-				breakpoint();
-				peer_offline(n,1);
-			}
+			if(sendfd_connected) // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
+				error_simple(-1,"Nulling a .bev_send here possibly without doing any necessary free in libevent. Coding error. Report this.");
 		}
 		else
 		{

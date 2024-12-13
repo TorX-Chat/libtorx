@@ -204,6 +204,7 @@ struct offsets offsets_peer[] = {
 
 struct offsets offsets_message[] = {
 	offsize(message_list,time,"time"),
+	offsize(message_list,fd_type,"fd_type"),
 	offsize(message_list,stat,"stat"),
 	offsize(message_list,p_iter,"p_iter"),
 	offsize(message_list,message,"message"),
@@ -264,8 +265,7 @@ struct offsets offsets_packet[] = {
 	offsize(packet_info,f_i,"f_i"),
 	offsize(packet_info,packet_len,"packet_len"),
 	offsize(packet_info,p_iter,"p_iter"),
-	offsize(packet_info,fd_type,"fd_type"),
-	offsize(packet_info,start,"start")
+	offsize(packet_info,fd_type,"fd_type")
 };
 
 struct offsets offsets_protocols[] = {
