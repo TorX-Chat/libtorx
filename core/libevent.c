@@ -143,9 +143,21 @@ static inline void peer_offline(struct event_strc *event_strc)
 	}
 }
 
-static void disconnect_forever(struct bufferevent *bev, void *ctx)
+static inline void disconnect_forever(struct event_strc *event_strc)
 { // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
-	error_simple(0,YELLOW"Checkpoint disconnect_forever"RESET);
+	struct bufferevent *bev;
+	torx_read(event_strc->n) // XXX
+	if(event_strc->fd_type == 0)
+		bev = peer[event_strc->n].bev_recv;
+	else if(event_strc->fd_type == 1)
+		bev = peer[event_strc->n].bev_send;
+	else
+	{ // Should be unnecessary
+		torx_unlock(event_strc->n) // XXX
+		error_printf(0,"Sanity check failed in disconnect_forever. fd_type=%d",event_strc->fd_type);
+		return;
+	}
+	torx_unlock(event_strc->n) // XXX
 	bufferevent_free(bev); // call before each event_base_loopexit() *and* after each close_conn() or whenever desiring to close a connection and await a new accept_conn
 	event_base_loopexit(bufferevent_get_base(bev), NULL);
 }
@@ -337,7 +349,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 									error_simple(1,"Successfully sent a kill code. Deleting peer.");
 									const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 									takedown_onion(peer_index,1);
-								//	disconnect_forever(peer [event_strc->n]. bev_send); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
+								//	disconnect_forever(event_strc); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
 								}
 							}
 							torx_write(event_strc->n) // XXX
@@ -377,6 +389,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 
 static void write_finished(struct bufferevent *bev, void *ctx)
 { /* This write callback is triggered when write buffer has depleted (bufferevent.h) */ // It follows read_conn()
+	(void)bev;
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
 	if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
 	{
@@ -404,11 +417,11 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 			sql_update_peer(event_strc->fresh_n);
 			peer_new_cb(event_strc->fresh_n);
 		}
-		if(event_strc->owner == ENUM_OWNER_SING) //do not call disconnect_forever(bev); need to respond
+		if(event_strc->owner == ENUM_OWNER_SING) //do not call disconnect_forever(event_strc); need to respond
 		{
 			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,1); // XXX NOTE: n is just going to show 000000 after takedown(onion,1) and be useless.
-			disconnect_forever(bev,ctx);
+			disconnect_forever(event_strc);
 			return;
 		}
 	}
@@ -417,8 +430,8 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // Must be after packet_removal
-		disconnect_forever(bev,ctx); // Run last, will exit event base
 		error_simple(0,"Peer is not a friend. Disconnecting from write_finished.");
+		disconnect_forever(event_strc); // Run last, will exit event base
 		return;
 	}
 }
@@ -448,7 +461,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		error_simple(0,"Spoiled onion due to close.");
 		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,3);
-		disconnect_forever(bev,ctx); // Run last, will exit event base
+		disconnect_forever(event_strc); // Run last, will exit event base
 	}
 	section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // MUST be AFTER peer_offline
 	if(event_strc->fd_type == 1)
@@ -484,7 +497,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	if(status != ENUM_STATUS_FRIEND)
 	{ // ENUM_STATUS_FRIEND seems to include active SING/MULT
 		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // TODO 2024/09/28 happens after blocks or deletion, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
-		disconnect_forever(bev,ctx); // Run last, will exit event base
+		disconnect_forever(event_strc); // Run last, will exit event base
 		return; // 2024/03/11 hit this after deleting a group. probably didn't takedown the event properly after group delete
 	}
 	struct evbuffer *input = bufferevent_get_input(bev);
@@ -1289,7 +1302,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								block_peer(event_strc->n); // this calls sql_update_peer, so no need to call again.
 						}
 						sodium_memzero(read_buffer,packet_len);
-						disconnect_forever(bev,ctx);
+						disconnect_forever(event_strc);
 						return;
 					}
 					else
@@ -1416,7 +1429,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			error_printf(0,"Wrong size connection attempt of size %lu received. Onion spoiled. Report this.",len);
 			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,3);// 2022/08/12, was ,2 but 2 is "delete without taking down". XXX If it says anything other than 250, put the 2 back, otherwise remove this.
-			disconnect_forever(bev,ctx);
+			disconnect_forever(event_strc);
 		}
 		else if(event_strc->owner == ENUM_OWNER_MULT)
 		{ // Disconnect MULT after bad handshake
@@ -1433,6 +1446,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 
 static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd, struct sockaddr *address, int socklen, void *ctx)
 { /* We got a new inbound connection! Set up a bufferevent for it. */
+	(void) listener;
 	(void) address; // not using it, this just suppresses -Wextra warning
 	(void) socklen; // not using it, this just suppresses -Wextra warning
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
@@ -1441,7 +1455,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	{
 		error_simple(0,"Coding error 32402. Report this.");
 		breakpoint();
-	//	disconnect_forever(bev); // Run last, will exit event base
+	//	disconnect_forever(event_strc); // Run last, will exit event base
 		return;
 	}
 	torx_read(event_strc->n) // XXX
@@ -1488,14 +1502,13 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	}
 }
 
-static void error_conn(struct evconnlistener *listener, void *ctx)
+static void error_conn(struct evconnlistener *listener,void *arg)
 { // Only used on fd_type==0 // TODO should re-evaluate this. maybe it should do nothing (probably) or maybe it should be == close_conn (not sure)
 // TODO March 2 2023 test if this comes up after long term connections (many hours) like it occurs with LCD main.c ( "Too many open files" )
-	struct event_base *base = evconnlistener_get_base(listener);
-	const int err = EVUTIL_SOCKET_ERROR();
-	error_printf(0, "Shutting down event base. Report this. Got the following error from libevent: %s",evutil_socket_error_to_string(err)); // this is const, do not assign and free.
-	breakpoint();
-	event_base_loopexit(base, NULL);
+//	struct event_base *base = evconnlistener_get_base(listener);
+	(void)listener;
+	error_printf(0, "Shutting down event base. Report this. Got the following error from libevent: %s",evutil_socket_error_to_string(EVUTIL_SOCKET_ERROR())); // this is const, do not assign and free.
+	disconnect_forever(arg);
 } // TODO TEST: this caused our whole application to shutdown on 2022/07/29 when deleting a peer. Got an error 22 (Invalid argument) on the listener. Shutting down.
 
 void *torx_events(void *arg)
