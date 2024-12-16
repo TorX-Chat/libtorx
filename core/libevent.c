@@ -82,6 +82,41 @@ XXX	To Do		XXX
 //TODO: see "KNOWN BUG:" On a successful sing or MULT, the socket does not close due to the CTRL coming up. It is not the same socket nor the same port. We don't know what is going on.
 // Something to do with serv_init being a child process, I think. The socket doesn't close until the child process that called it ends.
 
+static inline struct bufferevent *disconnect(struct event_strc *event_strc)
+{ // Internal Function only. For handling or initializing a disconnection
+	struct bufferevent *bev;
+	torx_write(event_strc->n) // XXX
+	if(event_strc->fd_type == 0)
+	{
+	//	printf("Checkpoint recvfd DISCONNECTED n=%d\n",event_strc->n);
+		peer[event_strc->n].recvfd_connected = 0;
+		bev = peer[event_strc->n].bev_recv;
+		peer[event_strc->n].bev_recv = NULL;
+		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+		if(event_strc->owner != ENUM_OWNER_CTRL || !local_v3auth_enabled || peer[event_strc->n].peerversion < 2)
+			event_strc->authenticated = 0; // must de-authenticate because we have no idea who is connecting in this case
+	}
+	else /* if(event_strc->fd_type == 1) */
+	{
+		peer[event_strc->n].sendfd_connected = 0;
+		bev = peer[event_strc->n].bev_send;
+		peer[event_strc->n].bev_send = NULL;
+	}
+	torx_unlock(event_strc->n) // XXX
+	if(bev) // Just in case we got here after zero_n for some reason
+		bufferevent_free(bev); // Note: Don't call this by itself because it can be subject to double-free issues.
+	return bev;
+}
+
+static inline void disconnect_forever(struct event_strc *event_strc)
+{ // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
+	struct bufferevent *bev = disconnect(event_strc);
+	torx_free((void*)&event_strc->buffer); // Not redundant with that which occurs after exiting loop in *some* cases, such as with SING, because it may be event_strc_unique.
+	torx_free((void*)&event_strc); // Not redundant with that which occurs after exiting loop in *some* cases, such as with SING, because it may be event_strc_unique.
+	if(bev) // Just in case we got here after zero_n for some reason
+		event_base_loopexit(bufferevent_get_base(bev), NULL);
+}
+
 static inline void peer_online(struct event_strc *event_strc)
 { // Internal Function only. Use the callback. Note: We store our onion rather than peeronion because this will be checked on initiation where peeronion won't be ready yet.
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
@@ -117,18 +152,7 @@ static inline void peer_offline(struct event_strc *event_strc)
 		error_simple(0,"A group ctrl triggered peer_offline. Coding error. Report this.");
 		breakpoint();
 	}
-	torx_write(event_strc->n) // XXX
-	if(event_strc->fd_type == 0)
-	{
-		peer[event_strc->n].recvfd_connected = 0;
-		peer[event_strc->n].bev_recv = NULL; // XXX 2023/10/23 experimental to attempt to stop SQL error in GDB / valgrind error in serv_init
-	}
-	else /* if(event_strc->fd_type == 1) */
-	{
-		peer[event_strc->n].sendfd_connected = 0;
-		peer[event_strc->n].bev_send = NULL; // XXX 2023/10/23 experimental to attempt to stop SQL error in GDB / valgrind error in serv_init
-	}
-	torx_unlock(event_strc->n) // XXX
+	disconnect(event_strc);
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
 	const time_t last_seen = time(NULL); // current time
@@ -143,24 +167,6 @@ static inline void peer_offline(struct event_strc *event_strc)
 	}
 }
 
-static inline void disconnect_forever(struct event_strc *event_strc)
-{ // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
-	struct bufferevent *bev;
-	torx_read(event_strc->n) // XXX
-	if(event_strc->fd_type == 0)
-		bev = peer[event_strc->n].bev_recv;
-	else if(event_strc->fd_type == 1)
-		bev = peer[event_strc->n].bev_send;
-	else
-	{ // Should be unnecessary
-		torx_unlock(event_strc->n) // XXX
-		error_printf(0,"Sanity check failed in disconnect_forever. fd_type=%d",event_strc->fd_type);
-		return;
-	}
-	torx_unlock(event_strc->n) // XXX
-	bufferevent_free(bev); // call before each event_base_loopexit() *and* after each close_conn() or whenever desiring to close a connection and await a new accept_conn
-	event_base_loopexit(bufferevent_get_base(bev), NULL);
-}
 
 /*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *arg)
 {
@@ -451,10 +457,12 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	else // not an error but maybe we can use this
 		error_simple(2,"Some unknown type of unknown close_conn() occured.");
 
-	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER) // not GROUP_CTRL because CTRL never goes offline
+	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_MULT) // not GROUP_CTRL because CTRL never goes offline
 	{
 		error_simple(2,"Connection closed by peer.");
 		peer_offline(event_strc); // internal callback
+		if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER)
+			section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // MUST be AFTER peer_offline
 	}
 	else if(event_strc->owner == ENUM_OWNER_SING) // NOTE: this doesnt trigger for successful handshakes because .owner becomes 0000
 	{
@@ -463,7 +471,6 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		takedown_onion(peer_index,3);
 		disconnect_forever(event_strc); // Run last, will exit event base
 	}
-	section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // MUST be AFTER peer_offline
 	if(event_strc->fd_type == 1)
 	{ // Fix issues caused by unwanted resumption of inbound PM transfers
 		struct evbuffer *output = bufferevent_get_output(bev);
@@ -475,19 +482,21 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
 	}
-	torx_write(event_strc->n) // XXX
-	if(peer[event_strc->n].socket_utilized[event_strc->fd_type] > INT_MIN)
+	torx_read(event_strc->n) // XXX
+	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
+	torx_unlock(event_strc->n) // XXX
+	if(socket_utilized > INT_MIN)
 	{
+		torx_write(event_strc->n) // XXX
 		peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+		torx_unlock(event_strc->n) // XXX
 		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 	}
-	torx_unlock(event_strc->n) // XXX
 	if(event_strc->fd_type == 0) // XXX added 2023/09 with authenticated_pipe_n
-	{
+	{ // Necessary because accept_conn creates a copy for each connection, on all owner types. See event_strc_unique.
 		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&ctx);
 	}
-	bufferevent_free(bev); // relevant to CTRL and SING, which are the only ones that will hit this. Especially important for CTRL.
 }
 
 static void read_conn(struct bufferevent *bev, void *ctx)
@@ -803,8 +812,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								event_strc->n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
 								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
 								const uint8_t recvfd_connected = 1; // important
+							//	printf("Checkpoint recvfd connected 1 n=%d\n",event_strc->n);
 								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
+								event_strc->authenticated = 1;
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 							{
@@ -910,6 +921,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								event_strc->authenticated = 1;
 								const uint8_t recvfd_connected = 1;
+							//	printf("Checkpoint recvfd connected 2 n=%d\n",event_strc->n);
 								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
 								peer_online(event_strc);
@@ -1361,7 +1373,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			sodium_memzero(read_buffer,packet_len);
 		else
 			sodium_memzero(read_buffer,sizeof(read_buffer));
-		bufferevent_free(bev); // close a connection and await a new accept_conn
+		disconnect(event_strc);
 	}
 	else if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
 	{ // Handle incoming friend request
@@ -1434,7 +1446,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		else if(event_strc->owner == ENUM_OWNER_MULT)
 		{ // Disconnect MULT after bad handshake
 			error_printf(0,"Invalid attempt of size %lu received on mult. Should notify user of this.",len);
-			bufferevent_free(bev); // close a connection and await a new accept_conn
+			disconnect(event_strc);
 		}
 	}
 	else
@@ -1462,19 +1474,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	struct bufferevent *bev_recv_existing = peer[event_strc->n].bev_recv;
 	torx_unlock(event_strc->n) // XXX
 	if(bev_recv_existing != NULL)
-	{ // TODO 2024/07/13 figure out how to free/destroy the old one (though we seemed fine not doing so up until now?)
-	//	error_simple(0,"There is already an existing bev_recv. Replacing it might have unintended consequences if we don't free/destroy the old one. Replacing regardless."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
-		error_simple(0,"There is already an existing bev_recv. Experimenting with destroying and replacing."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
-		torx_write(event_strc->n) // XXX
-		struct bufferevent *bev = peer[n].bev_recv;
-		peer[n].bev_recv = NULL; // DO NOT DELETE THIS BLOCK. We probably have to make it work.
-		torx_unlock(event_strc->n) // XXX
-		bufferevent_free(bev);
-		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-		const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-		if(event_strc->owner != ENUM_OWNER_CTRL || !local_v3auth_enabled || peerversion < 2)
-			event_strc->authenticated = 0; // must de-authenticate because we have no idea who is connecting in this case
-	}
+		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	struct event_base *base = evconnlistener_get_base(listener);
 	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
 
@@ -1496,6 +1496,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		else if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
 			error_simple(1,"New potential peer has connected.");
 		const uint8_t recvfd_connected = 1;
+	//	printf("Checkpoint recvfd connected 3 n=%d\n",event_strc->n);
 		setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 		if(event_strc->owner == ENUM_OWNER_CTRL)
 			begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1

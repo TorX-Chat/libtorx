@@ -136,12 +136,12 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	FILE **fd_active = {0};
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	torx_read(n) // XXX
-	if(fd_type == 0 && peer[n].bev_recv)
-	{
+	if(fd_type == 0 && peer[n].bev_recv && peer[n].recvfd_connected)
+	{ // We check recvfd_connected to verify that the pipe is auth'd. This is important.
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			fd_active = &peer[n].file[f].fd_out_recvfd;
 	}
-	else if(fd_type == 1 && peer[n].bev_send)
+	else if(fd_type == 1 && peer[n].bev_send && peer[n].sendfd_connected)
 	{
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			fd_active = &peer[n].file[f].fd_out_sendfd;
