@@ -1463,14 +1463,16 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	torx_unlock(event_strc->n) // XXX
 	if(bev_recv_existing != NULL)
 	{ // TODO 2024/07/13 figure out how to free/destroy the old one (though we seemed fine not doing so up until now?)
-		error_simple(0,"There is already an existing bev_recv. Replacing it might have unintended consequences if we don't free/destroy the old one. Replacing regardless."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
-	/*	torx_write(n) // XXX
-		bufferevent_free(peer[n].bev_recv);
-		torx_unlock(n) // XXX
-		peer[n].bev_recv = NULL; */ // DO NOT DELETE THIS BLOCK. We probably have to make it work.
+	//	error_simple(0,"There is already an existing bev_recv. Replacing it might have unintended consequences if we don't free/destroy the old one. Replacing regardless."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
+		error_simple(0,"There is already an existing bev_recv. Experimenting with destroying and replacing."); // And if we *do*, there are *also* unintended consequences, which we must mitigate!
+		torx_write(event_strc->n) // XXX
+		struct bufferevent *bev = peer[n].bev_recv;
+		peer[n].bev_recv = NULL; // DO NOT DELETE THIS BLOCK. We probably have to make it work.
+		torx_unlock(event_strc->n) // XXX
+		bufferevent_free(bev);
 		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 		const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
-		if(event_strc->owner == ENUM_OWNER_CTRL && (!local_v3auth_enabled || peerversion < 2))
+		if(event_strc->owner != ENUM_OWNER_CTRL || !local_v3auth_enabled || peerversion < 2)
 			event_strc->authenticated = 0; // must de-authenticate because we have no idea who is connecting in this case
 	}
 	struct event_base *base = evconnlistener_get_base(listener);
