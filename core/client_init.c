@@ -477,15 +477,27 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	// XXX Step 4: Set date if unset, and set fd
 	if(!time && !nstime)
 		set_time(&time,&nstime);
+	const uint8_t recvfd_connected = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+	const uint8_t sendfd_connected = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+	torx_read(n) // XXX
+	const int utilized_recv = peer[target_n].socket_utilized[0];
+	const int utilized_send = peer[target_n].socket_utilized[1];
+	torx_unlock(n) // XXX
 	int8_t fd_type; // TODO
-	if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
-		fd_type = 1; // PIPE_AUTH is exclusively sent out on sendfd
-	else if(cycle == 0 && send_both)
+	if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+		fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
+	else if(send_both)
+		fd_type = (int8_t)cycle;
+	else if(recvfd_connected && utilized_recv == INT_MIN)
+		fd_type = 0; // prefer recvfd for reliability & speed
+	else if(sendfd_connected && utilized_send == INT_MIN)
 		fd_type = 1;
-	else if(getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected)))
-		fd_type = 0; // put on recvfd for reliability & speed
-	else
-		fd_type = 1; // put on sendfd
+	else if(recvfd_connected && !sendfd_connected)
+		fd_type = 0;
+	else if(!recvfd_connected && sendfd_connected)
+		fd_type = 1;
+	else // Neither or both are connected
+		fd_type = 0; // prefer recvfd for reliability & speed
 	// XXX Step 5: Build base message
 	char *message;
 	uint32_t message_len;
