@@ -367,7 +367,7 @@ static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey
 static inline void initialize_event_strc(struct event_strc *event_strc,const int n,const uint8_t owner,const int8_t fd_type,const evutil_socket_t socket)
 {
 	event_strc->sockfd = socket;
-	if(fd_type == 1 || (threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) && getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion)) > 1))
+	if(fd_type == 1 || (owner == ENUM_OWNER_CTRL && threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) && getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion)) > 1))
 		event_strc->authenticated = 1;
 	else
 		event_strc->authenticated = 0;
