@@ -191,6 +191,11 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 
 static inline void begin_cascade(struct event_strc *event_strc)
 { // Triggers a single unsent message // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
+	if(event_strc->authenticated == 0)
+	{
+		error_printf(0,"Sanity check failed in begin_cascade. Peer is not authenticated. Possible coding error. Report this. Owner=%u fd_type=%d",event_strc->owner,event_strc->fd_type);
+		return;
+	}
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
@@ -1557,7 +1562,6 @@ void *torx_events(void *arg)
 					printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u\n"RESET,peerversion);
 					const uint16_t trash_version = htobe16(torx_library_version[0]);
 					message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
-					have_triggered_cascade = 1;
 				}
 				else if(!have_triggered_cascade)
 					begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
