@@ -133,19 +133,16 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			}
 		}
 	}
-	uint8_t connected;
 	FILE **fd_active = {0};
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	torx_read(n) // XXX
 	if(fd_type == 0 && peer[n].bev_recv)
 	{
-		connected = peer[n].recvfd_connected;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			fd_active = &peer[n].file[f].fd_out_recvfd;
 	}
 	else if(fd_type == 1 && peer[n].bev_send)
 	{
-		connected = peer[n].sendfd_connected;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			fd_active = &peer[n].file[f].fd_out_sendfd;
 	}
@@ -157,7 +154,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	}
 	torx_unlock(n) // XXX
 	char send_buffer[PACKET_SIZE_MAX]; // zero'd // NOTE: no need to {0} this, so don't.
-	if(connected && status == ENUM_STATUS_FRIEND)
+	if(status == ENUM_STATUS_FRIEND)
 	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage. should re-fetch it
 		uint16_t packet_len = 0;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
