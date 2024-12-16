@@ -110,6 +110,8 @@ static inline void peer_online(struct event_strc *event_strc)
 
 static inline void peer_offline(struct event_strc *event_strc)
 { // Internal Function only. Use the callback. Could combine with peer_online() to be peer_online_change() and peer_online_change_cb()
+	if(!event_strc) // Sanity check
+		return;
 	if(event_strc->owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		error_simple(0,"A group ctrl triggered peer_offline. Coding error. Report this.");
@@ -144,8 +146,6 @@ static inline void peer_offline(struct event_strc *event_strc)
 static void disconnect_forever(struct bufferevent *bev, void *ctx)
 { // Do NOT call from out of libevent thread. TODO find a way to call from takedown_onion
 	error_simple(0,YELLOW"Checkpoint disconnect_forever"RESET);
-	if(ctx) // XXX NOTE: buffer and ctx will be free'd outside of this function after the loopexit
-		peer_offline(ctx); // internal callback
 	bufferevent_free(bev); // call before each event_base_loopexit() *and* after each close_conn() or whenever desiring to close a connection and await a new accept_conn
 	event_base_loopexit(bufferevent_get_base(bev), NULL);
 }
@@ -1492,7 +1492,6 @@ static void error_conn(struct evconnlistener *listener, void *ctx)
 { // Only used on fd_type==0 // TODO should re-evaluate this. maybe it should do nothing (probably) or maybe it should be == close_conn (not sure)
 // TODO March 2 2023 test if this comes up after long term connections (many hours) like it occurs with LCD main.c ( "Too many open files" )
 	struct event_base *base = evconnlistener_get_base(listener);
-	peer_offline(ctx); // internal callback
 	const int err = EVUTIL_SOCKET_ERROR();
 	error_printf(0, "Shutting down event base. Report this. Got the following error from libevent: %s",evutil_socket_error_to_string(err)); // this is const, do not assign and free.
 	breakpoint();
@@ -1513,6 +1512,7 @@ void *torx_events(void *arg)
 	if(!base)
 	{
 		error_simple(0,"Couldn't open event base.");
+		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&arg); // free CTX
 		return 0;
       	}
@@ -1594,18 +1594,19 @@ void *torx_events(void *arg)
 			break;
 		}
 		event_base_dispatch(base); // XXX this is the important loop... this is the blocker
-		torx_write(event_strc->n) // XXX
+	/*	torx_write(event_strc->n) // XXX
 		if(event_strc->fd_type == 0)
 			peer[event_strc->n].bev_send = NULL;
 		else if(event_strc->fd_type == 1)
 			peer[event_strc->n].bev_send = NULL;
-		torx_unlock(event_strc->n) // XXX
+		torx_unlock(event_strc->n) // XXX	*/
+		peer_offline(event_strc);
 		const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 		if(status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL) && event_strc->fd_type == 0) // Its not an error for a 0'd (deleted) onion to get here.
 		{
 			const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 			const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
-			error_printf(0,"Recv ctrl got out of base. It will die but this is unexpected. NOTE: fd_type recv should not get out unless deleted or blocked. sendfd: %d recvfd: %d owner: %u fd_type: %d",sendfd_connected,recvfd_connected,event_strc->owner,event_strc->fd_type); 	/* NOTICE: ONLY SING AND PIPEMODE WILL EVER GET OUT OF BASE edit: i think no one gets out */ 
+			error_printf(0,"Recv ctrl got out of base. It will die but this is unexpected. NOTE: fd_type recv should not get out unless deleted or blocked. sendfd: %d recvfd: %d owner: %u fd_type: %d",sendfd_connected,recvfd_connected,event_strc->owner,event_strc->fd_type); 	// NOTICE: ONLY SING AND PIPEMODE WILL EVER GET OUT OF BASE edit: i think no one gets out
 		}
 		break;
 	}

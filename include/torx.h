@@ -291,8 +291,8 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i. XXX NOT relevant to ENUM_PROTOCOL_FILE_PIECE
 	evutil_socket_t sendfd; // outgoing messages ( XXX NOT currently utilized by ENUM_OWNER_PEER )
 	evutil_socket_t recvfd; // incoming messages
-	uint8_t sendfd_connected;
-	uint8_t recvfd_connected;
+	uint8_t sendfd_connected; // This is set to 1 when (bev_send)
+	uint8_t recvfd_connected; // This is not set to 1 until a pipe is authenticated, and (bev_recv).
 	struct bufferevent *bev_send; // currently only used in libevent.c by libevent thread because libevent is not threadsafe, even with such flags
 	struct bufferevent *bev_recv;
 //	int8_t oldest_message; // TODO currently unused, should be used. default: 0, this should be set to permit the cycling of messages. when there are too many to fit in the struct, it should start over at 0, overwritting the oldest and moving this start point
