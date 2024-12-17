@@ -332,7 +332,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			}
 		torx_unlock(group_n) // XXX
 		if(status == ENUM_FILE_INBOUND_ACCEPTED)
-			file_request_internal(group_n,f);
+			file_request_internal(group_n,f,-1);
 	}
 	return 0;
 	error: {}
@@ -1008,7 +1008,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 		}
 		torx_free((void*)&file_path);
-		file_request_internal(n,f);
+		file_request_internal(n,f,fd_type);
 		split_update(n,f,section); // should usually occur when a section is finished, ie == Writes may go slightly beyond a section. This might be OK (with non-malicious peers) because it will just incur minor overwrites later, since that overwrite area will still be requested again, but would be bad from a malicious peer TODO
 		if(send_partial) // Note: We moved this to after file_request_internal because otherwise the socket is utilized and the file request won't reliably send. // TODO workaround until we can avoid discarding ENUM_PROTOCOL_FILE_REQUEST when socket_utilized
 			message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);

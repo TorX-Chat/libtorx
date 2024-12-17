@@ -460,16 +460,16 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	return NULL;
 }
 
-static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime)
+static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime,int8_t fd_type)
 { // TODO WARNING: Sanity checks will interfere with message_resend. Message_send + message_distribute + message_prep are highly functional spagetti.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t stream = protocols[p_iter].stream;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols);
-	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
-	if(!skip_prep) // message is NOT resend, n is > -1
-		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (owner != ENUM_OWNER_GROUP_CTRL && protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
+//	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
+//	if(!skip_prep) // message is NOT resend, n is > -1
+//		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (owner != ENUM_OWNER_GROUP_CTRL && protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
 	//if(protocol == ENUM_PROTOCOL_FILE_REQUEST) printf("Checkpoint send_both owner%u: %u = (%d < 0 && (%d || %d && %d && %u && %d))\n",owner,send_both,target_g,protocol == ENUM_PROTOCOL_KILL_CODE,owner != ENUM_OWNER_GROUP_CTRL,protocol == ENUM_PROTOCOL_FILE_REQUEST,getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)),getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0);
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
@@ -483,21 +483,24 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	const int utilized_recv = peer[target_n].socket_utilized[0];
 	const int utilized_send = peer[target_n].socket_utilized[1];
 	torx_unlock(n) // XXX
-	int8_t fd_type; // TODO
-	if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-		fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
-	else if(send_both)
-		fd_type = (int8_t)cycle;
-	else if(recvfd_connected && utilized_recv == INT_MIN)
-		fd_type = 0; // prefer recvfd for reliability & speed
-	else if(sendfd_connected && utilized_send == INT_MIN)
-		fd_type = 1;
-	else if(recvfd_connected && !sendfd_connected)
-		fd_type = 0;
-	else if(!recvfd_connected && sendfd_connected)
-		fd_type = 1;
-	else // Neither or both are connected
-		fd_type = 0; // prefer recvfd for reliability & speed
+//	int8_t fd_type; // TODO
+	if(fd_type < 0)
+	{
+		if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+			fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
+	//	else if(send_both)
+	//		fd_type = (int8_t)cycle;
+		else if(recvfd_connected && utilized_recv == INT_MIN)
+			fd_type = 0; // prefer recvfd for reliability & speed
+		else if(sendfd_connected && utilized_send == INT_MIN)
+			fd_type = 1;
+		else if(recvfd_connected && !sendfd_connected)
+			fd_type = 0;
+		else if(!recvfd_connected && sendfd_connected)
+			fd_type = 1;
+		else // Neither or both are connected
+			fd_type = 0; // prefer recvfd for reliability & speed
+	}
 	// XXX Step 5: Build base message
 	char *message;
 	uint32_t message_len;
@@ -514,13 +517,14 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		message = message_prep(&message_len,NULL,target_n,fd_type,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	if(message_len < 1)
 	{ // (could just be cycle 2 of a file resumption of a file thats half-done)
-		if(cycle == 0 && send_both)
-		{ // Only triggers on FILE_REQUEST, where message_prep decided to not to send anything (probably because this fd is utilized already for a section)
-			cycle++;
-			goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
-		}
+	//	if(cycle == 0 && send_both)
+	//	{ // Only triggers on FILE_REQUEST, where message_prep decided to not to send anything (probably because this fd is utilized already for a section)
+	//		cycle++;
+	//		goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
+	//	}
 		if(protocol != ENUM_PROTOCOL_FILE_REQUEST)
-			error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u send_both=%u",fd_type,protocol,send_both);
+			error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u",fd_type,protocol);
+		//	error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u send_both=%u",fd_type,protocol,send_both);
 		goto error;
 	}
 	// XXX Step 6: Iterate message
@@ -612,12 +616,11 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(target_g < 0)
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
-
-		if(cycle == 0 && send_both)
-		{ // must send start point on each respective fd. 
-			cycle++;
-			goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
-		}
+	//	if(cycle == 0 && send_both)
+	//	{ // must send start point on each respective fd. 
+	//		cycle++;
+	//		goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
+	//	}
 		if(owner_nnnn != ENUM_OWNER_GROUP_PEER || target_g < 0 || ++cycle >= target_g_peercount)
 			break; // be careful of the logic here and after. note the ++
 	}
@@ -671,7 +674,7 @@ int message_resend(const int n,const int i)
 	}
 	uint32_t message_len;
 	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
-	message_distribute(1,-1,owner,n,-1,-1,target_g,target_g_peercount,p_iter,message,message_len,time,nstime);
+	message_distribute(1,-1,owner,n,-1,-1,target_g,target_g_peercount,p_iter,message,message_len,time,nstime,-1);
 	torx_free((void*)&message);
 	return 0;	
 }
@@ -717,12 +720,14 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		} */
 	}
 	// XXX Step 2: Handle passed arg from certain protocols that pass integer or struct
+	int8_t fd_type = -1;
 	int n = target_n;
 	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{
-		const struct int_int *int_int = (const struct int_int*) arg; // Casting passed struct
-		n = int_int->n;
-		f = int_int->i;
+		const struct int_int_int8 *int_int_int8 = (const struct int_int_int8*) arg; // Casting passed struct
+		n = int_int_int8->n;
+		f = int_int_int8->f;
+		fd_type = int_int_int8->fd_type;
 		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	}
 	else if(file_offer)
@@ -737,7 +742,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		g = set_g(n,NULL);
 	// XXX Step 3:
-	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0); // i or INT_MIN upon error
+	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0,fd_type); // i or INT_MIN upon error
 }
 
 void kill_code(const int n,const char *explanation)
@@ -773,7 +778,7 @@ void kill_code(const int n,const char *explanation)
 }
 
 static inline int select_peer(const int group_n,const int f)
-{ // Check: blacklist, online status, how much data they have. Determine which group peer to request file from // TODO enhance this function to select
+{ // Check: blacklist, online status, how much data they have. Determine which group peer to request file from // TODO enhance this function to select fd_type
 	const uint8_t owner = getter_uint8(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_GROUP_CTRL)
 	{
@@ -872,7 +877,7 @@ static inline int file_unwritable(const int n,const int f,char *file_path)
 	}
 }
 
-void file_request_internal(const int n,const int f)
+void file_request_internal(const int n,const int f,const int8_t fd_type)
 { // Internal function only, do not call from UI. Use file_accept
 	if(n < 0 || f < 0)
 		return;
@@ -903,15 +908,39 @@ void file_request_internal(const int n,const int f)
 		breakpoint();
 		return;
 	}
-	struct int_int int_int;
-	int_int.n = n; // potentially group_n
-	int_int.i = f;
+	struct int_int_int8 int_int_int8;
+	int_int_int8.n = n; // potentially group_n
+	int_int_int8.f = f;
 	if(owner != ENUM_OWNER_GROUP_CTRL)
-		message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN);
+	{
+		if(fd_type == -1)
+		{
+			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+			if(sendfd_connected)
+			{ // DO NOT MAKE else if
+				int_int_int8.fd_type = 1;
+				message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
+			}
+			if(recvfd_connected)
+			{ // DO NOT MAKE else if
+				int_int_int8.fd_type = 0;
+				message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
+			}
+		}
+		else
+		{
+			int_int_int8.fd_type = fd_type;
+			message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
+		}
+	}
 	else						// this check could be is_inbound_transfer ??
+	{
+		int_int_int8.fd_type = -1; // TODO we should set this via select_peer
 		for(int target_n ; status != ENUM_FILE_OUTBOUND_PENDING && status != ENUM_FILE_OUTBOUND_ACCEPTED && (target_n = select_peer(n,f)) > -1 ; )
-			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int,FILE_REQUEST_LEN) == INT_MIN)
+			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN) == INT_MIN)
 				break; // This break is necessary, though not idea, because otherwise if a message fails to send (because socket is currently utilized), it will go back to select_peer, be selected again, fail again, on repeat.
+	}
 }
 
 void file_set_path(const int n,const int f,const char *path)
@@ -1049,7 +1078,7 @@ void file_accept(const int n,const int f)
 		{
 			status = ENUM_FILE_INBOUND_ACCEPTED;
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-			file_request_internal(n,f);
+			file_request_internal(n,f,-1);
 		}
 		else // Complete. Not checking if oversized or wrong hash.
 		{ // XXX This should NEVER trigger because the .split file should have been deleted if transferred == .size, unless split_read() is redesigned to check file size

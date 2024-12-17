@@ -560,9 +560,10 @@ struct int_char { // XXX Do not sodium_malloc structs unless they contain sensit
 	const unsigned char *up;
 };
 
-struct int_int { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct int_int_int8 { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int n;
-	int i;
+	int f;
+	int8_t fd_type;
 };
 
 /* Callbacks */
@@ -853,7 +854,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 int message_resend(const int n,const int i);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 void kill_code(const int n,const char *explanation); // must accept -1
-void file_request_internal(const int n,const int f);
+void file_request_internal(const int n,const int f,const int8_t fd_type);
 void file_set_path(const int n,const int f,const char *path);
 void file_accept(const int n,const int f);
 void file_cancel(const int n,const int f);

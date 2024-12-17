@@ -138,7 +138,7 @@ static inline void peer_online(struct event_strc *event_strc)
 			if(file_status == ENUM_FILE_INBOUND_ACCEPTED) // re-send request for previously accepted file
 		//	{
 		//		printf("Checkpoint ENUM_PROTOCOL_FILE_REQUEST 3 n==%d\n",event_strc->n);
-				file_request_internal(event_strc->n,f);
+				file_request_internal(event_strc->n,f,-1);
 		//	}
 		}
 }
