@@ -581,7 +581,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			torx_unlock(nnnn) // XXX
 		}
 		if(!stream)
-		{
+		{ // Stream messages, if logged, are logged in packet_removal after they send
 			if(cycle == 0)
 			{
 				if(target_g > -1 || (owner == ENUM_OWNER_GROUP_PEER && group_pm))
@@ -602,18 +602,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(!repeated && target_g > -1) // MUST go after the first sql_insert_message call (which saves the message initially to GROUP_CTRL)
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
-		int ret;
-		if((ret = send_prep(nnnn,iiii,p_iter,fd_type)) == -1 && protocol == ENUM_PROTOCOL_FILE_REQUEST && f > -1 && requested_section > -1)
-		{ // Unclaim section due to failure to immediately send, and delete the message. TODO inefficient, would be nice to prevent creating the message instead, rather than treating it as ENUM_STREAM_DISCARDABLE despite it not being so
-			const int peer_index = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-			sql_delete_message(peer_index,time,nstime);
-			torx_write(nnnn) // XXX
-			zero_i(nnnn,iiii);
-			torx_unlock(nnnn) // XXX
-			section_unclaim(n,f,nnnn,fd_type);
-			return INT_MIN; // cannot goto error because segfault apparently, probably due to zero_i
-		}
-		else if(ret == -1 && stream == ENUM_STREAM_DISCARDABLE)
+		if(send_prep(nnnn,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
 			torx_write(nnnn) // XXX
 			zero_i(nnnn,iiii);
@@ -622,7 +611,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
 	//	if(cycle == 0 && send_both)
-	//	{ // must send start point on each respective fd. 
+	//	{ // must send start point on each respective fd.
 	//		cycle++;
 	//		goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
 	//	}

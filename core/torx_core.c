@@ -281,7 +281,7 @@ int protocol_lookup(const uint16_t protocol)
 
 int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream)
 { // Register a custom protocol // TODO probbaly passing a struct + protocol is more rational than this massive amount of args
-	if(protocol_lookup(protocol) != -1 || (logged && stream))
+	if(protocol_lookup(protocol) != -1)
 	{ // TODO more sanity checks
 		error_printf(0,"Protocol already exists or sanity check failed. Cannot register: %u %u %s",logged,stream,name);
 		return -1; // invalid args or protocol exists already
@@ -1254,7 +1254,7 @@ void message_sort(const int g)
 					message_insert(g,group_n,i);
 			}
 			else if(protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
-			{ // ENTRY_REQUEST are logged at least until SENT
+			{
 				error_printf(0,"Checkpoint message_sort unexpected stat: %d %u",stat,protocol);
 				breakpoint(); // shouldn't happen, just checking. If this doesn't trigger, can potentially remove stat check
 			}
@@ -4169,7 +4169,7 @@ void initial(void)
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER,"File Offer","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PRIVATE,"File Offer Private","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,0); // must NOT be stream (because must save). Must NOT be swappable.
+	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_NON_DISCARDABLE); // TODO we store file path here, so if it doesn't save, we can't resume. This means accepting a file while a peer is offline is meaningless if they don't come online before we restart our client.
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);

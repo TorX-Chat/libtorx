@@ -920,8 +920,10 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		} \
 	}
 
-static int log_check(const int n,const uint8_t group_pm)
+static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol)
 {
+	if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+		return 1; // Entry requests MUST always be logged.
 	const int8_t log_messages = getter_int8(n,INT_MIN,-1,-1,offsetof(struct peer_list,log_messages));
 	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
 	if(!(log_messages != -1 && (global > 0 || log_messages > 0)))
@@ -954,8 +956,8 @@ int sql_insert_message(const int n,const int i)
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols);
-	if(logged == 0 || !log_check(n,group_pm))
-		return 0; // do not log these
+	if(logged == 0 || !log_check(n,group_pm,protocol))
+		return 0; // do not log these.
 	uint32_t message_len;
 	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
 	if(!message)
@@ -1005,8 +1007,8 @@ int sql_update_message(const int n,const int i)
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols);
-	if(logged == 0 || !log_check(n,group_pm))
-		return 0; // do not log these
+	if(logged == 0 || !log_check(n,group_pm,protocol))
+		return 0; // do not log these.
 	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,-1,offsetof(struct message_list,nstime));

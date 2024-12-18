@@ -158,15 +158,44 @@ static inline void peer_offline(struct event_strc *event_strc)
 	const time_t last_seen = time(NULL); // current time
 	setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 	peer_offline_cb(event_strc->n);
+	const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
-		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
+	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+	const uint8_t online = recvfd_connected + sendfd_connected;
+	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	for(int i = max_i; i >= min_i; i--) // We go through in reverse because we are deleting and possibly shrinking message struct.
+	{ // Run through messages and clean out stream messages as appropriate.
+		const int p_iter = getter_int(event_strc->n,i,-1,-1,offsetof(struct message_list,p_iter));
+		if(p_iter > -1)
+		{
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint8_t logged = protocols[p_iter].logged;
+			const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
+			const uint8_t stream = protocols[p_iter].stream;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if(stream)
+			{
+				const int8_t fd_type = getter_int8(event_strc->n,i,-1,-1,offsetof(struct message_list,fd_type));
+				const uint8_t stat = getter_uint8(event_strc->n,i,-1,-1,offsetof(struct message_list,stat));
+				if(((!socket_swappable && fd_type == event_strc->fd_type) || !online) && (stat == ENUM_MESSAGE_FAIL || (stat == ENUM_MESSAGE_SENT && !logged)))
+				{ // We don't need to delete them from disk because they aren't saved until sent. We shouldn't actually see any _SENT && !logged here.
+					torx_write(event_strc->n) // XXX
+					zero_i(event_strc->n,i);
+					torx_unlock(event_strc->n) // XXX
+				}
+			}
+		}
+	}
+	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER)
+		section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // Unclaim any sections on this socket. (should go last)
 }
-
 
 /*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *arg)
 {
@@ -282,6 +311,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					const uint16_t protocol = protocols[p_iter].protocol;
 					const uint8_t stream = protocols[p_iter].stream;
 					const char *name = protocols[p_iter].name;
+					const uint8_t logged = protocols[p_iter].logged;
 					pthread_rwlock_unlock(&mutex_protocols);
 					if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 					{
@@ -336,13 +366,31 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						{ // complete message, complete send
 							carry_on_regardless: {}
 							if(stream)
-							{ // discard/delete message and attempt rollback
+							{
+								if(logged) // Logged stream messages are only logged after being sent
+									sql_insert_message(event_strc->n,i);
+								else
+								{ // discard/delete message and attempt rollback
+									torx_write(event_strc->n) // XXX
+									zero_i(event_strc->n,i);
+									torx_unlock(event_strc->n) // XXX
+								/*	printf("Checkpoint actually deleted group_peer's i\n");
+									// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
+									// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
+								}
+							}
+							else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+							{ // We don't need these messages anymore. They only need to be logged until sent. One day we can perhaps make them stream non-disgardable + !logged?
+								if(logged) // yes, it is
+								{
+									const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+									const time_t time = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,time));
+									const time_t nstime = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,nstime));
+									sql_delete_message(peer_index,time,nstime);
+								}
 								torx_write(event_strc->n) // XXX
 								zero_i(event_strc->n,i);
 								torx_unlock(event_strc->n) // XXX
-							/*	printf("Checkpoint actually deleted group_peer's i\n");
-								// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
-								// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
 							}
 							else
 							{
@@ -461,8 +509,6 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	{
 		error_simple(2,"Connection closed by peer.");
 		peer_offline(event_strc); // internal callback
-		if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER)
-			section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // MUST be AFTER peer_offline
 	}
 	else if(event_strc->owner == ENUM_OWNER_SING) // NOTE: this doesnt trigger for successful handshakes because .owner becomes 0000
 	{
