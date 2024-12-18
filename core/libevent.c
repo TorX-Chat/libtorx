@@ -368,7 +368,11 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							if(stream)
 							{
 								if(logged) // Logged stream messages are only logged after being sent
+								{
+									const uint8_t stat = ENUM_MESSAGE_SENT;
+									setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 									sql_insert_message(event_strc->n,i);
+								}
 								else
 								{ // discard/delete message and attempt rollback
 									torx_write(event_strc->n) // XXX
