@@ -956,8 +956,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			sodium_memzero(checksum,sizeof(checksum));
 			if(ret1 == 0 || ret2)
 			{ // TODO Untested
-				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete.");
-				printf("Checkpoint bad section: %"PRIu64" %d\n",ret1,ret2);
+				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete. Experimentally requesting another section from others, if available.");
+				printf("Checkpoint bad section=%u %"PRIu64" %d\n",section,ret1,ret2);
 				torx_write(n) // XXX
 				peer[n].file[f].split_info[section] = 0;
 				torx_unlock(n) // XXX
@@ -1007,8 +1007,11 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 		}
+		else if(owner == ENUM_OWNER_GROUP_CTRL) // (peer_n > -1 && peer[peer_n].blacklisted)
+			file_request_internal(n,f,-1); // 2024/12/17 Experimental, requesting from a different peer on any fd_type
+		else
+			file_request_internal(n,f,fd_type);
 		torx_free((void*)&file_path);
-		file_request_internal(n,f,fd_type);
 		split_update(n,f,section); // should usually occur when a section is finished, ie == Writes may go slightly beyond a section. This might be OK (with non-malicious peers) because it will just incur minor overwrites later, since that overwrite area will still be requested again, but would be bad from a malicious peer TODO
 		if(send_partial) // Note: We moved this to after file_request_internal because otherwise the socket is utilized and the file request won't reliably send. // TODO workaround until we can avoid discarding ENUM_PROTOCOL_FILE_REQUEST when socket_utilized
 			message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);

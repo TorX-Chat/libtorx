@@ -105,7 +105,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			pthread_rwlock_unlock(&mutex_protocols);
 			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name); // 2024/09/30 Occurred after a possible GTK issue. Sticker Request != Propose Upgrade
 		}
-		if(!socket_swappable)
+		if(!socket_swappable) // This is NOT redundant with message_distribute because not every message goes through that stage.
 			setter(n,i,-1,-1,offsetof(struct message_list,fd_type),&fd_type,sizeof(fd_type));
 		start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos));
 		if(start == 0)

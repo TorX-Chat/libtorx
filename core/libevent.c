@@ -707,7 +707,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				FILE *local = *fd_active;
 				torx_fd_unlock(nn,f) // XXX
 				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here
-				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local);
+				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local); // TODO 2024/12/17 segfaulted here during group file transfer
 				torx_fd_lock(nn,f) // XXX
 				*fd_active = local;
 				torx_fd_unlock(nn,f) // XXX

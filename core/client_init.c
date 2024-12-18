@@ -466,6 +466,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t stream = protocols[p_iter].stream;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
+	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
 //	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
 //	if(!skip_prep) // message is NOT resend, n is > -1
@@ -473,7 +474,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	//if(protocol == ENUM_PROTOCOL_FILE_REQUEST) printf("Checkpoint send_both owner%u: %u = (%d < 0 && (%d || %d && %d && %u && %d))\n",owner,send_both,target_g,protocol == ENUM_PROTOCOL_KILL_CODE,owner != ENUM_OWNER_GROUP_CTRL,protocol == ENUM_PROTOCOL_FILE_REQUEST,getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)),getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0);
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
-	other_fd: {} // NOTE: This is a totally new message, unlike messages that just get sent to all peers in a group (see while below)
+//	other_fd: {} // NOTE: This is a totally new message, unlike messages that just get sent to all peers in a group (see while below)
 	// XXX Step 4: Set date if unset, and set fd
 	if(!time && !nstime)
 		set_time(&time,&nstime);
@@ -538,6 +539,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	peer[target_n].message[i].message_len = message_len;
 	peer[target_n].message[i].p_iter = p_iter;
 	peer[target_n].message[i].stat = ENUM_MESSAGE_FAIL;
+	if(!socket_swappable)
+		peer[target_n].message[i].fd_type = fd_type;
 	torx_unlock(target_n) // XXX
 	// XXX Step 7: Send_prep as appropriate
 	while(1)
@@ -573,6 +576,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			peer[nnnn].message[iiii].message = local_message;
 			peer[nnnn].message[iiii].stat = ENUM_MESSAGE_FAIL;
 			peer[nnnn].message[iiii].p_iter = p_iter;
+			if(!socket_swappable)
+				peer[nnnn].message[iiii].fd_type = fd_type;
 			torx_unlock(nnnn) // XXX
 		}
 		if(!stream)
