@@ -226,7 +226,7 @@ static inline void begin_cascade(struct event_strc *event_strc)
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(stream != ENUM_STREAM_DISCARDABLE && !send_prep(event_strc->n,i,p_iter,event_strc->fd_type)) // Will do nothing if there are no messages to send
+			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,i,p_iter,event_strc->fd_type) != -1) // Will do nothing if there are no messages to send
 				break; // allow cascading effect in packet_removal
 		}
 	}

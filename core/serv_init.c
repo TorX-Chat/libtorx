@@ -61,7 +61,7 @@ severable if found in contradiction with the License or applicable law.
 */
 
 int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
-{ // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send
+{ // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send. Returns -1 on error or peer offline, 0 on success, and -2 on socket utilized (cannot send immediately). We could return 0 instead of -2, but we might use this.
 	if(n < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
 	{
 		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
@@ -117,7 +117,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
 			{
 				error_printf(0,"Refusing to send_prep because sockets all utilized n=%d: %s",n,name);
-				return -1;
+				return -2;
 			}
 			else if((utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1))
 			{ // Switch sockets
@@ -128,7 +128,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				else
 				{ // !socket_swappable
 					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
-					return -1;
+					return -2;
 				}
 			}
 		}
