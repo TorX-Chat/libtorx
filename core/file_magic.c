@@ -1044,6 +1044,7 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 			const size_t read = fread(buf, 1, to_read, fp);
 			if(len && read != to_read)
 			{
+				close_sockets_nolock(fp);
 				error_simple(0,"Read less than expected when calculating checksum. Coding or disk error.");
 			//	printf("Checkpoint read: %lu\nCheckpoint to_read: %lu\nCheckpoint size: %lu\n",read,to_read,size);
 				return 0;
@@ -1080,6 +1081,7 @@ char *custom_input_file(const char *hs_ed25519_secret_key_file) // hs_ files hav
 	fseek(hs_ed25519_secret_key_file_pointer,(long int)-sizeof(privkey_decoded),SEEK_END);
 	if(read != sizeof(header) || memcmp(header,correct_header,sizeof(header)) || fread(privkey_decoded,1,sizeof(privkey_decoded),hs_ed25519_secret_key_file_pointer) < 64)
 	{
+		close_sockets_nolock(hs_ed25519_secret_key_file_pointer);
 		error_simple(0,"Custom input file was less than 64 bytes or lacked expected header. Bailing.");
 		return NULL;
 	}
