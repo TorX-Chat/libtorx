@@ -1090,6 +1090,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,owner_nn,nn,event_strc->fd_type);
 						send_prep(nn,f,protocol_lookup(ENUM_PROTOCOL_FILE_PIECE),event_strc->fd_type);
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
+						continue; // because this is now stream
 					}
 					else if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 					{
