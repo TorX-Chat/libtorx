@@ -559,21 +559,14 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				breakpoint();
 				goto error;
 			}
-			torx_read(target_n) // XXX
-			const time_t local_time = peer[target_n].message[i].time;
-			const time_t local_nstime = peer[target_n].message[i].nstime;
-			const uint32_t local_message_len = peer[target_n].message[i].message_len;
-			char *local_message = peer[target_n].message[i].message;
-			torx_unlock(target_n) // XXX
-
 			iiii = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
 			expand_message_struc(nnnn,iiii);
 			torx_write(nnnn) // XXX
 			peer[nnnn].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
-			peer[nnnn].message[iiii].time = local_time; // needs to be duplicate so that we can do lookup later
-			peer[nnnn].message[iiii].nstime = local_nstime;
-			peer[nnnn].message[iiii].message_len = local_message_len;
-			peer[nnnn].message[iiii].message = local_message;
+			peer[nnnn].message[iiii].time = time; // needs to be duplicate so that we can do lookup later
+			peer[nnnn].message[iiii].nstime = nstime;
+			peer[nnnn].message[iiii].message_len = message_len;
+			peer[nnnn].message[iiii].message = message;
 			peer[nnnn].message[iiii].stat = ENUM_MESSAGE_FAIL;
 			peer[nnnn].message[iiii].p_iter = p_iter;
 			if(!socket_swappable)
