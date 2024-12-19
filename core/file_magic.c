@@ -656,7 +656,7 @@ void destroy_file(const char *file_path)
 		return;
 	}
 	const long int size = ftell(fp);
-	fclose(fp); fp = NULL;
+	close_sockets_nolock(fp);
 	if((fp = fopen(new_file_path, "r+")) == NULL || size == -1)
 	{
 		error_simple(0,"Error opening file for write in destroy_file");
@@ -678,7 +678,7 @@ void destroy_file(const char *file_path)
 		left -= written_current;
 	}
 	while (left > 0 && written_current > 0);
-	fclose(fp); fp = NULL;
+	close_sockets_nolock(fp);
 	if(remove(new_file_path) != 0)
 		error_simple(0,"Error deleting file in destroy_file");
 	sodium_memzero(new_file_path,sizeof(new_file_path));
@@ -767,7 +767,7 @@ static inline int split_read(const int n,const int f)
 	{ // condition is necessary with fclose it seems
 	//	printf("Checkpoint Reading nos: %d\n",peer[n].file[f].splits);
 	//	printf("Checkpoint Reading split data: %lu %lu\n",peer[n].file[f].split_info[0],peer[n].file[f].split_info[1]);
-		fclose(fp); fp = NULL;
+		close_sockets_nolock(fp);
 		return 0; // successfully read
 	}
 	return -1; // no file exists, wrong checksum, or cannot be read
@@ -844,7 +844,7 @@ int initialize_split_info(const int n,const int f)
 			torx_unlock(n) // XXX
 			fwrite(&splits,1,sizeof(splits),fp);
 			fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
-			fclose(fp); fp = NULL;
+			close_sockets_nolock(fp);
 		}
 		else if(local_full_duplex_requests == 0 && stat_file == 0)
 		{ // Read half-duplex
@@ -921,7 +921,7 @@ void split_update(const int n,const int f,const int section)
 		torx_unlock(n) // XXX
 		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits TODO might be +1 byte off
 		fwrite(&relevant_split_info,1,sizeof(relevant_split_info),fp); // write contents
-		fclose(fp); fp = NULL;
+		close_sockets_nolock(fp);
 	}
 }
 
@@ -1052,8 +1052,7 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 			size += read;
 		}
 		sodium_memzero(buf,sizeof(buf));
-		fclose(fp);
-		fp = NULL;
+		close_sockets_nolock(fp);
 	}
 	else /* if(data) */
 	{
@@ -1086,8 +1085,7 @@ char *custom_input_file(const char *hs_ed25519_secret_key_file) // hs_ files hav
 	}
 	char *privkey = b64_encode(privkey_decoded,sizeof(privkey_decoded));
 	sodium_memzero(privkey_decoded,sizeof(privkey_decoded));
-	fclose(hs_ed25519_secret_key_file_pointer);
-	hs_ed25519_secret_key_file_pointer = NULL;
+	close_sockets_nolock(hs_ed25519_secret_key_file_pointer);
 	return privkey;
 }
 

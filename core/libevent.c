@@ -669,7 +669,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						continue;
 					}
 					torx_fd_lock(nn,f) // XXX
-					fclose(*fd_active); *fd_active = NULL;
+					close_sockets_nolock(*fd_active);
 					*fd_active = fopen(file_path, "r+"); // Open file for writing
 					torx_fd_unlock(nn,f) // XXX
 					if(*fd_active == NULL)

@@ -375,8 +375,7 @@ static inline void write_debug_file(const char *message)
 		return;
 	if(fputs(message,file) == EOF)
 		return;
-	fclose(file);
-	file = NULL;
+	close_sockets_nolock(file);
 }
 
 static inline void error_allocated_already(const int debug_level,char *do_not_free_message)
@@ -1582,7 +1581,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	}
 	return output;
 #else
-	#define FAILURE_STRING "zSHJNckXURsy82aYoX9KPNR18oGExraN" // can be anything not reasonably likely to be returned by a binary
+	#define FAILURE_STRING "0559d5fbba2cc6b32f91a1da10dd6dd275a635bcb959a8dc2a291a91d237e2d1" // Is currently: `echo -n LuigiMangioneDidNothingWrong#FreeLuigi#JuryNullification | sha256sum` ; can be anything not reasonably likely to be returned by a binary.
 	int link1[2];
 	int link2[2];
 	if(pipe(link1) == -1)
@@ -1610,8 +1609,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	{
 		FILE *pipewrite = fdopen(link2[1],"w");
 		fputs(input,pipewrite);
-		fclose(pipewrite);
-		pipewrite = NULL;
+		close_sockets_nolock(pipewrite);
 	}
 	if(fd_stdin)
 		*(int*)fd_stdin = link2[1];
@@ -2077,7 +2075,7 @@ static int pid_write(const int pid)
 	char p1[21];
 	snprintf(p1,sizeof(p1),"%d",pid);
 	fputs(p1,fp);
-	fclose(fp); fp = NULL; // close append mode
+	close_sockets_nolock(fp); // close append mode
 	return 0;
 }
 
@@ -2090,7 +2088,7 @@ static inline int pid_read(void)
 	if(fgets(pid_string,sizeof(pid_string)-1,fp) == NULL)
 		return 0;
 	const int pid = (int)strtoll(pid_string, NULL, 10);
-	fclose(fp); fp = NULL; // close append mode
+	close_sockets_nolock(fp); // close append mode
 	return pid;
 }
 
