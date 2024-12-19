@@ -803,79 +803,50 @@ int initialize_split_info(const int n,const int f)
 		torx_read(n) // XXX
 		const int stat_file = stat(peer[n].file[f].file_path, &file_stat);
 		torx_unlock(n) // XXX
-		const uint8_t local_full_duplex_requests = threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests);
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
-		if(local_full_duplex_requests && stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
-		{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
-			printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
-		//	split_read(n,f); // reads split file
-			if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
+		if(splits < 1)
+			error_simple(0,"Half-duplex file transfers are depreciated. Coding error. Report this.");
+		else
+		{
+			split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+			if(stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
+			{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
+				printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
+			//	split_read(n,f); // reads split file
+				if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
+				{
+					const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED;
+					setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+				}
+			}
+			else if(stat_file == 0)
 			{
-				const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED;
+				const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
 				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 			}
-		}
-		else if((local_full_duplex_requests || splits > 0) && stat_file == 0)
-		{
-			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-		}
-	//	else if(full_duplex_requests && splits == 0)
-	//		error_simple(0,"Uncaught error in initialize_split_info. Coding error. Report this."); // TODO Full duplex enabled but splits == 0
-		else if(local_full_duplex_requests && splits > 0)
-		{ // partial file does not exist, write an initialized .split file
-			umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
-			FILE *fp;
-			if((fp = fopen(split_path,"w+")) == NULL)
-			{ // BAD, permissions issue, cannot create file
-				error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
-				torx_free((void*)&split_path);
-				return -1;
+			else
+			{ // partial file does not exist, write an initialized .split file
+				umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
+				FILE *fp;
+				if((fp = fopen(split_path,"w+")) == NULL)
+				{ // BAD, permissions issue, cannot create file
+					error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
+					torx_free((void*)&split_path);
+					return -1;
+				}
+				unsigned char checksum[CHECKSUM_BIN_LEN];
+				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+				fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
+				sodium_memzero(checksum,sizeof(checksum));
+				uint64_t relevant_split_info[splits+1];
+				torx_read(n) // XXX
+				memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
+				torx_unlock(n) // XXX
+				fwrite(&splits,1,sizeof(splits),fp);
+				fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
+				close_sockets_nolock(fp);
 			}
 			torx_free((void*)&split_path);
-			unsigned char checksum[CHECKSUM_BIN_LEN];
-			getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
-			sodium_memzero(checksum,sizeof(checksum));
-			uint64_t relevant_split_info[splits+1];
-			torx_read(n) // XXX
-			memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
-			torx_unlock(n) // XXX
-			fwrite(&splits,1,sizeof(splits),fp);
-			fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
-			close_sockets_nolock(fp);
-		}
-		else if(local_full_duplex_requests == 0 && stat_file == 0)
-		{ // Read half-duplex
-			printf("Checkpoint initializing a half-duplex\n");
-			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
-			const uint64_t file_size = get_file_size(file_path);
-			torx_free((void*)&file_path);
-			if(file_size)
-			{
-				if(file_size > size)
-					error_simple(0,"End of packet exceeds file size. Report this.");
-				else if(file_size == size)
-				{ // i think end will never be greater than .size - 1? besides this block is useless, we set completed elsewhere
-					printf("Checkpoint probably will not trigger. If never triggering, delete block\n"); // TODO
-					const uint8_t status = ENUM_FILE_INBOUND_COMPLETED;
-					setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-					transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
-				}
-				else
-				{
-					torx_write(n) // XXX
-					peer[n].file[f].split_info[0] = file_size;
-					torx_unlock(n) // XXX
-				}
-			}
-			else // file does not exist
-			{
-				torx_write(n) // XXX
-				peer[n].file[f].split_info[0] = 0;
-				torx_unlock(n) // XXX
-			}
 		}
 	}
 	return 0;
@@ -954,7 +925,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			torx_unlock(n) // XXX
 			sodium_memzero(checksum,sizeof(checksum));
 			if(ret1 == 0 || ret2)
-			{ // TODO Untested
+			{ // Has been tested, works.
 				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete. Experimentally requesting another section from others, if available.");
 				printf("Checkpoint bad section=%u %"PRIu64" %d\n",section,ret1,ret2);
 				torx_write(n) // XXX

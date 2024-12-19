@@ -314,7 +314,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		char *file_path;
 		uint64_t size;
 		uint8_t status; // see enum file_statuses for values
-		uint8_t full_duplex; // full_duplex is only applicable on the requestor side. file sender just sends on whatever socket the request is received. // Slows any outbound messages during transfer (since they are added to end of buffer), but inbound messages are unaffected (speed) 
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)

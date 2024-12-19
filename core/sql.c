@@ -1650,8 +1650,6 @@ void sql_populate_setting(const int force_plaintext)
 					reduced_memory = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"auto_resume_inbound",19))
 					auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
-				else if(!strncmp(setting_name,"full_duplex_requests",20))
-					full_duplex_requests = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"log_last_seen",13))
 					log_last_seen = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"last_seen",9))

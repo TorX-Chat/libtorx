@@ -143,7 +143,6 @@ uint8_t suffix_length = 4; // 4 is a reasonable default for suffix at this time 
 uint32_t global_threads = 1; // for onion_gen(), cpu threads.
 uint32_t threads_max = 0; // max as detected by cpu_count()
 uint8_t auto_resume_inbound = 1; // automatically request resumption of inbound file transfers NOTE: only works on full_duplex transfers (relies on .split) TODO disabling this might be untested
-uint8_t full_duplex_requests = 1; // Requested files should utlize full duplex (split == 1), assuminng v3auth. Can interfere with receiving messages due to messages being added to end of buffer. // If 0, allowed for individual transfers to override this (from 0 to 1) for example if they are small and quick.
 uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if zero, just block and keep history). This can be set by UI.
 uint8_t hide_blocked_group_peer_messages = 0; // Note: blocking would require re-sorting, if hide is toggled
 uint8_t log_pm_according_to_group_setting = 1; // toggles whether or not PM logging should follow the logging settings of the group (useful to UI devs who might want to control group PM logging per-peer)
@@ -3152,7 +3151,6 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].file_path = NULL;
 	peer[n].file[f].size = 0;
 	peer[n].file[f].status = 0;
-	peer[n].file[f].full_duplex = threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests); // NOTE: affects outbound
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
 	peer[n].file[f].split_path = NULL;

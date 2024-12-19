@@ -1053,7 +1053,7 @@ void file_accept(const int n,const int f)
 		torx_read(n) // XXX
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
 		torx_unlock(n) // XXX
-		if(threadsafe_read_uint8(&mutex_global_variable,&full_duplex_requests) && splits == 0 && split_hashes == NULL)
+		if(splits == 0 && split_hashes == NULL)
 		{ // set splits to 1 if not already, but not on group files (which will have split_hashes)
 			splits = 1; // set default before split_read, which might overwrite it.
 			setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
