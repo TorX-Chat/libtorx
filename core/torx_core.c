@@ -815,6 +815,7 @@ unsigned char *read_bytes(size_t *data_len,const char *path)
 	fseek(fp, 0L, SEEK_SET);
 	if(fread(data,1,allocated,fp) != allocated)
 		error_simple(0,"Read less than expected amount of data. Uncaught bug.");
+	close_sockets_nolock(fp);
 	end: {}
 	if(data_len)
 		*data_len = allocated;
