@@ -3141,7 +3141,6 @@ static void initialize_offer(const int n,const int f,const int o) // XXX do not 
 { // initalize an iter of the offer struc.
 	peer[n].file[f].offer[o].offerer_n = -1;
 	peer[n].file[f].offer[o].offer_info = NULL;
-//	peer[n].file[f].offer[o].utilized = 0; // not necessary UNLESS we are using more than 2 sockets concurrently (ie, we are downloading from multiple peers concurrently)
 }
 
 static void initialize_f(const int n,const int f) // XXX do not put locks in here

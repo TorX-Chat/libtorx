@@ -804,50 +804,44 @@ int initialize_split_info(const int n,const int f)
 		const int stat_file = stat(peer[n].file[f].file_path, &file_stat);
 		torx_unlock(n) // XXX
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-		if(splits < 1)
-			error_simple(0,"Half-duplex file transfers are depreciated. Coding error. Report this.");
-		else
-		{
-			split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
-			if(stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
-			{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
-				printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
-			//	split_read(n,f); // reads split file
-				if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
-				{
-					const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED;
-					setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
-				}
-			}
-			else if(stat_file == 0)
+		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+		if(stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
+		{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
+			printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
+			if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
 			{
-				const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
+				const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED;
 				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 			}
-			else
-			{ // partial file does not exist, write an initialized .split file
-				umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
-				FILE *fp;
-				if((fp = fopen(split_path,"w+")) == NULL)
-				{ // BAD, permissions issue, cannot create file
-					error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
-					torx_free((void*)&split_path);
-					return -1;
-				}
-				unsigned char checksum[CHECKSUM_BIN_LEN];
-				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-				fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
-				sodium_memzero(checksum,sizeof(checksum));
-				uint64_t relevant_split_info[splits+1];
-				torx_read(n) // XXX
-				memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
-				torx_unlock(n) // XXX
-				fwrite(&splits,1,sizeof(splits),fp);
-				fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
-				close_sockets_nolock(fp);
-			}
-			torx_free((void*)&split_path);
 		}
+		else if(stat_file == 0)
+		{
+			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+		}
+		else if(splits > 0)
+		{ // partial file does not exist, write an initialized .split file
+			umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
+			FILE *fp;
+			if((fp = fopen(split_path,"w+")) == NULL)
+			{ // BAD, permissions issue, cannot create file
+				error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
+				torx_free((void*)&split_path);
+				return -1;
+			}
+			unsigned char checksum[CHECKSUM_BIN_LEN];
+			getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
+			sodium_memzero(checksum,sizeof(checksum));
+			uint64_t relevant_split_info[splits+1];
+			torx_read(n) // XXX
+			memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
+			torx_unlock(n) // XXX
+			fwrite(&splits,1,sizeof(splits),fp);
+			fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
+			close_sockets_nolock(fp);
+		}
+		torx_free((void*)&split_path);
 	}
 	return 0;
 }
@@ -900,7 +894,6 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 { // INBOUND FILE TRANSFER ONLY To be called after write during file transfer. Updates .split_info, determines whether to call split_update. peer_n is only used for blacklisting.
 	if(wrote < 1)
 		return;
-	const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_write(n) // XXX yes, its a write, see +=
 	const uint64_t section_info_current = peer[n].file[f].split_info[section] += wrote;
@@ -913,6 +906,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{ // Run checksum on the group file's individual section
 			const uint64_t start = calculate_section_start(size,splits,section);

@@ -181,7 +181,7 @@ typedef u_short in_port_t;
 #define SPLIT_DELAY 1 // 0 is writing checkpoint every packet, 1 is every 120kb, 2 is every 240kb, ... Recommend 1+. XXX 0 may cause divide by zero errors/crash?
 #define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
 #define MAX_INVITEES 4096
-#define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently. Set by the file offerer exlusively.
+#define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
 
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
@@ -317,10 +317,10 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
-		char *split_path; // sensitive, uses sodium_malloc
-		uint64_t *split_info; // not sensitive, only uses MALLOC not sodium_malloc. Contains section info, which is amount transferred in that section (incoming only)
-		int *split_status; // not sensitive, only uses MALLOC not sodium_malloc. GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
-		int8_t *split_status_fd; // not sensitive, only uses MALLOC not sodium_malloc.
+		char *split_path;
+		uint64_t *split_info; // Contains section info, which is amount transferred in that section (incoming only)
+		int *split_status; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
+		int8_t *split_status_fd;
 		/* Exclusively Outbound transfer related */
 		uint64_t outbound_start[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
 		uint64_t outbound_end[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
@@ -334,8 +334,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		FILE *fd_in_sendfd;	// fd_type == 3
 		struct offer_list {
 			int offerer_n;
-			uint64_t *offer_info; // == their split_info not sensitive, only uses MALLOC not sodium_malloc. Contains section info that the peer says they have.
-		//	uint8_t utilized; // TODO use for "currently in use" or something, to avoid sending excess requests to the same peer
+			uint64_t *offer_info; // == their split_info. Contains section info that the peer says they have.
 		} *offer;
 		time_t last_progress_update_time; // last time we updated progress bar
 		time_t last_progress_update_nstime; // last time we updated progress bar
@@ -559,10 +558,13 @@ struct int_char { // XXX Do not sodium_malloc structs unless they contain sensit
 	const unsigned char *up;
 };
 
-struct int_int_int8 { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct file_request_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	int f;
 	int8_t fd_type;
+	int16_t section;
+	uint64_t start;
+	uint64_t end;
 };
 
 /* Callbacks */

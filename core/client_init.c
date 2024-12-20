@@ -151,8 +151,8 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	int was_transferring = 0; // TODO we should call progress cb and inform the UI that the transfer stopped... but only if both stopped...
 	if(f > -1)  // Unclaim sections of a specific file (typical upon pause)
 		was_transferring += unclaim(n,f,peer_n_local,fd_type);
-	else // Unclaim sections of all files (typical when a socket closes during inbound transfer)
-	{
+	else
+	{ // Unclaim sections of all files (typical when a socket closes during inbound transfer)
 		torx_read(n) // XXX
 		for(int ff = 0 ; !is_null(peer[n].file[ff].checksum,CHECKSUM_BIN_LEN) ; ff++)
 		{
@@ -165,68 +165,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	return was_transferring;
 }
 
-static inline int section_claim(uint64_t *start_p,uint64_t *end_p,const int n,const int f,const int peer_n,const int8_t fd_type)
-{ // This is used on ALL TYPES of file transfer (group, PM, p2p) // Returns section, or -1 on error
-	torx_read(n) // XXX
-	const int *split_status = peer[n].file[f].split_status;
-	const int8_t *split_status_fd = peer[n].file[f].split_status_fd;
-	torx_unlock(n) // XXX
-	if(split_status == NULL || split_status_fd == NULL)
-	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
-		error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
-		split_read(n,f);
-	}
-	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-	torx_read(n) // XXX
-	for(int section = 0; section <= splits; section++)
-		if(peer[n].file[f].split_status_fd[section] == fd_type && peer[n].file[f].split_status[section] == peer_n)
-		{ // Catch where there is already a request for a section of this file on this FD from this peer. We need to catch this because otherwise they will corrupt each other.
-			torx_unlock(n) // XXX
-			error_printf(0,"Cannot claim. File request for this section already exists: peer_n=%d fd=%d section=%d",peer_n,fd_type,section);
-			return -1;
-		}
-	torx_unlock(n) // XXX
-	int section = 0;
-	section_done: {}
-	int current_n;
-	torx_read(n) // XXX
-	while((current_n = peer[n].file[f].split_status[section]) != -1 && section < splits)
-		section++; // find an section not currently utilized for receiving
-	const uint64_t current = peer[n].file[f].split_info[section];
-	torx_unlock(n) // XXX
-	if(current_n != -1)
-	{ // very necessary check
-		error_simple(1,"No free sections to request from message_send. Bailing. (not necessarily error)"); // error message not required
-		return -1;
-	}
-	const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
-	const uint64_t start = calculate_section_start(file_size,splits,section) + current;
-	const uint64_t end = calculate_section_start(file_size,splits,section+1)-1;
-	if(start >= file_size)
-		return -1; // last section, is done, do not request it (other sections might have been requested on cycle 0)
-	else if(start > end)
-	{
-		section++;
-		goto section_done;
-	}
-	if((int64_t)end == -1) // 18446744073709551615
-	{ // bail out. calculate_section_start returned an error (this can happen if we are requesting 1 byte files in full duplex)
-		error_simple(0,"Presently no support for requesting 1 and 0 byte length files.");
-		return -1; // abandoning attempts to support until we abolish message_send cycles
-	}
-	error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,section,peer_n,fd_type);
-	torx_write(n) // XXX
-	peer[n].file[f].split_status[section] = peer_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
-	peer[n].file[f].split_status_fd[section] = fd_type;
-	torx_unlock(n) // XXX
-	if(start_p)
-		*start_p = start;
-	if(end_p)
-		*end_p = end;
-	return section;
-}
-
-static inline char *message_prep(uint32_t *message_len_p,int *section_p,const int target_n,const int8_t fd_type,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
+static inline char *message_prep(uint32_t *message_len_p,const int target_n,const int8_t fd_type,const int16_t section,const uint64_t start,const uint64_t end,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
 { // Prepare messages // WARNING: There are no sanity checks. This function can easily de-reference a null pointer if bad/insufficient args are passed.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
@@ -283,12 +222,12 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash64,sizeof(uint64_t));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-			for(uint8_t section = 0; section <= splits; section++)
+			for(uint8_t section_local = 0; section_local <= splits; section_local++)
 			{ // Add how much is completed on each section
 				torx_read(n) // XXX
-				trash64 = htobe64(peer[n].file[f].split_info[section]);
+				trash64 = htobe64(peer[n].file[f].split_info[section_local]);
 				torx_unlock(n) // XXX
-				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + section * sizeof(uint64_t)],&trash64,sizeof(uint64_t));
+				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + section_local * sizeof(uint64_t)],&trash64,sizeof(uint64_t));
 			}
 		else /* if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) */
 		{ // Add modification date and filename
@@ -304,12 +243,10 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{ // CHECKSUM[64] + START[8] + END[8]
-		uint64_t start,end;
-		*section_p = section_claim(&start,&end,n,f,target_n,fd_type);
-		if(*section_p < 0)
+		if(section < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd=%d",*section_p,start,end,fd_type);
+		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd=%d",section,start,end,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -450,6 +387,8 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 		torx_free((void*)&base_message);
 	return message_new;
 	error: {}
+	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+		section_unclaim(n,f,target_n,fd_type);
 	if(g > -1)
 	{
 		sodium_memzero(sign_sk_group_n,sizeof(sign_sk_group_n));
@@ -460,7 +399,7 @@ static inline char *message_prep(uint32_t *message_len_p,int *section_p,const in
 	return NULL;
 }
 
-static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime,int8_t fd_type)
+static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime,int8_t fd_type,const int16_t section,const uint64_t start,const uint64_t end)
 { // TODO WARNING: Sanity checks will interfere with message_resend. Message_send + message_distribute + message_prep are highly functional spagetti.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
@@ -505,7 +444,6 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	// XXX Step 5: Build base message
 	char *message;
 	uint32_t message_len;
-	int requested_section = -1; // must initialize. Will only be > -1 if ENUM_PROTOCOL_FILE_REQUEST
 	if(skip_prep)
 	{ // For re-send only. Warning: Highly experimental.
 		message_len = base_message_len;
@@ -513,9 +451,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		memcpy(message,arg,message_len);
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-		message = message_prep(&message_len,&requested_section,target_n,fd_type,n,f,g,p_iter,time,nstime,arg,base_message_len);
+		message = message_prep(&message_len,target_n,fd_type,section,start,end,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	else
-		message = message_prep(&message_len,NULL,target_n,fd_type,n,f,g,p_iter,time,nstime,arg,base_message_len);
+		message = message_prep(&message_len,target_n,fd_type,-1,0,0,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	if(message_len < 1)
 	{ // (could just be cycle 2 of a file resumption of a file thats half-done)
 	//	if(cycle == 0 && send_both)
@@ -620,6 +558,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	} */
 	return i;
 	error: {}
+	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+		section_unclaim(n,f,target_n,fd_type);
 	torx_free((void*)&message);
 	return INT_MIN;
 }
@@ -661,7 +601,7 @@ int message_resend(const int n,const int i)
 	}
 	uint32_t message_len;
 	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
-	message_distribute(1,-1,owner,n,-1,-1,target_g,target_g_peercount,p_iter,message,message_len,time,nstime,-1);
+	message_distribute(1,-1,owner,n,-1,-1,target_g,target_g_peercount,p_iter,message,message_len,time,nstime,-1,-1,0,0);
 	torx_free((void*)&message);
 	return 0;	
 }
@@ -670,18 +610,21 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 { // To send a message to all members of a group, pass the group_n as target_n. The group_n will store the message but each peer will have copies of the time, protocol, status.
 	int p_iter = -1; // must initialize so long as we have the error_printf that could use it
 	uint8_t owner = 0; // must initialize so long as we have the error_printf that could use it
+	int8_t fd_type = -1;
+	int n = target_n;
+	int f = -1;
 	if(target_n < 0 || protocol < 1 || (owner = getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner))) < 1 || (p_iter = protocol_lookup(protocol)) < 0)
 	{
 		error_printf(0,"message_send failed sanity check: %d %u %u %d. Coding error. Report this.",target_n,protocol,owner,p_iter);
 		breakpoint();
-		return INT_MIN;
+		goto end;
 	}
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	pthread_rwlock_unlock(&mutex_protocols);
 	int g = -1;
-	int f = -1;
+
 	int target_g = -1; // LIMITED USE currently DO NOT USE EXTENSIVELY
 	uint32_t target_g_peercount = 0;
 	if(owner == ENUM_OWNER_GROUP_CTRL && group_msg)
@@ -691,7 +634,7 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		if(target_g_peercount < 1)
 		{ // this isn't necessarily an error. this would be an OK place to bail out in some circumstances like broadcast messages
 			error_printf(0,"Group has no users. Refusing to queue message. This is fine. Protocol: %u",protocol);
-			return INT_MIN;
+			goto end;
 		}
 	/*	pthread_rwlock_rdlock(&mutex_protocols);
 		const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
@@ -707,14 +650,18 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		} */
 	}
 	// XXX Step 2: Handle passed arg from certain protocols that pass integer or struct
-	int8_t fd_type = -1;
-	int n = target_n;
+	int16_t section = -1;
+	uint64_t start = 0;
+	uint64_t end = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{
-		const struct int_int_int8 *int_int_int8 = (const struct int_int_int8*) arg; // Casting passed struct
-		n = int_int_int8->n;
-		f = int_int_int8->f;
-		fd_type = int_int_int8->fd_type;
+		const struct file_request_strc *file_request_strc = (const struct file_request_strc*) arg; // Casting passed struct
+		n = file_request_strc->n;
+		f = file_request_strc->f;
+		fd_type = file_request_strc->fd_type;
+		section = file_request_strc->section;
+		start = file_request_strc->start;
+		end = file_request_strc->end;
 		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	}
 	else if(file_offer)
@@ -729,7 +676,11 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		g = set_g(n,NULL);
 	// XXX Step 3:
-	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0,fd_type); // i or INT_MIN upon error
+	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0,fd_type,section,start,end); // i or INT_MIN upon error
+	end: {}
+	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+		section_unclaim(n,f,target_n,fd_type);
+	return INT_MIN;
 }
 
 void kill_code(const int n,const char *explanation)
@@ -764,67 +715,161 @@ void kill_code(const int n,const char *explanation)
 	}
 }
 
-static inline int select_peer(const int group_n,const int f)
-{ // Check: blacklist, online status, how much data they have. Determine which group peer to request file from // TODO enhance this function to select fd_type
-	const uint8_t owner = getter_uint8(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	if(owner != ENUM_OWNER_GROUP_CTRL)
+static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,const int f,const int o,const uint8_t section)
+{ // NOTE: This does NOT account for contents of peer offer
+	if(!start || !end || n < 0 || f < 0)
 	{
-		error_simple(0,"Select_peer can only be called on GROUP_CTRL. Coding error. Report this.");
+		error_simple(0,"Sanity check failed in calculate_file_request_start_end. Coding error. Report this.");
 		return -1;
 	}
-	const uint8_t splits = getter_uint8(group_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-	int o = 0;
-	int tentative_n = 0;
-	uint64_t tentative_progress = 0;
-	uint8_t tentative_section = 0; // TODO utilize, should probably pass it to message_send
-	for(int offerer_n ; (offerer_n = getter_int(group_n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
+	const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	torx_read(n) // XXX
+	const uint64_t current = peer[n].file[f].split_info[section];
+	torx_unlock(n) // XXX
+	*start = calculate_section_start(file_size,splits,section) + current;
+	if(o > -1)
+	{ // Group transfer
+		torx_read(n) // XXX
+		const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_info[section];
+		torx_unlock(n) // XXX
+		*end = *start + offerer_progress - 1;
+	}
+	else
+		*end = calculate_section_start(file_size,splits,section+1)-1;
+	if((int64_t)*end == -1) // 18446744073709551615
+		*end = *start; // Experimental support for one byte files
+	if(*start >= file_size || *start > *end)
+		return -1; // Section appears finished. Cannot request any data.
+	return 0;
+}
+
+static inline int select_peer(const int n,const int f,const int8_t fd_type)
+{ // Check: blacklist, online status, how much data they have. Determine which group peer to request file from. Claim section. Used to be called section_claim().
+	if(n < 0 || f < 0)
 	{
-		const uint8_t sendfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-		const uint8_t recvfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
-		const uint8_t online = recvfd_connected + sendfd_connected;
-	//	const uint8_t utilized = getter_uint8(n,INT_MIN,f,o,offsetof(struct offer_list,utilized));
-		const uint8_t blacklisted = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,blacklisted));
-		if(/*utilized >= */!online || blacklisted) // check blacklist and online status
+		error_simple(0,"Sanity check failed in select_peer. Coding error. Report this.");
+		return -1;
+	}
+	torx_read(n) // XXX
+	const int *split_status = peer[n].file[f].split_status;
+	const int8_t *split_status_fd = peer[n].file[f].split_status_fd;
+	torx_unlock(n) // XXX
+	if(split_status == NULL || split_status_fd == NULL)
+	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
+		error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
+		split_read(n,f);
+	}
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	struct file_request_strc file_request_strc;
+	file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
+	file_request_strc.f = f;
+	int target_n = -1;
+	if(owner == ENUM_OWNER_GROUP_CTRL)
+	{
+		int target_o = -1;
+		uint64_t target_progress = 0;
+		for(int offerer_n, o = 0 ; (offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
 		{
-		//	printf("Checkpoint o=%d already utilized or blacklisted (%u). %u >= %u\n",o,blacklisted,utilized,online);
-			continue;
-		}
-		int utilized = 0;
-		for(uint8_t section = 0; section <= splits; section++)
-		{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
-			torx_read(group_n) // XXX
-			const uint64_t offerer_progress = peer[group_n].file[f].offer[o].offer_info[section];
-			const int split_status_n = peer[group_n].file[f].split_status[section];
-			const uint64_t relevant_progress = peer[group_n].file[f].split_info[section];
-			torx_unlock(group_n) // XXX
-			if(split_status_n == offerer_n)
-				utilized++;
-			if(utilized >= online)
-				break;
-			if(split_status_n != -1 || relevant_progress >= offerer_progress)
+			const uint8_t sendfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t recvfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+			const uint8_t online = recvfd_connected + sendfd_connected;
+			const uint8_t blacklisted = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,blacklisted));
+			if(!online || blacklisted) // check blacklist and online status
 				continue;
-			if(offerer_progress >= tentative_progress)
-			{ // >= should result in the largest most recent offer being selected
-				tentative_n = offerer_n;
-				tentative_progress = offerer_progress;
-				tentative_section = section;
+			uint8_t utilized = 0;
+			int8_t utilized_fd_type = -1;
+			for(uint8_t section = 0; section <= splits; section++)
+			{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
+				torx_read(n) // XXX
+				const int split_status_n = peer[n].file[f].split_status[section];
+				const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
+				torx_unlock(n) // XXX
+				if(split_status_n == offerer_n)
+				{
+					utilized++;
+					utilized_fd_type = tmp_fd_type;
+				}
+			}
+			if(utilized >= online)
+				continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
+			for(uint8_t section = 0; section <= splits; section++)
+			{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
+				torx_read(n) // XXX
+				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_info[section];
+				const int split_status_n = peer[n].file[f].split_status[section];
+				const uint64_t relevant_progress = peer[n].file[f].split_info[section];
+				torx_unlock(n) // XXX
+				if(split_status_n != -1 || relevant_progress >= offerer_progress)
+					continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
+				if(offerer_progress >= target_progress)
+				{ // >= should result in the largest most recent offer being selected
+					target_n = offerer_n;
+					target_progress = offerer_progress;
+					file_request_strc.section = section;
+					target_o = o;
+					if(utilized && utilized_fd_type == 0) // XXX must prevent requesting two different sections of the same file concurrently on the same socket!!!
+						file_request_strc.fd_type = 1;
+					else if(utilized && utilized_fd_type == 1)
+						file_request_strc.fd_type = 0;
+					else if(sendfd_connected)
+						file_request_strc.fd_type = 1; // we'll prefer sendfd for transfers because we prefer recvfd for messages
+					else
+						file_request_strc.fd_type = 0;
+				}
+			}
+		}
+		if(target_n > -1)
+		{
+			if(getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
+			{ // Sanity check, should be unnecessary
+				error_simple(0,"target_n can only be GROUP_PEER. Coding error. Report this.");
+				return -1;
+			}
+			if(calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,target_o,(uint8_t)file_request_strc.section))
+			{
+				error_simple(0,"calculate_file_request_start_end failed with a group_ctrl. Coding error. Report this."); // possible race if this occurs?
+				return -1;
 			}
 		}
 	}
-	if(o && tentative_progress)
-	{
-		o--; // THIS IS CRITICAL, do not remove
-	//	torx_write(group_n) // XXX
-		printf("Choosing group_n=%d n=%d o=%d with progress=%"PRIu64" on section=%u\n",group_n,tentative_n,o,tentative_progress,tentative_section);
-	//	printf("Choosing n=%d o=%d with progress=%lu on section=%u utilized=%u\n",tentative_n,o,tentative_progress,tentative_section,peer[n].file[f].offer[o].utilized);
-	//	peer[n].file[f].offer[o].utilized++; // TODO perhaps this should be later, not in this function, otherwise the message could fail and leave someone permanently utilized... but we also don't want to call it too late
-	//	printf("Checkpoint now utilized: %u\n",peer[n].file[f].offer[o].utilized);
-	//	torx_unlock(group_n) // XXX
-		if(getter_uint8(tentative_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
-			error_simple(-1,"Tentative_n can only be GROUP_PEER. Coding error. Report this.");
-		return tentative_n;
+	else
+	{ // _CTRL or _GROUP_PEER
+		if(fd_type == -1)
+		{ // Sanity check
+			error_simple(0,"Wrong fd_type passed to select_peer. Coding error. Report this.");
+			return -1;
+		}
+		target_n = n;
+		file_request_strc.fd_type = fd_type; // must be set by caller
+		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
+		{ // There should only be 1 or 2 sections, 0 or 1 splits.
+			torx_read(n) // XXX
+			const int split_status_n = peer[n].file[f].split_status[file_request_strc.section];
+			const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[file_request_strc.section];
+			torx_unlock(n) // XXX
+			if(split_status_n != -1 && tmp_fd_type == fd_type)
+			{ // Cannot concurrently request more than one section of the same file on the same file descriptor or we'll have errors about non-consecutive writes.
+				error_simple(0,"We already have a request for a section of this file on this fd_type. Coding error. Report this.");
+				return -1;
+			}
+			if(split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,(uint8_t)file_request_strc.section) == 0)
+				break; // Target section aquired
+		}
+		if(file_request_strc.section > splits)
+			return -1; // No unfinished sections available to request.
 	}
-	// XXX put debug info here, like how many peers online, how many utilized, 
+	if(target_n > -1)
+	{
+		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,file_request_strc.section,target_n,file_request_strc.fd_type);
+		torx_write(n) // XXX
+		peer[n].file[f].split_status[file_request_strc.section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
+		peer[n].file[f].split_status_fd[file_request_strc.section] = file_request_strc.fd_type;
+		torx_unlock(n) // XXX
+		message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&file_request_strc,FILE_REQUEST_LEN);
+		return target_n;
+	}
 	return -1;
 }
 
@@ -867,8 +912,13 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 { // Internal function only, do not call from UI. Use file_accept
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	if(!is_inbound_transfer(status))
+	{
+		error_simple(0,"Sanity check failed in file_request_internal. File is not inbound.");
+		return;
+	}
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	torx_read(n) // XXX
 	const char *file_path = peer[n].file[f].file_path;
 	torx_unlock(n) // XXX
@@ -894,38 +944,20 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 		breakpoint();
 		return;
 	}
-	struct int_int_int8 int_int_int8;
-	int_int_int8.n = n; // potentially group_n
-	int_int_int8.f = f;
-	if(owner != ENUM_OWNER_GROUP_CTRL)
-	{
+	if(owner == ENUM_OWNER_GROUP_CTRL)
+		while(select_peer(n,f,-1) > -1)
+			continue; // Request from lots of people concurrently.
+	else
+	{ // These are _CTRL(p2p) and _GROUP_CTRL(PM) transfers
 		if(fd_type == -1)
-		{
-			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-			const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
-			if(sendfd_connected)
-			{ // DO NOT MAKE else if
-				int_int_int8.fd_type = 1;
-				message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
-			}
-			if(recvfd_connected)
-			{ // DO NOT MAKE else if
-				int_int_int8.fd_type = 0;
-				message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
-			}
+		{ // Probably got here from file_accept
+			if(getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected))) // DO NOT MAKE else if
+				select_peer(n,f,1);
+			if(getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected))) // DO NOT MAKE else if
+				select_peer(n,f,0);
 		}
-		else
-		{
-			int_int_int8.fd_type = fd_type;
-			message_send(n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN);
-		}
-	}
-	else						// this check could be is_inbound_transfer ??
-	{
-		int_int_int8.fd_type = -1; // TODO we should set this via select_peer
-		for(int target_n ; status != ENUM_FILE_OUTBOUND_PENDING && status != ENUM_FILE_OUTBOUND_ACCEPTED && (target_n = select_peer(n,f)) > -1 ; )
-			if(message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&int_int_int8,FILE_REQUEST_LEN) == INT_MIN)
-				break; // This break is necessary, though not idea, because otherwise if a message fails to send (because socket is currently utilized), it will go back to select_peer, be selected again, fail again, on repeat.
+		else // Probably got here from packet_removal
+			select_peer(n,f,fd_type);
 	}
 }
 

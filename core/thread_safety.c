@@ -244,7 +244,6 @@ struct offsets offsets_file[] = {
 struct offsets offsets_offer[] = {
 	offsize(offer_list,offerer_n,"offerer_n"),
 	offsize(offer_list,offer_info,"offer_info")
-//	offsize(offer_list,utilized,"utilized")
 };
 
 struct offsets offsets_group[] = {

@@ -652,7 +652,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				if(!*fd_active)
 				{ // Should already be open from file_accept but just in case its not
 					torx_unlock(nn) // XXX
-					error_simple(0,"Re-opening file pointer which we assumed would be open.");
+				//no	error_simple(0,"Re-opening file pointer which we assumed would be open.");
 					char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
 					if(!file_path)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
@@ -756,7 +756,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_fd_lock(nn,f) // XXX
 				FILE *local = *fd_active;
 				torx_fd_unlock(nn,f) // XXX
-				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here
+				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 segfaulted here during group file transfer
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local); // TODO 2024/12/17 segfaulted here during group file transfer
 				torx_fd_lock(nn,f) // XXX
 				*fd_active = local;
@@ -1009,7 +1009,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						uint8_t file_status;
 						if(file_path == NULL && owner_nn == ENUM_OWNER_GROUP_PEER)
 						{ // Triggers on requests for group files (non-pm)
-							printf("Checkpoint group file request trigger 1\n");
+						//	printf("Checkpoint group file request trigger 1\n");
 							const int group_n_f = set_f(event_strc->group_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
 							file_path = getter_string(NULL,event_strc->group_n,INT_MIN,group_n_f,offsetof(struct file_list,file_path));
 							size = getter_uint64(event_strc->group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,size));
@@ -1018,7 +1018,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 						{ // pm or regular transfer
-							printf("Checkpoint non-group (or pm) file request trigger 2\n");
+						//	printf("Checkpoint non-group (or pm) file request trigger 2\n");
 							size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
 							file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
 						}
