@@ -319,12 +319,12 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
 		char *split_path;
 		uint64_t *split_info; // Contains section info, which is amount transferred in that section (incoming only)
-		int *split_status; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
+		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
 		int8_t *split_status_fd;
 		/* Exclusively Outbound transfer related */
-		uint64_t outbound_start[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
-		uint64_t outbound_end[2];		// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
-		uint64_t outbound_transferred[2];	// not re-using split_info/split_status because thats for INCOMING, which ideally can occur concurrently
+		uint64_t outbound_start[2];		// not re-using split_info/split_status_n because thats for INCOMING, which ideally can occur concurrently
+		uint64_t outbound_end[2];		// not re-using split_info/split_status_n because thats for INCOMING, which ideally can occur concurrently
+		uint64_t outbound_transferred[2];	// not re-using split_info/split_status_n because thats for INCOMING, which ideally can occur concurrently
 		/* Exclusively Group related */
 		unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
 		/* File descriptors */
@@ -518,7 +518,7 @@ enum file_statuses
 	ENUM_FILE_OUTBOUND_CANCELLED = 9, // we no longer want to send it
 
 	/* File Transfer Direction is Inbound ( we are receiver ) */ 
-	ENUM_FILE_INBOUND_PENDING = 5, // pending or paused (can determine which is which by whether .split_info/.split_status is NULL (pending) or not (paused))
+	ENUM_FILE_INBOUND_PENDING = 5, // pending or paused (can determine which is which by whether .split_info/.split_status_n is NULL (pending) or not (paused))
 	ENUM_FILE_INBOUND_ACCEPTED = 6,
 	ENUM_FILE_INBOUND_COMPLETED = 7,
 	ENUM_FILE_INBOUND_REJECTED = 8, // we dont want file

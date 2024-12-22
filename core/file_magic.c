@@ -748,19 +748,19 @@ static inline int split_read(const int n,const int f)
 	const size_t read_size = sizeof(uint64_t)*sections;
 //	printf("Checkpoint split_read allocating n=%d f=%d splits=%u\n",n,f,splits);
 	uint64_t *split_info = torx_insecure_malloc(read_size);
-	int *split_status = torx_insecure_malloc(sizeof(int)*sections);
+	int *split_status_n = torx_insecure_malloc(sizeof(int)*sections);
 	int8_t *split_status_fd = torx_insecure_malloc(sizeof(int8_t)*sections);
 	while(sections--)
 	{ // initialize info to zero and status to -1 (invalid n)
 		split_info[sections] = 0;
-		split_status[sections] = -1; // no one yet claims this
+		split_status_n[sections] = -1; // no one yet claims this
 		split_status_fd[sections] = -1; // no one yet claims this
 	}
 	if(fp && fread(split_info,1,read_size,fp) != read_size)
 		error_simple(0,"Could not open split file or found an invalid checksum."); // read sections
 	torx_write(n) // XXX
 	peer[n].file[f].split_info = split_info;
-	peer[n].file[f].split_status = split_status;
+	peer[n].file[f].split_status_n = split_status_n;
 	peer[n].file[f].split_status_fd = split_status_fd;
 	torx_unlock(n) // XXX
 	if(fp)
@@ -865,7 +865,7 @@ void split_update(const int n,const int f,const int section)
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].split_path);
 //		free(peer[n].file[f].split_info); peer[n].file[f].split_info = NULL;
-		torx_free((void*)&peer[n].file[f].split_status);
+		torx_free((void*)&peer[n].file[f].split_status_n);
 		torx_free((void*)&peer[n].file[f].split_status_fd);
 		torx_unlock(n) // XXX
 		return;

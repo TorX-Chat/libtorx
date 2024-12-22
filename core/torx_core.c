@@ -2245,7 +2245,7 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 	torx_free((void*)&peer[n].file[f].split_hashes);
 	torx_free((void*)&peer[n].file[f].split_path);
 	torx_free((void*)&peer[n].file[f].split_info);
-	torx_free((void*)&peer[n].file[f].split_status);
+	torx_free((void*)&peer[n].file[f].split_status_n);
 	torx_free((void*)&peer[n].file[f].split_status_fd);
 	close_sockets_nolock(peer[n].file[f].fd_out_recvfd) // Do not eliminate
 	close_sockets_nolock(peer[n].file[f].fd_out_sendfd)
@@ -3154,7 +3154,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].splits = 0;
 	peer[n].file[f].split_path = NULL;
 	peer[n].file[f].split_info = NULL;
-	peer[n].file[f].split_status = NULL;
+	peer[n].file[f].split_status_n = NULL;
 	peer[n].file[f].split_status_fd = NULL;
 	sodium_memzero(peer[n].file[f].outbound_start,sizeof(peer[n].file[f].outbound_start));
 	sodium_memzero(peer[n].file[f].outbound_end,sizeof(peer[n].file[f].outbound_end));

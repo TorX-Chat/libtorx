@@ -707,10 +707,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					section_end = next_section_start - 1;
 				}
 				torx_read(nn) // XXX
-				const int *split_status = peer[nn].file[f].split_status;
+				const int *split_status_n = peer[nn].file[f].split_status_n;
 				const int8_t *split_status_fd = peer[nn].file[f].split_status_fd;
 				torx_unlock(nn) // XXX
-				if(split_status == NULL || split_status_fd == NULL)
+				if(split_status_n == NULL || split_status_fd == NULL)
 				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second
 					error_simple(0,"Peer asked us to a file without initialized split_status. Coding error. Report this. Bailing.");
 					continue;
@@ -718,7 +718,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_read(nn) // XXX
 				const uint64_t section_info_current = peer[nn].file[f].split_info[section];
 				const int8_t relevant_split_status_fd = peer[nn].file[f].split_status_fd[section];
-				const int relevant_split_status = peer[nn].file[f].split_status[section];
+				const int relevant_split_status = peer[nn].file[f].split_status_n[section];
 				torx_unlock(nn) // XXX
 				if(packet_start + packet_len-cur > section_end + 1)
 				{
@@ -732,16 +732,16 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
-				//	if(split_status)
+				//	if(split_status_n)
 				//		printf("Checkpoint split status EXISTS: %d ?= %d\n",relevant_split_status,event_strc->n);
 				//	if(split_status_fd)
 				//		printf("Checkpoint split status_fd EXISTS: %d ?= %d\n",relevant_split_status_fd,event_strc->fd_type);
 				//	printf("Checkpoint section: %u start==%lu end==%lu\n",section,calculate_section_start(size,splits_nn,section),section_end);
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
-					if(split_status && split_status_fd)
-						error_printf(0,"Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status ? 1 : 0,split_status_fd ? 1 : 0,event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
+					if(split_status_n && split_status_fd)
+						error_printf(0,"Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status_n ? 1 : 0,split_status_fd ? 1 : 0,event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
 					else
-						error_printf(0,"Checkpoint improper split_status and/or split_status_fd null\n");
+						error_printf(0,"Checkpoint improper split_status_n and/or split_status_fd null\n");
 				//	breakpoint();
 				/*	if(!sent_pause++)
 					{

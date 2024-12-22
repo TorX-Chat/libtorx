@@ -98,25 +98,25 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 	{
 		uint16_t active_transfers_ongoing = 0;
 		torx_read(n) // XXX
-		if(peer[n].file[f].split_status == NULL || peer[n].file[f].split_status_fd == NULL)
+		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
 		{
 			torx_unlock(n) // XXX
 			return was_transferring;
 		}
 		for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
 		{ // yes this is right, dont change it
-			if(peer[n].file[f].split_status[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
+			if(peer[n].file[f].split_status_n[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
 			{
 				torx_unlock(n) // XXX
 				torx_write(n) // XXX
-				peer[n].file[f].split_status[section] = -1; // unclaim section
+				peer[n].file[f].split_status_n[section] = -1; // unclaim section
 				peer[n].file[f].split_status_fd[section] = -1;
 				torx_unlock(n) // XXX
-				error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = -1"RESET,n,f,section);
+				error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = -1"RESET,n,f,section);
 				was_transferring = 1;
 				torx_read(n) // XXX
 			}
-			else if(peer[n].file[f].split_status[section] > -1)
+			else if(peer[n].file[f].split_status_n[section] > -1)
 				active_transfers_ongoing++;
 		}
 		torx_unlock(n) // XXX
@@ -752,10 +752,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		return -1;
 	}
 	torx_read(n) // XXX
-	const int *split_status = peer[n].file[f].split_status;
+	const int *split_status_n = peer[n].file[f].split_status_n;
 	const int8_t *split_status_fd = peer[n].file[f].split_status_fd;
 	torx_unlock(n) // XXX
-	if(split_status == NULL || split_status_fd == NULL)
+	if(split_status_n == NULL || split_status_fd == NULL)
 	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
 		error_simple(0,"Split_status is NULL. This is unacceptable at this point. Should call split_read or section_update first, either of which will initialize.");
 		split_read(n,f);
@@ -783,7 +783,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			for(uint8_t section = 0; section <= splits; section++)
 			{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
 				torx_read(n) // XXX
-				const int split_status_n = peer[n].file[f].split_status[section];
+				const int split_status_n = peer[n].file[f].split_status_n[section];
 				const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
 				torx_unlock(n) // XXX
 				if(split_status_n == offerer_n)
@@ -798,7 +798,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 				torx_read(n) // XXX
 				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_info[section];
-				const int split_status_n = peer[n].file[f].split_status[section];
+				const int split_status_n = peer[n].file[f].split_status_n[section];
 				const uint64_t relevant_progress = peer[n].file[f].split_info[section];
 				torx_unlock(n) // XXX
 				if(split_status_n != -1 || relevant_progress >= offerer_progress)
@@ -846,7 +846,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
 		{ // There should only be 1 or 2 sections, 0 or 1 splits.
 			torx_read(n) // XXX
-			const int split_status_n = peer[n].file[f].split_status[file_request_strc.section];
+			const int split_status_n = peer[n].file[f].split_status_n[file_request_strc.section];
 			const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[file_request_strc.section];
 			torx_unlock(n) // XXX
 			if(split_status_n != -1 && tmp_fd_type == fd_type)
@@ -862,9 +862,9 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	}
 	if(target_n > -1)
 	{
-		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status[%d] = %d, fd_type = %d"RESET,n,f,file_request_strc.section,target_n,file_request_strc.fd_type);
+		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = %d, fd_type = %d"RESET,n,f,file_request_strc.section,target_n,file_request_strc.fd_type);
 		torx_write(n) // XXX
-		peer[n].file[f].split_status[file_request_strc.section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
+		peer[n].file[f].split_status_n[file_request_strc.section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 		peer[n].file[f].split_status_fd[file_request_strc.section] = file_request_strc.fd_type;
 		torx_unlock(n) // XXX
 		message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&file_request_strc,FILE_REQUEST_LEN);
@@ -1005,14 +1005,14 @@ void file_accept(const int n,const int f)
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{ // Send pause to all peers sending us data and unclaim relevant sections.
 			torx_read(n) // XXX
-			if(peer[n].file[f].split_status == NULL || peer[n].file[f].split_status_fd == NULL)
+			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
 			{
 				torx_unlock(n) // XXX
 				return;
 			}
 			for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
 			{ // yes this is right, dont change it
-				const int peer_n = peer[n].file[f].split_status[section];
+				const int peer_n = peer[n].file[f].split_status_n[section];
 				if(peer_n > -1)
 				{
 					torx_unlock(n) // XXX
@@ -1129,14 +1129,14 @@ void file_cancel(const int n,const int f)
 		if(owner == ENUM_OWNER_GROUP_CTRL && is_inbound)
 		{ // Send cancel to all peers sending us data and unclaim relevant sections.
 			torx_read(n) // XXX
-			if(peer[n].file[f].split_status == NULL || peer[n].file[f].split_status_fd == NULL)
+			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
 			{
 				torx_unlock(n) // XXX
 				return;
 			}
 			for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
 			{ // yes this is right, dont change it
-				const int peer_n = peer[n].file[f].split_status[section];
+				const int peer_n = peer[n].file[f].split_status_n[section];
 				if(peer_n > -1)
 				{
 					torx_unlock(n) // XXX
