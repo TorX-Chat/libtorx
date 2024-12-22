@@ -1906,14 +1906,14 @@ uint64_t calculate_transferred(const int n,const int f)
 	else /* ENUM_FILE_INBOUND_ */
 	{
 		torx_read(n) // XXX
-		const uint64_t *split_info = peer[n].file[f].split_info;
+		const uint64_t *split_progress = peer[n].file[f].split_progress;
 		torx_unlock(n) // XXX
-		if(split_info == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
+		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
 			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
 		torx_read(n) // XXX
 		uint16_t sections = peer[n].file[f].splits+1;
 		while(sections--) // If there are 0 splits, there is 1 section, it is section 0;
-			transferred += peer[n].file[f].split_info[sections];
+			transferred += peer[n].file[f].split_progress[sections];
 		torx_unlock(n) // XXX
 	}
 	return transferred; // BEWARE of baseline. See above.
@@ -2230,8 +2230,8 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 }
 
 static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here
-{
-	torx_free((void*)&peer[n].file[f].offer[o].offer_info);
+{ // Note: We don't `.offer_n = -1` because it could cause issues in select_peer if this function was called from outside of zero_f
+	torx_free((void*)&peer[n].file[f].offer[o].offer_progress);
 }
 
 static inline void zero_f(const int n,const int f) // XXX do not put locks in here
@@ -2244,9 +2244,10 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 	torx_free((void*)&peer[n].file[f].file_path);
 	torx_free((void*)&peer[n].file[f].split_hashes);
 	torx_free((void*)&peer[n].file[f].split_path);
-	torx_free((void*)&peer[n].file[f].split_info);
+	torx_free((void*)&peer[n].file[f].split_progress);
 	torx_free((void*)&peer[n].file[f].split_status_n);
 	torx_free((void*)&peer[n].file[f].split_status_fd);
+	torx_free((void*)&peer[n].file[f].split_status_req);
 	close_sockets_nolock(peer[n].file[f].fd_out_recvfd) // Do not eliminate
 	close_sockets_nolock(peer[n].file[f].fd_out_sendfd)
 	close_sockets_nolock(peer[n].file[f].fd_in_recvfd)
@@ -3140,7 +3141,7 @@ void initial_keyed(void)
 static void initialize_offer(const int n,const int f,const int o) // XXX do not put locks in here
 { // initalize an iter of the offer struc.
 	peer[n].file[f].offer[o].offerer_n = -1;
-	peer[n].file[f].offer[o].offer_info = NULL;
+	peer[n].file[f].offer[o].offer_progress = NULL;
 }
 
 static void initialize_f(const int n,const int f) // XXX do not put locks in here
@@ -3153,9 +3154,10 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
 	peer[n].file[f].split_path = NULL;
-	peer[n].file[f].split_info = NULL;
+	peer[n].file[f].split_progress = NULL;
 	peer[n].file[f].split_status_n = NULL;
 	peer[n].file[f].split_status_fd = NULL;
+	peer[n].file[f].split_status_req = NULL;
 	sodium_memzero(peer[n].file[f].outbound_start,sizeof(peer[n].file[f].outbound_start));
 	sodium_memzero(peer[n].file[f].outbound_end,sizeof(peer[n].file[f].outbound_end));
 	sodium_memzero(peer[n].file[f].outbound_transferred,sizeof(peer[n].file[f].outbound_transferred));

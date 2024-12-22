@@ -111,6 +111,7 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 				torx_write(n) // XXX
 				peer[n].file[f].split_status_n[section] = -1; // unclaim section
 				peer[n].file[f].split_status_fd[section] = -1;
+				peer[n].file[f].split_status_req[section] = 0;
 				torx_unlock(n) // XXX
 				error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = -1"RESET,n,f,section);
 				was_transferring = 1;
@@ -201,7 +202,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		torx_unlock(n) // XXX
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
-	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] (+ MODIFIED[4] + FILENAME (no null termination)) or, if partial (+ split_info[section] *(splits + 1))
+	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] (+ MODIFIED[4] + FILENAME (no null termination)) or, if partial (+ split_progress[section] *(splits + 1))
 		torx_read(n) // XXX
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
 		torx_unlock(n) // XXX
@@ -225,7 +226,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 			for(uint8_t section_local = 0; section_local <= splits; section_local++)
 			{ // Add how much is completed on each section
 				torx_read(n) // XXX
-				trash64 = htobe64(peer[n].file[f].split_info[section_local]);
+				trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
 				torx_unlock(n) // XXX
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + section_local * sizeof(uint64_t)],&trash64,sizeof(uint64_t));
 			}
@@ -725,13 +726,13 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 	const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
-	const uint64_t current = peer[n].file[f].split_info[section];
+	const uint64_t current = peer[n].file[f].split_progress[section];
 	torx_unlock(n) // XXX
 	*start = calculate_section_start(file_size,splits,section) + current;
 	if(o > -1)
 	{ // Group transfer
 		torx_read(n) // XXX
-		const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_info[section];
+		const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
 		torx_unlock(n) // XXX
 		*end = *start + offerer_progress - 1;
 	}
@@ -766,10 +767,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
 	file_request_strc.f = f;
 	int target_n = -1;
+	uint64_t target_progress = 0;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		int target_o = -1;
-		uint64_t target_progress = 0;
 		for(int offerer_n, o = 0 ; (offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
 		{
 			const uint8_t sendfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
@@ -797,9 +798,9 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			for(uint8_t section = 0; section <= splits; section++)
 			{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 				torx_read(n) // XXX
-				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_info[section];
+				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
 				const int split_status_n = peer[n].file[f].split_status_n[section];
-				const uint64_t relevant_progress = peer[n].file[f].split_info[section];
+				const uint64_t relevant_progress = peer[n].file[f].split_progress[section];
 				torx_unlock(n) // XXX
 				if(split_status_n != -1 || relevant_progress >= offerer_progress)
 					continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
@@ -859,6 +860,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		}
 		if(file_request_strc.section > splits)
 			return -1; // No unfinished sections available to request.
+		target_progress = file_request_strc.end - file_request_strc.start + 1; // NOTE: This is unnecessary/unutilized in non-group transfers.
 	}
 	if(target_n > -1)
 	{
@@ -866,6 +868,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		torx_write(n) // XXX
 		peer[n].file[f].split_status_n[file_request_strc.section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 		peer[n].file[f].split_status_fd[file_request_strc.section] = file_request_strc.fd_type;
+		peer[n].file[f].split_status_req[file_request_strc.section] = target_progress;
 		torx_unlock(n) // XXX
 		message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&file_request_strc,FILE_REQUEST_LEN);
 		return target_n;

@@ -318,17 +318,17 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		const int o = set_o(group_n,f,n);
 		setter(group_n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n),&n,sizeof(n));
 		torx_write(group_n) // XXX
-		if(peer[group_n].file[f].offer[o].offer_info == NULL)
-			peer[group_n].file[f].offer[o].offer_info = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
+		if(peer[group_n].file[f].offer[o].offer_progress == NULL)
+			peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
 			for(int section = 0; section <= splits; section++)
-				peer[group_n].file[f].offer[o].offer_info[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
+				peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
 		else
 			for(int section = 0; section <= splits; section++)
 			{ // setting every section to 100% because this offer type is of a complete file
 				const uint64_t start = calculate_section_start(size,splits,section);
 				const uint64_t end = calculate_section_start(size,splits,section+1)-1;
-				peer[group_n].file[f].offer[o].offer_info[section] = end - start + 1;
+				peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
 			}
 		torx_unlock(group_n) // XXX
 		if(status == ENUM_FILE_INBOUND_ACCEPTED)
@@ -717,7 +717,7 @@ static void set_split_path(const int n,const int f)
 }
 
 static inline int split_read(const int n,const int f)
-{ // File is in binary format. Checksum,nos,split_info
+{ // File is in binary format. Checksum,nos,split_progress
 	char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(!split_path)
 		set_split_path(n,f);
@@ -747,26 +747,29 @@ static inline int split_read(const int n,const int f)
 	uint16_t sections = splits+1;
 	const size_t read_size = sizeof(uint64_t)*sections;
 //	printf("Checkpoint split_read allocating n=%d f=%d splits=%u\n",n,f,splits);
-	uint64_t *split_info = torx_insecure_malloc(read_size);
+	uint64_t *split_progress = torx_insecure_malloc(read_size);
 	int *split_status_n = torx_insecure_malloc(sizeof(int)*sections);
 	int8_t *split_status_fd = torx_insecure_malloc(sizeof(int8_t)*sections);
+	uint64_t *split_status_req = torx_insecure_malloc(sizeof(uint64_t)*sections);
 	while(sections--)
 	{ // initialize info to zero and status to -1 (invalid n)
-		split_info[sections] = 0;
+		split_progress[sections] = 0;
 		split_status_n[sections] = -1; // no one yet claims this
 		split_status_fd[sections] = -1; // no one yet claims this
+		split_status_req[sections] = 0;
 	}
-	if(fp && fread(split_info,1,read_size,fp) != read_size)
+	if(fp && fread(split_progress,1,read_size,fp) != read_size)
 		error_simple(0,"Could not open split file or found an invalid checksum."); // read sections
 	torx_write(n) // XXX
-	peer[n].file[f].split_info = split_info;
+	peer[n].file[f].split_progress = split_progress;
 	peer[n].file[f].split_status_n = split_status_n;
 	peer[n].file[f].split_status_fd = split_status_fd;
+	peer[n].file[f].split_status_req = split_status_req;
 	torx_unlock(n) // XXX
 	if(fp)
 	{ // condition is necessary with fclose it seems
 	//	printf("Checkpoint Reading nos: %d\n",peer[n].file[f].splits);
-	//	printf("Checkpoint Reading split data: %lu %lu\n",peer[n].file[f].split_info[0],peer[n].file[f].split_info[1]);
+	//	printf("Checkpoint Reading split data: %lu %lu\n",peer[n].file[f].split_progress[0],peer[n].file[f].split_progress[1]);
 		close_sockets_nolock(fp);
 		return 0; // successfully read
 	}
@@ -774,10 +777,10 @@ static inline int split_read(const int n,const int f)
 }
 
 int initialize_split_info(const int n,const int f)
-{ // Should read split file and set the details, or create and initialize split file ( as 0,0,0,0,etc ). File is in binary format. Checksum,nos,split_info.
+{ // Should read split file and set the details, or create and initialize split file ( as 0,0,0,0,etc ). File is in binary format. Checksum,nos,split_progress.
 	const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	torx_read(n) // XXX
-	if(peer[n].file[f].split_path && peer[n].file[f].split_info)
+	if(peer[n].file[f].split_path && peer[n].file[f].split_progress)
 	{ // Split info appears already initialized. No need to do it again.
 		torx_unlock(n) // XXX
 		return 0;
@@ -794,9 +797,9 @@ int initialize_split_info(const int n,const int f)
 	if(split_path == NULL)
 		set_split_path(n,f);
 	torx_read(n) // XXX
-	const uint64_t *split_info = peer[n].file[f].split_info;
+	const uint64_t *split_progress = peer[n].file[f].split_progress;
 	torx_unlock(n) // XXX
-	if(split_info == NULL)
+	if(split_progress == NULL)
 	{ // Initialize if not already
 		split_read(n,f); // reads split file or initializes in memory
 		struct stat file_stat = {0};
@@ -831,14 +834,14 @@ int initialize_split_info(const int n,const int f)
 			}
 			unsigned char checksum[CHECKSUM_BIN_LEN];
 			getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp);
+			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp); // TODO we fwrite multiple times unnecessarily
 			sodium_memzero(checksum,sizeof(checksum));
-			uint64_t relevant_split_info[splits+1];
+			uint64_t relevant_split_progress[splits+1];
 			torx_read(n) // XXX
-			memcpy(relevant_split_info,peer[n].file[f].split_info,sizeof(relevant_split_info));
+			memcpy(relevant_split_progress,peer[n].file[f].split_progress,sizeof(relevant_split_progress));
 			torx_unlock(n) // XXX
-			fwrite(&splits,1,sizeof(splits),fp);
-			fwrite(relevant_split_info,1,sizeof(relevant_split_info),fp);
+			fwrite(&splits,1,sizeof(splits),fp); // TODO we fwrite multiple times unnecessarily
+			fwrite(relevant_split_progress,1,sizeof(relevant_split_progress),fp); // TODO we fwrite multiple times unnecessarily
 			close_sockets_nolock(fp);
 		}
 		torx_free((void*)&split_path);
@@ -847,7 +850,7 @@ int initialize_split_info(const int n,const int f)
 }
 
 void split_update(const int n,const int f,const int section)
-{ // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_info[0] = 123; peer[n].file[f].split_info[1] = 456; split_update (n,f);
+{ // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
 	const char *split_path = peer[n].file[f].split_path;
@@ -864,9 +867,10 @@ void split_update(const int n,const int f,const int section)
 		torx_free((void*)&split_path);
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].split_path);
-//		free(peer[n].file[f].split_info); peer[n].file[f].split_info = NULL;
+	//	torx_free((void*)&peer[n].file[f].split_progress); // No need to free this. Leave it.
 		torx_free((void*)&peer[n].file[f].split_status_n);
 		torx_free((void*)&peer[n].file[f].split_status_fd);
+		torx_free((void*)&peer[n].file[f].split_status_req);
 		torx_unlock(n) // XXX
 		return;
 	}
@@ -882,61 +886,66 @@ void split_update(const int n,const int f,const int section)
 			}
 		torx_free((void*)&split_path);
 		torx_read(n) // XXX
-		const uint64_t relevant_split_info = peer[n].file[f].split_info[section];
+		const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
 		torx_unlock(n) // XXX
 		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits TODO might be +1 byte off
-		fwrite(&relevant_split_info,1,sizeof(relevant_split_info),fp); // write contents
+		fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
 		close_sockets_nolock(fp);
 	}
 }
 
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const uint16_t section,const uint64_t section_end,const int peer_n)
-{ // INBOUND FILE TRANSFER ONLY To be called after write during file transfer. Updates .split_info, determines whether to call split_update. peer_n is only used for blacklisting.
+{ // INBOUND FILE TRANSFER ONLY To be called after write during file transfer. Updates .split_progress, determines whether to call split_update. peer_n is only used for blacklisting.
 	if(wrote < 1)
 		return;
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_write(n) // XXX yes, its a write, see +=
-	const uint64_t section_info_current = peer[n].file[f].split_info[section] += wrote;
+	const uint64_t section_info_current = peer[n].file[f].split_progress[section] += wrote;
+	const uint64_t section_req_current = peer[n].file[f].split_status_req[section];
 	torx_unlock(n) // XXX
-	if(packet_start + wrote == section_end + 1)
+	const uint8_t section_complete = (packet_start + wrote == section_end + 1);
+	if(section_complete || section_info_current == section_req_current)
 	{ // Section complete. Close file descriptors (flushing data to disk)
 		if(fd_type == 0) // recvfd, inbound
 			close_sockets(n,f,peer[n].file[f].fd_in_recvfd)
 		else /* if(fd_type == 1) */ // sendfd, inbound
 			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
-		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-		{ // Run checksum on the group file's individual section
-			const uint64_t start = calculate_section_start(size,splits,section);
-			const uint64_t end = calculate_section_start(size,splits,section+1)-1;
-			const uint64_t len = end-start+1;
-			unsigned char checksum[CHECKSUM_BIN_LEN];
-			const uint64_t ret1 = b3sum_bin(checksum,file_path,NULL,start,len);
-			torx_read(n) // XXX
-			const int ret2 = memcmp(checksum,&peer[n].file[f].split_hashes[CHECKSUM_BIN_LEN*section],CHECKSUM_BIN_LEN);
-			torx_unlock(n) // XXX
-			sodium_memzero(checksum,sizeof(checksum));
-			if(ret1 == 0 || ret2)
-			{ // Has been tested, works.
-				error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete. Experimentally requesting another section from others, if available.");
-				printf("Checkpoint bad section=%u %"PRIu64" %d\n",section,ret1,ret2);
-				torx_write(n) // XXX
-				peer[n].file[f].split_info[section] = 0;
+		if(section_complete)
+		{ // Verify checksum
+			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+			const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+			if(owner == ENUM_OWNER_GROUP_CTRL)
+			{ // Run checksum on the group file's individual section
+				const uint64_t start = calculate_section_start(size,splits,section);
+				const uint64_t end = calculate_section_start(size,splits,section+1)-1;
+				const uint64_t len = end-start+1;
+				unsigned char checksum[CHECKSUM_BIN_LEN];
+				const uint64_t ret1 = b3sum_bin(checksum,file_path,NULL,start,len);
+				torx_read(n) // XXX
+				const int ret2 = memcmp(checksum,&peer[n].file[f].split_hashes[CHECKSUM_BIN_LEN*section],CHECKSUM_BIN_LEN);
 				torx_unlock(n) // XXX
-				torx_write(peer_n) // XXX
-				peer[peer_n].blacklisted++;
-				torx_unlock(peer_n) // XXX
-			}
-			else
-			{
-				printf("Checkpoint VERIFIED checksum section==%d\n",section);
-				message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
+				sodium_memzero(checksum,sizeof(checksum));
+				if(ret1 == 0 || ret2)
+				{ // Has been tested, works.
+					error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete. Experimentally requesting another section from others, if available.");
+					printf("Checkpoint bad section=%u %"PRIu64" %d\n",section,ret1,ret2);
+					torx_write(n) // XXX
+					peer[n].file[f].split_progress[section] = 0;
+					torx_unlock(n) // XXX
+					torx_write(peer_n) // XXX
+					peer[peer_n].blacklisted++;
+					torx_unlock(peer_n) // XXX
+				}
+				else
+				{
+					printf("Checkpoint VERIFIED checksum section==%d. %lu of %lu\n",section,section_info_current,section_req_current);
+					message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
+				}
 			}
 		}
 		section_unclaim(n,f,peer_n,fd_type); // must be before file_request_internal
-		if(calculate_transferred(n,f) == size)
+		if(section_complete && calculate_transferred(n,f) == size)
 		{
 			if(CHECKSUM_ON_COMPLETION && owner != ENUM_OWNER_GROUP_CTRL) // Note: Group file generate section hashes and compare individually. Not necessary to check hash of hashes or size.
 			{ // TODO This blocks, so it should be used for debug purposes only

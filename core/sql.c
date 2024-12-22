@@ -1203,11 +1203,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				peer[nn].file[f].file_path = torx_secure_malloc(extraneous_len+1);
 				memcpy(peer[nn].file[f].file_path,file_path,extraneous_len);
 				peer[nn].file[f].file_path[extraneous_len] = '\0';
-				const uint64_t *split_info = peer[nn].file[f].split_info;
+				const uint64_t *split_progress = peer[nn].file[f].split_progress;
 				torx_unlock(nn) // XXX
 				extraneous_len = 0; // MUST because related to callback
 				uint8_t status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_info != NULL)
+				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_progress != NULL)
 				{ // This can trigger when the status == pending due to having received a pause at any time
 					status = ENUM_FILE_INBOUND_ACCEPTED;
 					setter(nn,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
@@ -1216,12 +1216,12 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				{
 					initialize_split_info(nn,f);
 					torx_read(nn) // XXX
-					if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_info[0] == 0)
+					if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_progress[0] == 0)
 					{ // 2024/05/12 Setting transferred amount according to file size
 						torx_unlock(nn) // XXX
 						const uint64_t size_on_disk = get_file_size(file_path);
 						torx_write(nn) // XXX
-						peer[nn].file[f].split_info[0] = size_on_disk;
+						peer[nn].file[f].split_progress[0] = size_on_disk;
 						if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
 							peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
 					}

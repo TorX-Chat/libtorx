@@ -687,9 +687,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				cur += 8; // 8 --> 16
 				uint64_t packet_start = be64toh(trash_start);
 				torx_read(nn) // XXX
-				const uint64_t *split_info = peer[nn].file[f].split_info;
+				const uint64_t *split_progress = peer[nn].file[f].split_progress;
 				torx_unlock(nn) // XXX
-				if(split_info == NULL)
+				if(split_progress == NULL)
 					initialize_split_info(nn,f);
 				const uint64_t size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
 				uint16_t section = 0;
@@ -716,7 +716,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					continue;
 				}
 				torx_read(nn) // XXX
-				const uint64_t section_info_current = peer[nn].file[f].split_info[section];
+				const uint64_t section_info_current = peer[nn].file[f].split_progress[section];
 				const int8_t relevant_split_status_fd = peer[nn].file[f].split_status_fd[section];
 				const int relevant_split_status = peer[nn].file[f].split_status_n[section];
 				torx_unlock(nn) // XXX

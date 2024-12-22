@@ -222,9 +222,10 @@ struct offsets offsets_file[] = {
 	offsize(file_list,modified,"modified"),
 	offsize(file_list,splits,"splits"),
 	offsize(file_list,split_path,"split_path"),
-	offsize(file_list,split_info,"split_info"),
+	offsize(file_list,split_progress,"split_progress"),
 	offsize(file_list,split_status_n,"split_status_n"),
 	offsize(file_list,split_status_fd,"split_status_fd"),
+	offsize(file_list,split_status_req,"split_status_req"),
 	offsize(file_list,outbound_start,"outbound_start"),
 	offsize(file_list,outbound_end,"outbound_end"),
 	offsize(file_list,outbound_transferred,"outbound_transferred"),
@@ -244,7 +245,7 @@ struct offsets offsets_file[] = {
 
 struct offsets offsets_offer[] = {
 	offsize(offer_list,offerer_n,"offerer_n"),
-	offsize(offer_list,offer_info,"offer_info")
+	offsize(offer_list,offer_progress,"offer_progress")
 };
 
 struct offsets offsets_group[] = {
