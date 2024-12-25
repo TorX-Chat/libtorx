@@ -247,7 +247,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		if(section < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request sec=%d %lu to %lu on fd=%d",section,start,end,fd_type);
+		error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu on fd=%d",n,f,section,start,end,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -536,6 +536,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		}
 		if(send_prep(nnnn,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
+			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",nnnn,iiii,fd_type,protocol);
 			torx_write(nnnn) // XXX
 			zero_i(nnnn,iiii);
 			torx_unlock(nnnn) // XXX
@@ -732,9 +733,8 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 	if(o > -1)
 	{ // Group transfer
 		torx_read(n) // XXX
-		const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
+		*end = *start + peer[n].file[f].offer[o].offer_progress[section] - 1;
 		torx_unlock(n) // XXX
-		*end = *start + offerer_progress - 1;
 	}
 	else
 		*end = calculate_section_start(file_size,splits,section+1)-1;
@@ -784,10 +784,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			for(uint8_t section = 0; section <= splits; section++)
 			{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
 				torx_read(n) // XXX
-				const int split_status_n = peer[n].file[f].split_status_n[section];
+				const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
 				const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
 				torx_unlock(n) // XXX
-				if(split_status_n == offerer_n)
+				if(relevant_split_status_n == offerer_n)
 				{
 					utilized++;
 					utilized_fd_type = tmp_fd_type;
@@ -799,10 +799,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 				torx_read(n) // XXX
 				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
-				const int split_status_n = peer[n].file[f].split_status_n[section];
+				const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
 				const uint64_t relevant_progress = peer[n].file[f].split_progress[section];
 				torx_unlock(n) // XXX
-				if(split_status_n != -1 || relevant_progress >= offerer_progress)
+				if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
 					continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
 				if(offerer_progress >= target_progress)
 				{ // >= should result in the largest most recent offer being selected
@@ -847,15 +847,15 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
 		{ // There should only be 1 or 2 sections, 0 or 1 splits.
 			torx_read(n) // XXX
-			const int split_status_n = peer[n].file[f].split_status_n[file_request_strc.section];
+			const int relevant_split_status_n = peer[n].file[f].split_status_n[file_request_strc.section];
 			const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[file_request_strc.section];
 			torx_unlock(n) // XXX
-			if(split_status_n != -1 && tmp_fd_type == fd_type)
+			if(relevant_split_status_n != -1 && tmp_fd_type == fd_type)
 			{ // Cannot concurrently request more than one section of the same file on the same file descriptor or we'll have errors about non-consecutive writes.
 				error_simple(0,"We already have a request for a section of this file on this fd_type. Coding error. Report this.");
 				return -1;
 			}
-			if(split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,(uint8_t)file_request_strc.section) == 0)
+			if(relevant_split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,(uint8_t)file_request_strc.section) == 0)
 				break; // Target section aquired
 		}
 		if(file_request_strc.section > splits)

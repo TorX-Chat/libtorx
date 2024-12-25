@@ -283,7 +283,7 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	if(cnt != 3)
 	{ // TODO 2023/05 Seems to occur when a tor instance is running but not being killed (ie, after a crash + deletion of pid file) TODO
 		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 124125"); // Occured overnight on 2023/11/02
+			error_simple(0,"Failed to close socket. 124125"); // 2024/12/25 Occurs frequently on restart of Tor
 		else
 			error_simple(0,"Bingo. 124125");
 		return -1;

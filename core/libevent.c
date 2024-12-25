@@ -238,9 +238,12 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 
 static inline void begin_cascade(struct event_strc *event_strc)
 { // Triggers a single unsent message // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
-	if(event_strc->authenticated == 0)
-	{
-		error_printf(0,"Sanity check failed in begin_cascade. Peer is not authenticated. Possible coding error. Report this. Owner=%u fd_type=%d",event_strc->owner,event_strc->fd_type);
+	torx_write(event_strc->n) // XXX
+	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
+	torx_unlock(event_strc->n) // XXX
+	if(event_strc->authenticated == 0 || socket_utilized > INT_MIN)
+	{ // If socket_utilized EVER triggers here, it indicates either that we call begin_cascade somewhere we shouldn't (where a message_send is already called), or otherwise a race condition (where begin_cascade is being called twice).
+		error_printf(0,"Sanity check failed in begin_cascade. Coding error. Report this. Owner=%u fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->fd_type,socket_utilized,event_strc->authenticated);
 		return;
 	}
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -261,30 +264,49 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	}
 }
 
+//uint64_t total_packets_added = 0;
+//uint64_t total_packets_removed = 0;
+
 static inline size_t packet_removal(struct event_strc *event_strc,const size_t drain_len)
 {
 	size_t drained = 0;
-	time_t time_oldest = LONG_MAX; // must initialize as a very high value
-	time_t nstime_oldest = LONG_MAX; // must initialize as a very high value
+	time_t time_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
+	time_t nstime_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
 	int o_oldest = -1;
+	int packets_to_remove = 0; // 2024/12/24 Very important, do not modify
+	torx_read(event_strc->n) // XXX
+	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
+	torx_unlock(event_strc->n) // XXX
 	pthread_rwlock_wrlock(&mutex_packet);
 	for(uint8_t cycle = 0 ; cycle < 2 ; cycle++)
 		for(int o = 0 ; o <= highest_ever_o ; o++)
 		{
+			if(drained && !packets_to_remove)
+				break; // Finished.
 			const int packet_n = packet[o].n;
 			const int8_t packet_fd_type = packet[o].fd_type;
 			if(packet_n == event_strc->n && packet_fd_type == event_strc->fd_type)
 			{ // Found a potential winner, now see if it is oldest before handling
+
 				if(o != o_oldest)
 				{ // Occurs every o on cycle 0, or when not the oldest on cycle 1
-					if(time_oldest > packet[o].time || (time_oldest == packet[o].time && nstime_oldest > packet[o].nstime))
+					if(packet[o].p_iter != file_piece_p_iter && packet[o].f_i == socket_utilized)
+					{ // Must force this to be the oldest, even if it isn't. This can trigger due to bugs that happen when restarting, etc
+						time_oldest = 0;
+						nstime_oldest = 0;
+						o_oldest = o;
+					}
+					else if(time_oldest > packet[o].time || (packet[o].time == time_oldest && nstime_oldest > packet[o].nstime))
 					{ // This packet is older than the current oldest. ( can only ever trigger on cycle 0 )
 						time_oldest = packet[o].time;
 						nstime_oldest = packet[o].nstime;
 						o_oldest = o;
 					}
+					if(!drained)
+						packets_to_remove++;
 					continue;
 				}
+				packets_to_remove--; // Leave here, before the continue
 				const int p_iter = packet[o].p_iter;
 				if(p_iter < 0)
 				{ // Should never happen
@@ -300,11 +322,15 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				packet[o].fd_type = -1; // release it for re-use.
 				packet[o].time = 0;
 				packet[o].nstime = 0;
-				pthread_rwlock_unlock(&mutex_packet);
-				time_oldest = 0;
-				nstime_oldest = 0;
+				pthread_rwlock_unlock(&mutex_packet); // XXX DO NOT continue AFTER THIS XXX
+				time_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
+				nstime_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
 				o_oldest = -1;
+				cycle = 0; // XXX DO NOT continue; AFTER THIS XXX
+				o = -1; // XXX DO NOT continue; or use o AFTER THIS XXX
 				drained += packet_len;
+			//	total_packets_removed++; // TODO remove
+			//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained);
 				if(!drain_len)
 				{ // For drain_len, we don't do anything except 0 the packets above
 					pthread_rwlock_rdlock(&mutex_protocols);
@@ -327,7 +353,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						torx_unlock(event_strc->n) // XXX
 						if(current_pos == current_end)
 						{
-							error_printf(0,"Outbound File Section Completed on fd_type=%d",event_strc->fd_type);
+							error_printf(0,"Outbound Section Completed n=%d f=%d fd_type=%d",event_strc->n,f,event_strc->fd_type);
 							if(event_strc->fd_type == 0)
 								close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_recvfd)
 							else /* event_strc->fd_type == 1 */
@@ -347,8 +373,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							transfer_progress(event_strc->n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
 							send_prep(event_strc->n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
 						}
-						else
-							error_printf(0,"Ceasing to send file from due to status: %u",file_status);
+						else // Ceasing send due to status change
+							error_printf(0,"Ceasing to send file n=%d f=%d status=%u",event_strc->n,f,file_status);
 					}
 					else
 					{ // All protocols that contain a message size on the first packet of a message
@@ -410,14 +436,22 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 								//	disconnect_forever(event_strc); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
 								}
 							}
-							torx_write(event_strc->n) // XXX
-							peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+							torx_read(event_strc->n) // XXX
+							const int REMOVE_socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
 							torx_unlock(event_strc->n) // XXX
+							if(REMOVE_socket_utilized != i)
+							{ // Disconnect here to trigger draining of the packet struct. Do not unset socket_utilized before calling disconnect or more packets will be lost. TODO
+								error_printf(0,"Packet removal wrong socket_utilized: %d != %d. Coding error. Report this. Disconnecting n=%d.",REMOVE_socket_utilized,i,event_strc->n);
+								disconnect(event_strc); // 2024/12/25 Enabling this is HIGHLY experimental.
+							}
 							error_printf(0,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 							error_printf(0,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
+							torx_write(event_strc->n) // XXX
+							peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN; // TODO consider sanity checking that its currently == i
+							torx_unlock(event_strc->n) // XXX
 							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 								pipe_auth_and_request_peerlist(event_strc); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
-							else
+							else // Send next message. Necessary.
 								begin_cascade(event_strc);
 						}
 						else if(pos > message_len)
@@ -433,7 +467,6 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						}
 					}
 				}
-				o = -1; // see if there are more packets
 				pthread_rwlock_wrlock(&mutex_packet);
 			}
 		}
@@ -885,7 +918,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PUBLIC_LEN);
 								}
 								else
-									error_printf(0,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
+									error_printf(2,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
 							{ // Audited 2024/02/16 // Format: g_peercount + onions + ed25519 keys + invitation sigs
@@ -1527,7 +1560,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	if(bev_recv_existing != NULL)
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	struct event_base *base = evconnlistener_get_base(listener);
-	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
+	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
 
 	// event_strc_unique for use with bufferevent_setcb(), being a total copy of event_strc. Will set authenticated_pipe_n in read_conn.
 	struct event_strc *event_strc_unique = torx_insecure_malloc(sizeof(struct event_strc));
@@ -1597,7 +1630,7 @@ void *torx_events(void *arg)
 		}
 		else if(event_strc->fd_type == 1)
 		{ /* Exclusively comes here from send_init() */
-			struct bufferevent *bev_send = bufferevent_socket_new(base, event_strc->sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE);
+			struct bufferevent *bev_send = bufferevent_socket_new(base, event_strc->sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
 			if(bev_send == NULL) // -1 replacing sockfd for testing
 			{
 				error_simple(0,"Couldn't create bev_send.");

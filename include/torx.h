@@ -182,6 +182,7 @@ typedef u_short in_port_t;
 #define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
 #define MAX_INVITEES 4096
 #define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
+#define REALISTIC_PEAK_TRANSFER_SPEED 50*1024*1024 // In bytes/s. Throws away bytes_per_second calculations above this level, for the purpose of calculating average transfer speed. It's fine and effective to set this as high as 1024*1024*1024 (1gb/s).
 
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
@@ -261,16 +262,16 @@ typedef u_short in_port_t;
 
 
 /* Close sockets */
-#define close_sockets(n,f,fd) \
-{ \
-	torx_fd_lock(n,f) \
-	if(fd) { fclose(fd); fd = NULL; } \
-	torx_fd_unlock(n,f) \
-}
-
 #define close_sockets_nolock(fd) \
 { \
 	if(fd) { fclose(fd); fd = NULL; } \
+}
+
+#define close_sockets(n,f,fd) \
+{ \
+	torx_fd_lock(n,f) \
+	close_sockets_nolock(fd) \
+	torx_fd_unlock(n,f) \
 }
 
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
@@ -288,7 +289,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	time_t last_seen; // time. should be UTC.
 	uint16_t vport; // externally visible on onion
 	uint16_t tport; // internal
-	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i. XXX NOT relevant to ENUM_PROTOCOL_FILE_PIECE
+	int socket_utilized[2]; // OUTBOUND ONLY: whether recvfd (0) or sendfd (1) is currently being utilized by send_prep for OUTBOUND message processing. Holds active message_i. XXX NOT relevant to ENUM_PROTOCOL_FILE_PIECE. Held until COMPLETE message sent.
 	evutil_socket_t sendfd; // outgoing messages ( XXX NOT currently utilized by ENUM_OWNER_PEER )
 	evutil_socket_t recvfd; // incoming messages
 	uint8_t sendfd_connected; // This is set to 1 when (bev_send)

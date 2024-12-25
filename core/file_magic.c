@@ -910,11 +910,11 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			close_sockets(n,f,peer[n].file[f].fd_in_recvfd)
 		else /* if(fd_type == 1) */ // sendfd, inbound
 			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		if(section_complete)
 		{ // Verify checksum
-			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
-			const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 			if(owner == ENUM_OWNER_GROUP_CTRL)
 			{ // Run checksum on the group file's individual section
 				const uint64_t start = calculate_section_start(size,splits,section);
@@ -928,8 +928,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				sodium_memzero(checksum,sizeof(checksum));
 				if(ret1 == 0 || ret2)
 				{ // Has been tested, works.
-					error_simple(0,"Bad section checksum. Blacklisting peer and marking section as incomplete. Experimentally requesting another section from others, if available.");
-					printf("Checkpoint bad section=%u %"PRIu64" %d\n",section,ret1,ret2);
+					error_printf(0,"Bad section checksum: n=%d f=%d peer_n=%d sec=%u. Blacklisting peer and marking section as incomplete. Requesting from others, if available.",n,f,peer_n,section);
 					torx_write(n) // XXX
 					peer[n].file[f].split_progress[section] = 0;
 					torx_unlock(n) // XXX
@@ -939,7 +938,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				}
 				else
 				{
-					printf("Checkpoint VERIFIED checksum section==%d. %lu of %lu\n",section,section_info_current,section_req_current);
+					printf("Checkpoint VERIFIED checksum n=%d f=%d peer_n=%d sec=%d\n",n,f,peer_n,section);
 					message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
 				}
 			}
@@ -953,7 +952,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				unsigned char checksum[CHECKSUM_BIN_LEN];
 				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 				if(b3sum_bin(checksum_complete,file_path,NULL,0,0) && !memcmp(checksum_complete,checksum,CHECKSUM_BIN_LEN))
-					error_simple(0,"Successfully VERIFIED checksum.");
+					error_printf(0,"Successfully VERIFIED checksum n=%d f=%d",n,f);
 				else
 				{
 					error_simple(0,"Checkpoint Failed checksum verification."); // non-group

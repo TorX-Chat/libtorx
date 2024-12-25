@@ -1183,6 +1183,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
 				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
 				{ // do NOT make else if
+					if(owner == ENUM_OWNER_CTRL)
+					{ // TODO 2024/12/24 hit this issue. The file doesn't exist. Related messages are deleted. Not sure why this one didn't get deleted when history was cleared. This message should be deleted
+						error_printf(0,"Bunk message should probably be deleted: %d %u",nn,protocol);
+						continue; // TODO delete instead
+					}
 					const int g = set_g(n,NULL);
 					nn = getter_group_int(g,offsetof(struct group_list,n));
 					if(nn < 0)
@@ -1284,19 +1289,36 @@ static inline void inline_load_messages(const uint8_t owner,const int peer_index
 
 int sql_populate_peer(void)
 { // "load_onions"
+	pthread_mutex_lock(&mutex_message_loading); // must be BEFORE messages_loaded != 0
 	if(messages_loaded != 0)
-		error_simple(0,"NOTICE: sql_populate_peer is being called despite messages already being loaded."); // might have valid reason for this
+	{ // This occurs after restarting Tor. We don't necessarily need to load from disk.
+		pthread_mutex_unlock(&mutex_message_loading);
+		error_simple(0,"NOTICE: sql_populate_peer is being called despite messages already being loaded.");
+		int n = 0;
+		torx_read(n) // XXX
+		while(peer[n].onion[0] != '\0' || peer[n].peer_index > -1)
+		{ // we do need to load_onion(n) any ENUM_STATUS_FRIEND except EMUM_OWNER_PEER and ENUM_OWNER_GROUP_PEER. If we load those two, we will have problems.
+			const uint8_t status = peer[n].status;
+			const uint8_t owner = peer[n].owner;
+			torx_unlock(n) // XXX
+			if(status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL))
+				load_onion(n); // logically, ENUM_OWNER_CTRL, we may need to prevent load_onion->tor_call->load_onion_events->send_init, however in practice it seems no.
+			torx_read(++n) // XXX
+		}
+		torx_unlock(n) // XXX
+		return 0;
+	}
 	sqlite3_stmt *stmt;
 //	pthread_mutex_lock(&mutex_sql_encrypted);
 	const char command[] = "SELECT *FROM peer";
 	int val = sqlite3_prepare_v2(db_encrypted,command,(int)strlen(command), &stmt, NULL);
 	if(val != SQLITE_OK)
 	{
-		error_printf(0, "Can't prepare populate peer statement: %s",sqlite3_errmsg(db_messages));
 //		pthread_mutex_unlock(&mutex_sql_encrypted);
+		pthread_mutex_unlock(&mutex_message_loading);
+		error_printf(0, "Can't prepare populate peer statement: %s",sqlite3_errmsg(db_messages));
 		return -1;
 	}
-	sleep(1); // this isn't necessary. no longer crashes if it is removed. however it might immediately go to sleep(5) if we don't have sleep(1) here
 	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
 	{ // Retrieve data here using sqlite3_column_* functions,
@@ -1328,8 +1350,7 @@ int sql_populate_peer(void)
 			{ // handle blocked 		CTRL		load struct + log
 				if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 					continue;
-				if(messages_loaded == 0)
-					inline_load_messages(owner,peer_index,n,local_show_log_messages);
+				inline_load_messages(owner,peer_index,n,local_show_log_messages);
 			}
 			else if((status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT))
 				|| (status == ENUM_STATUS_FRIEND && AUTOMATICALLY_LOAD_CTRL == 1 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)))
@@ -1338,31 +1359,28 @@ int sql_populate_peer(void)
 					continue;
 			//	printf("\n\nCheckpoint pre-load_onion p_i==%d n==%d owner==%d\npeernick==%s\npeeronion==%s\nprivkey==%s\n\n\n",peer_index,n,owner,peernick,peeronion,privkey);
 				load_onion(n);
-				if(messages_loaded == 0)
+				inline_load_messages(owner,peer_index,n,local_show_log_messages);
+				if(owner == ENUM_OWNER_GROUP_CTRL)
 				{
-					inline_load_messages(owner,peer_index,n,local_show_log_messages);
-					if(owner == ENUM_OWNER_GROUP_CTRL)
-					{
-						const int g = set_g(n,NULL);
-						const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-						const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-						if(g_invite_required == 0 && g_peercount == 0 /* && expiration != 0 ???*/)
-						{ // Broadcast if the group is public and empty. Do not check if we created the group first (expiration) because even so it could be operating independantly even if empty (we could have created it then two users could have joined each other without joining us). Public groups must be wholely ownerless.
-							unsigned char ciphertext[GROUP_BROADCAST_LEN];
-							broadcast_prep(ciphertext,g);
-							broadcast_add(-1,ciphertext);
-							sodium_memzero(ciphertext,sizeof(ciphertext));
-						}
-						torx_read(n) // XXX
-						unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
-						crypto_sign_ed25519_sk_to_pk(ed25519_pk,peer[n].sign_sk);
-					//	if(g_invite_required)
-					//		printf("Checkpoint PRIVATE group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-					//	else
-					//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-						sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-						torx_unlock(n) // XXX
+					const int g = set_g(n,NULL);
+					const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+					const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
+					if(g_invite_required == 0 && g_peercount == 0 /* && expiration != 0 ???*/)
+					{ // Broadcast if the group is public and empty. Do not check if we created the group first (expiration) because even so it could be operating independantly even if empty (we could have created it then two users could have joined each other without joining us). Public groups must be wholely ownerless.
+						unsigned char ciphertext[GROUP_BROADCAST_LEN];
+						broadcast_prep(ciphertext,g);
+						broadcast_add(-1,ciphertext);
+						sodium_memzero(ciphertext,sizeof(ciphertext));
 					}
+					torx_read(n) // XXX
+					unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
+					crypto_sign_ed25519_sk_to_pk(ed25519_pk,peer[n].sign_sk);
+				//	if(g_invite_required)
+				//		printf("Checkpoint PRIVATE group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
+				//	else
+				//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
+					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+					torx_unlock(n) // XXX
 				}
 			}
 			else
@@ -1371,7 +1389,7 @@ int sql_populate_peer(void)
 				breakpoint();
 			}
 		}
-		else if(owner == ENUM_OWNER_PEER && messages_loaded == 0) 
+		else if(owner == ENUM_OWNER_PEER)
 		{ // handle pending outgoing	PEER		load struct + peer_init()
 			if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 				continue;
@@ -1381,7 +1399,7 @@ int sql_populate_peer(void)
 			if(pthread_create(thrd_send,&ATTR_DETACHED,&peer_init,itovp(n))) // TODO 2023/01/17 issue: this must not be run on re-loads (when start_tor() restarts tor)
 				error_simple(-1,"Failed to create thread1");
 		}
-		else if(messages_loaded == 0)
+		else
 		{
 			error_printf(0,"Unrecognized peer owner in SQL database: %u. Report this.",owner);
 			breakpoint();
@@ -1390,9 +1408,10 @@ int sql_populate_peer(void)
 
 	if(val != SQLITE_DONE)
 	{
-		error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 //		pthread_mutex_unlock(&mutex_sql_encrypted);
+		pthread_mutex_unlock(&mutex_message_loading);
+		error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 		return -1;
 	}
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
@@ -1400,9 +1419,7 @@ int sql_populate_peer(void)
 	pthread_rwlock_wrlock(&mutex_global_variable);
 	lockout = 0;
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(messages_loaded == 0) // this check is necessary to ensure this only runs on startup and not when tor is restarted
-		login_cb(0); //.... this check COULD be moved to login_cb itself if we have a reason for it to be
-	messages_loaded = 1;
+	login_cb(0); //.... this check COULD be moved to login_cb itself if we have a reason for it to be
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
 	{
@@ -1411,6 +1428,8 @@ int sql_populate_peer(void)
 		pthread_rwlock_rdlock(&mutex_expand_group);
 	}
 	pthread_rwlock_unlock(&mutex_expand_group);
+	messages_loaded = 1; // must be at the end
+	pthread_mutex_unlock(&mutex_message_loading); // must be AFTER messages_loaded = 1;
 	return 0;
 }
 

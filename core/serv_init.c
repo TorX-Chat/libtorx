@@ -92,6 +92,12 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	else
 	{ // i is passed as f_i
 		i = f_i;
+		const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
+		if(stat != ENUM_MESSAGE_FAIL)
+		{ // Race condition. This can happen where cascade sends off a message before we anticipated.
+			error_printf(0,"Send_prep message already sent: n=%d i=%d stat=%u.",n,i,stat);
+			return -1;
+		}
 		const int true_p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 		if(p_iter != true_p_iter) // TODO 2024/03/21 more efficient would be to just *not* pass p_iter as an arg. We just need to pass whether or not its ENUM_PROTOCOL_FILE_PIECE
 		{
@@ -105,19 +111,21 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			pthread_rwlock_unlock(&mutex_protocols);
 			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name); // 2024/09/30 Occurred after a possible GTK issue. Sticker Request != Propose Upgrade
 		}
-		if(!socket_swappable) // This is NOT redundant with message_distribute because not every message goes through that stage.
-			setter(n,i,-1,-1,offsetof(struct message_list,fd_type),&fd_type,sizeof(fd_type));
-		start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos));
-		if(start == 0)
-		{
-			torx_read(n) // XXX
+		if((start = getter_uint32(n,i,-1,-1,offsetof(struct message_list,pos))) == 0)
+		{ // Critically important to ensure we don't swap half-way through a message
+			torx_write(n) // XXX DO NOT REPLACE WITH torx_read or we could face race conditions
 			const int utilized_recv = peer[n].socket_utilized[0];
 			const int utilized_send = peer[n].socket_utilized[1];
-			torx_unlock(n) // XXX
+			if(utilized_recv == i || utilized_send == i)
+			{ // Critical mitigation of race condition. DO NOT REMOVE.
+				torx_unlock(n) // XXX
+				error_printf(0,"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket.",n,i,fd_type,stat,utilized_recv,utilized_send);
+				return -2; // MUST BE -2 not -1 or we will have big issues in packet_removal
+			}
 			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
 			{
-				error_printf(0,"Refusing to send_prep because sockets all utilized n=%d: %s",n,name);
-				return -2;
+				torx_unlock(n) // XXX
+				return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 			}
 			else if((utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1))
 			{ // Switch sockets
@@ -126,15 +134,19 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				else if(socket_swappable && fd_type == 1)
 					fd_type = 0;
 				else
-				{ // !socket_swappable
-					error_printf(0,"Refusing to send_prep on n=%d fd_type=%d because not swappable: %s",n,fd_type,name);
-					return -2;
+				{
+					torx_unlock(n) // XXX
+					return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 				}
 			}
+			if(!socket_swappable) // This is NOT redundant with message_distribute because not every message goes through that stage.
+				peer[n].message[i].fd_type = fd_type;
+			peer[n].socket_utilized[fd_type] = i; // XXX TODO AFTER THIS POINT, MUST USE goto error
+			torx_unlock(n) // XXX
+			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d"RESET,n,fd_type,i);
 		}
 	}
 	FILE **fd_active = {0};
-	const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 	torx_read(n) // XXX
 	if(fd_type == 0 && peer[n].bev_recv && peer[n].recvfd_connected)
 	{ // We check recvfd_connected to verify that the pipe is auth'd. This is important.
@@ -147,15 +159,15 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			fd_active = &peer[n].file[f].fd_out_sendfd;
 	}
 	else
-	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up.
+	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up, unless it is ENUM_STREAM_DISCARDABLE.
 		torx_unlock(n) // XXX
-		error_printf(0,"Send_prep too early owner=%u n=%d f_i=%d fd=%d: %s",owner,n,f_i,fd_type,name);
-		return -1;
+		error_printf(2,"Send_prep too early owner=%u n=%d f_i=%d fd=%d: %s",owner,n,f_i,fd_type,name);
+		goto error;
 	}
 	torx_unlock(n) // XXX
 	char send_buffer[PACKET_SIZE_MAX]; // zero'd // NOTE: no need to {0} this, so don't.
-	if(status == ENUM_STATUS_FRIEND)
-	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage. should re-fetch it
+	if(getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status)) == ENUM_STATUS_FRIEND)
+	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage.
 		uint16_t packet_len = 0;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		{ // only f is initialized
@@ -164,7 +176,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			{
 				torx_unlock(n) // XXX
 				error_simple(0,"Null filepointer in send_prep, possibly caused by file being completed.");
-				return -1;
+				goto error;
 			}
 			torx_unlock(n) // XXX
 			torx_fd_lock(n,f) // XXX
@@ -198,71 +210,60 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
-			{ // TODO entire block is legacy, no longer triggers because of refinements. File completion is in packet_removal.
+			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
 				error_simple(0,"File completed in a legacy manner. Coding error or IO error. Report this."); // could be falsely triggered by file shrinkage
-				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
+				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO 2024/12/24 consider removing line
+				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line
 				close_sockets(n,f,*fd_active)
 				transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 				sodium_memzero(send_buffer,(size_t)packet_len);
-				return -1;
+				goto error;
 			}
 		}
 		else
 		{ // only i is initialized
 			// printf(YELLOW"Checkpoint send_prep: n=%d i=%d\n"RESET,n,i); // FSojoasfoSO
-			const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
 			pthread_rwlock_unlock(&mutex_protocols);
 			if(owner != ENUM_OWNER_GROUP_PEER && group_mechanics)
 			{ // these messages can only go out to ENUM_OWNER_GROUP_PEER
 				error_simple(0,"owner != ENUM_OWNER_GROUP_PEER && group_mechanics. Coding error. Report this.");
-				return -1;
+				goto error;
 			}
-			else if(stat == ENUM_MESSAGE_FAIL)
-			{ // All protocols that contain a message size on the first packet of a message // Attempt send of messages marked :fail: or resend
-				const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
-				uint32_t prefix_len = 2+2; // packet_len + protocol
-				if(start == 0)
-				{ // Only place length at the beginning of message, not on every message
-					torx_write(n) // XXX
-					peer[n].socket_utilized[fd_type] = i;
-					torx_unlock(n) // XXX
-					error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d"RESET,n,fd_type,i);
-					const uint32_t trash = htobe32(message_len);
-					memcpy(&send_buffer[prefix_len],&trash,sizeof(uint32_t));
-					prefix_len += 4;
-				}
-				else if(start >= message_len)
-					error_printf(-1,"Start >= message_len: %u >= %u. Coding error. Report this.",start,message_len); // Added check 2024/05/04
-				if(prefix_len + message_len - start < PACKET_SIZE_MAX)
-					packet_len = (uint16_t)(prefix_len + message_len - start);
-				else // oversized message
-					packet_len = PACKET_SIZE_MAX;
-				uint16_t trash = htobe16(packet_len);
-				memcpy(&send_buffer[0],&trash,sizeof(uint16_t)); // packet length
-				trash = htobe16(protocol);
-				memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
-				/* XXX sanity check start */
-				torx_read(n) // XXX
-				const size_t allocated = torx_allocation_len(peer[n].message[i].message);
-				torx_unlock(n) // XXX
-				const size_t reading = start + (size_t)packet_len - prefix_len;
-				if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
-					error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
-				/* sanity check end XXX */
-				torx_read(n) // XXX
-				memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
-				torx_unlock(n) // XXX
+			// All protocols that contain a message size on the first packet of a message // Attempt send of messages marked :fail: or resend
+			const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
+			uint32_t prefix_len = 2+2; // packet_len + protocol
+			if(start == 0)
+			{ // Only place length at the beginning of message, not on every message
+				const uint32_t trash = htobe32(message_len);
+				memcpy(&send_buffer[prefix_len],&trash,sizeof(uint32_t));
+				prefix_len += 4;
 			}
-			else if(protocol == ENUM_PROTOCOL_KILL_CODE && stat == ENUM_MESSAGE_SENT)
-				return -1; // Kill code already sent on other peer associated socket
-			else
-			{ // XXX XXX XXX NOTICE: This CANNOT catch ALL _SENT messages because send_prep can be called twice before packet_removal. Therefore, the solution is to PREVENT SEND_PREP from being called twice on the same message, as we do for queue skipping protocols in torx_events.
-				error_printf(0,"Issue in send_prep protocol=%u or unexpected stat: %u from owner: %u. Not sending. Coding error. Report this.",protocol,stat,owner);
-				return -1;
+			else if(start >= message_len)
+			{ // 2024/12/25 This is a serious error but we're not making it fatal because it currently is only triggering on restarts.
+				error_printf(0,"Start >= message_len: %u >= %u. n=%d i=%d stat=%u. Coding error. Report this.",start,message_len,n,i,getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat))); // Added check 2024/05/04
+				goto error;
 			}
+			if(prefix_len + message_len - start < PACKET_SIZE_MAX)
+				packet_len = (uint16_t)(prefix_len + message_len - start);
+			else // oversized message
+				packet_len = PACKET_SIZE_MAX;
+			uint16_t trash = htobe16(packet_len);
+			memcpy(&send_buffer[0],&trash,sizeof(uint16_t)); // packet length
+			trash = htobe16(protocol);
+			memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
+			/* XXX sanity check start */
+			torx_read(n) // XXX
+			const size_t allocated = torx_allocation_len(peer[n].message[i].message);
+			torx_unlock(n) // XXX
+			const size_t reading = start + (size_t)packet_len - prefix_len;
+			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
+				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
+			/* sanity check end XXX */
+			torx_read(n) // XXX
+			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
+			torx_unlock(n) // XXX
 		}
 		struct evbuffer *output = NULL; // XXX If getting issues at bufferevent_get_output in valgrind, it means .bev_recv or .bev_send is not being NULL'd properly in libevent after closing
 		torx_read(n) // XXX
@@ -301,6 +302,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				(size_t)packet_len); // TODO does this have a size limit?
 			pthread_rwlock_unlock(&mutex_packet);
 			evbuffer_unlock(output); // XXX
+		//	total_packets_added++; // TODO remove
 			sodium_memzero(send_buffer,(size_t)packet_len);
 			return 0;
 		}
@@ -309,15 +311,19 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	}
 	else
 		error_simple(0,"Send prep failed for reasons.");
-	torx_read(n) // XXX
-	if(protocol != ENUM_PROTOCOL_FILE_PIECE && peer[n].socket_utilized[fd_type] == i)
+	error: {}
+	if(protocol != ENUM_PROTOCOL_FILE_PIECE && start == 0)
 	{
+		torx_read(n) // XXX
+		if(peer[n].socket_utilized[fd_type] == i)
+		{
+			torx_unlock(n) // XXX
+			error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
+			torx_write(n) // XXX
+			peer[n].socket_utilized[fd_type] = INT_MIN;
+		}
 		torx_unlock(n) // XXX
-		error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
-		torx_write(n) // XXX
-		peer[n].socket_utilized[fd_type] = INT_MIN;
 	}
-	torx_unlock(n) // XXX
 	return -1;
 }
 
@@ -434,8 +440,8 @@ static inline void *send_init(void *arg)
 			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep. MUST be before the sendfd_connected check to give libevent time to close.
 			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 			if(sendfd_connected) // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
-				error_simple(-1,"Nulling a .bev_send here possibly without doing any necessary free in libevent. Coding error. Report this.");
-		}
+				error_printf(0,"Nulling a peer[%d].bev_send here possibly without doing any necessary free in libevent. Coding error. Report this.",n);
+		} // TODO 2024/12/25 This happens when restarting Tor. Cannot make this fatal until we resolve it. Perhaps it shouldn't be fatal anyway. This may be a side effect of LEV_OPT_CLOSE_ON_FREE.
 		else
 		{
 			DisableNagle(socket);
@@ -468,7 +474,7 @@ void load_onion_events(const int n)
 			error_simple(-1,"Failed to create thread1");
 	}
 	if(owner == ENUM_OWNER_GROUP_PEER)
-		return; // done, do not need to load listener because we no sockets to listen on... authenticated streams might change this TODO
+		return; // done, do not need to load listener because we no sockets to listen on
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Open .recvfd for a SING/MULT/CTRL/GROUP_CTRL onion, then call torx_events() on it
 		struct sockaddr_in serv_addr = {0};//, cli_addr;

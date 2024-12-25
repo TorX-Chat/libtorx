@@ -108,6 +108,7 @@ uint8_t lockout = 0;
 uint8_t keyed = 0; // whether initial_keyed has run. better than checking !torrc_content or !tor_ctrl_port
 pid_t tor_pid = -1;
 int highest_ever_o = 0;
+int file_piece_p_iter = -1; // save some CPU cycles by setting this on startup.
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
 #ifndef LLTEST
@@ -146,7 +147,7 @@ uint8_t auto_resume_inbound = 1; // automatically request resumption of inbound 
 uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if zero, just block and keep history). This can be set by UI.
 uint8_t hide_blocked_group_peer_messages = 0; // Note: blocking would require re-sorting, if hide is toggled
 uint8_t log_pm_according_to_group_setting = 1; // toggles whether or not PM logging should follow the logging settings of the group (useful to UI devs who might want to control group PM logging per-peer)
-double file_progress_delay = 1000000000; // nanoseconds (*1 billionth of a second)
+double file_progress_delay = 500000000; // nanoseconds (*1 billionth of a second)
 
 uint32_t broadcast_history[BROADCAST_HISTORY_SIZE] = {0}; // NOTE: this is sent OR queued
 
@@ -170,6 +171,8 @@ pthread_mutex_t mutex_group_join = PTHREAD_MUTEX_INITIALIZER; // is necessary to
 pthread_mutex_t mutex_onion = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_closing = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_message_loading = PTHREAD_MUTEX_INITIALIZER; // may be necessary in rare cases where Tor for some reason restarts on startup; related to messages_loaded
+
 /* 2024 rwmutex */
 pthread_rwlock_t mutex_debug_level = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_global_variable = PTHREAD_RWLOCK_INITIALIZER; // do not use for debug variable
@@ -1797,17 +1800,27 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 	}
 	else if(diff > file_progress_delay || last_transferred == transferred /* stalled */)
 	{ // For more accuracy and less variation, do an average over time
+		if(last_transferred > transferred) // Necessary to prevent readtime errors when calculating bytes_per_second.
+		{ // XXX Frequently occurs when starting transfer (on sender side) when peer requests only one section of file, then another, making it initially look like more is transferred than actually is; could theoretically also occur on receiving side when cancelling a file's progress after a bad checksum. XXX
+			torx_write(n) // XXX
+			peer[n].file[f].last_progress_update_time = time_current;
+			peer[n].file[f].last_progress_update_nstime = nstime_current;
+			peer[n].file[f].last_transferred = transferred;
+			torx_unlock(n) // XXX
+			return; // No callback necessary because we have no change in bytes_per_second. Wait until we have more/better data.
+		}
 		uint64_t bytes_per_second = 0;
 		if(diff > 0)
-			bytes_per_second = (uint64_t)((double)(transferred - last_transferred) / (diff / 1000000000));
+			bytes_per_second = (uint64_t)((double)(transferred - last_transferred) * 1e9 / diff );
+	//	printf("Checkpoint %lu = ((%lu - %lu) * 1e9 / %f);\n",bytes_per_second,transferred,last_transferred,diff);
 		time_t time_left = 0;
 		uint64_t average_speed = 0;
-		if(last_progress_update_time && bytes_per_second < 1024*1024*1024) // necessary to prevent putting in bad bytes_per_second data (sanity checks)
+		if(last_progress_update_time && bytes_per_second < REALISTIC_PEAK_TRANSFER_SPEED) // XXX Necessary to prevent putting in bad bytes_per_second data (sanity checks) on startup
 			average_speed = calculate_average(n,f,bytes_per_second);
 		if(bytes_per_second && average_speed)
 			time_left = (time_t)((size - transferred) / average_speed); // alt: bytes_per_second
-		if(last_transferred == transferred)
-			error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu\n",time_left,bytes_per_second);
+	//	if(last_transferred == transferred) // XXX Do not delete
+	//		error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu\n",time_left,bytes_per_second);
 		torx_write(n) // XXX
 		peer[n].file[f].time_left = time_left; // will be 0 if bytes_per_second is 0
 		peer[n].file[f].bytes_per_second = bytes_per_second;
@@ -1887,8 +1900,21 @@ uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
 	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
 	uint64_t transferred = 0;
-	if(status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_COMPLETED || status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
-	{ /* Outbound */ // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
+	if(is_inbound_transfer(status))
+	{ // Inbound
+		torx_read(n) // XXX
+		const uint64_t *split_progress = peer[n].file[f].split_progress;
+		torx_unlock(n) // XXX
+		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
+			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
+		torx_read(n) // XXX
+		uint16_t sections = peer[n].file[f].splits+1;
+		while(sections--) // If there are 0 splits, there is 1 section, it is section 0;
+			transferred += peer[n].file[f].split_progress[sections];
+		torx_unlock(n) // XXX
+	}
+	else
+	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
 		uint64_t transferred_0 = 0;
 		uint64_t transferred_1 = 0;
 		torx_read(n) // XXX
@@ -1901,19 +1927,6 @@ uint64_t calculate_transferred(const int n,const int f)
 		if(size < 4 && peer[n].file[f].outbound_end[0] + peer[n].file[f].outbound_end[1] < size)
 			baseline--; // 2023/10/26 this is the simplest way to fix an obscure issue that occurs when transferring a 1 to 3 byte file.... ie one fd has a request for byte 0 only. Don't waste thought, its complicated, just leave it.
 		transferred = baseline + peer[n].file[f].outbound_transferred[0] + peer[n].file[f].outbound_transferred[1];
-		torx_unlock(n) // XXX
-	}
-	else /* ENUM_FILE_INBOUND_ */
-	{
-		torx_read(n) // XXX
-		const uint64_t *split_progress = peer[n].file[f].split_progress;
-		torx_unlock(n) // XXX
-		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
-			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
-		torx_read(n) // XXX
-		uint16_t sections = peer[n].file[f].splits+1;
-		while(sections--) // If there are 0 splits, there is 1 section, it is section 0;
-			transferred += peer[n].file[f].split_progress[sections];
 		torx_unlock(n) // XXX
 	}
 	return transferred; // BEWARE of baseline. See above.
@@ -2767,6 +2780,7 @@ static inline void *tor_log_reader(void *arg)
 		}
 		if(data[(size_t)len-1] == '\n')
 		{ // complete
+			data[(size_t)len] = '\0'; // Ensure null termination. This is necessary. If issues continue, utilize utf8_valid too.
 			if(read_tor_pipe_cache)
 			{
 				msg = read_tor_pipe_cache;
@@ -2779,7 +2793,13 @@ static inline void *tor_log_reader(void *arg)
 			}
 			remove_lines_with_suffix(msg);
 			pthread_mutex_unlock(&mutex_tor_pipe);
-			tor_log_cb(msg);
+			if(utf8_valid(msg,strlen(msg)))
+				tor_log_cb(msg);
+			else
+			{ // 2024/12/25 This can occur when restarting Tor
+				error_simple(0,"Disgarding a Tor log message due to failure of utf8_valid check.");
+				torx_free((void*)&msg);
+			}
 		}
 		else if(read_tor_pipe_cache == NULL)
 		{ // incomplete, no existing cache
@@ -2866,6 +2886,7 @@ static inline void *start_tor_threaded(void *arg)
 		pthread_rwlock_unlock(&mutex_global_variable);
 		if(randport(tor_ctrl_port_local) < 1)
 		{
+printf("Checkpoint start_tor_threaded changing control port\n");
 			tor_ctrl_port_local = randport(0);
 			pthread_rwlock_wrlock(&mutex_global_variable);
 			tor_ctrl_port = tor_ctrl_port_local;
@@ -2873,6 +2894,7 @@ static inline void *start_tor_threaded(void *arg)
 		}
 		if(randport(tor_socks_port_local) < 1)
 		{
+printf("Checkpoint start_tor_threaded changing socks port\n");
 			tor_socks_port_local = randport(0);
 			pthread_rwlock_wrlock(&mutex_global_variable);
 			tor_socks_port = tor_socks_port_local;
@@ -4157,7 +4179,7 @@ void initial(void)
 	sodium_memzero(protocols,sizeof(protocols)); // XXX initialize protocols struct XXX
 
 	// protocol, name, description,	null_terminated_len, date_len, signature_len, logged, notifiable, file_checksum, file_offer, exclusive_type, utf8, socket_swappable, stream XXX NOTE: cannot depreciate group mechanics, as stream is not suitable (stream deletes upon fail)
-	protocol_registration(ENUM_PROTOCOL_FILE_PIECE,"File Piece","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,0);
+	file_piece_p_iter = protocol_registration(ENUM_PROTOCOL_FILE_PIECE,"File Piece","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
@@ -4697,10 +4719,20 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 	}
 	int retries = 0;
 	int8_t success = 0;
+	struct timespec req;
+	req.tv_sec = 0; // 0s
+	req.tv_nsec = 50000000; // 50ms
 	while(retries < RETRIES_MAX && !success)
 	{
 		if(connect(SOCKET_CAST_OUT sock,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) != 0)
+		{
+			if(nanosleep(&req, NULL) == -1)
+			{
+				error_simple(0,"nanosleep failed. Falling back to sleep(1). Platform may not support nanosleep?");
+				sleep(1);
+			}
 			retries++;
+		}
 		else
 			success = 1;
 	}
