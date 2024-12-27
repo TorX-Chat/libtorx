@@ -82,6 +82,17 @@ XXX	To Do		XXX
 //TODO: see "KNOWN BUG:" On a successful sing or MULT, the socket does not close due to the CTRL coming up. It is not the same socket nor the same port. We don't know what is going on.
 // Something to do with serv_init being a child process, I think. The socket doesn't close until the child process that called it ends.
 
+static inline int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)
+{ // WARNING: Must handle -1 return by disgarding packet. Note: packet_start is 0 offset byte number.
+	if(packet_start >= size)
+		return -1;
+	int16_t section = splits+1;
+	uint64_t section_start = 0;
+	while(packet_start < (section_start = calculate_section_start(NULL,size,splits,section)))
+		section--; // XXX DO NOT MODIFY WITHOUT EXTENSIVE TESTING XXX
+	return section;
+}
+
 static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 { // Internal Function only. For handling or initializing a disconnection
 	struct bufferevent *bev;
@@ -725,20 +736,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				if(split_progress == NULL)
 					initialize_split_info(nn,f);
 				const uint64_t size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
-				uint16_t section = 0;
-				uint64_t section_start = 0;
-				uint64_t section_end = 0;
 				const uint8_t splits_nn = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,splits));
-				if(splits_nn == 0)
-					section_end = size-1;
-				else
-				{ // XXX DO NOT MODIFY. This is the result of extensive testing. Can cause big issues if improperly modified. XXX
-					uint64_t next_section_start = 0;
-					while(packet_start + 1 > (next_section_start = calculate_section_start(size,splits_nn,section + 1)))
-						section++;
-					section_start = calculate_section_start(size,splits_nn,section);
-					section_end = next_section_start - 1;
+				const int16_t section = section_determination(size,splits_nn,packet_start);
+				if(section < 0)
+				{ // Very necessary to check
+					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
+					continue;
 				}
+				uint64_t section_end = 0;
+				const uint64_t section_start = calculate_section_start(&section_end,size,splits_nn,section);
 				torx_read(nn) // XXX
 				const int *split_status_n = peer[nn].file[f].split_status_n;
 				const int8_t *split_status_fd = peer[nn].file[f].split_status_fd;
@@ -753,7 +759,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				const int8_t relevant_split_status_fd = peer[nn].file[f].split_status_fd[section];
 				const int relevant_split_status = peer[nn].file[f].split_status_n[section];
 				torx_unlock(nn) // XXX
-				if(packet_start + packet_len-cur > section_end + 1)
+				if(packet_start + packet_len - cur > section_end + 1)
 				{
 					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
 					continue;
@@ -765,11 +771,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
-				//	if(split_status_n)
-				//		printf("Checkpoint split status EXISTS: %d ?= %d\n",relevant_split_status,event_strc->n);
-				//	if(split_status_fd)
-				//		printf("Checkpoint split status_fd EXISTS: %d ?= %d\n",relevant_split_status_fd,event_strc->fd_type);
-				//	printf("Checkpoint section: %u start==%lu end==%lu\n",section,calculate_section_start(size,splits_nn,section),section_end);
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
 					if(split_status_n && split_status_fd)
 						error_printf(0,"Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status_n ? 1 : 0,split_status_fd ? 1 : 0,event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
@@ -822,7 +823,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
 					error_printf(0,"Disgarding a oversized message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,event_strc->buffer_len,packet_len,cur,event_strc->untrusted_message_len);
 					break;
-				}
+				} // XXX 2024/12/25 Disgarding a oversized message of protocol: 56237, buffer_len: 490, packet_len: 409, cur: 4, untrusted_message_len: 0. Report this for science.
 				// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
 				if(event_strc->buffer)
 					event_strc->buffer = torx_realloc(event_strc->buffer,event_strc->buffer_len + (packet_len - cur));
@@ -1173,8 +1174,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash,sizeof(trash)); // size
 							torx_unlock(relevant_n) // XXX
 							trash = htobe64(0);
-							for(uint8_t section = 0; section <= splits; section++) // 0/0/0/0
-								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + section*sizeof(uint64_t)],&trash,sizeof(trash));
+							for(int16_t section = 0; section <= splits; section++) // 0/0/0/0
+								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)*(size_t)section],&trash,sizeof(trash));
 							process_file_offer_inbound(event_strc->n,p_iter_partial,fake_message,FILE_OFFER_PARTIAL_LEN);
 						}
 						const uint64_t last_transferred = getter_uint64(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[event_strc->n].file[f].last_transferred;

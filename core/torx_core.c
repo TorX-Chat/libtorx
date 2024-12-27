@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 18 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 19 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -1908,9 +1908,8 @@ uint64_t calculate_transferred(const int n,const int f)
 		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
 			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
 		torx_read(n) // XXX
-		uint16_t sections = peer[n].file[f].splits+1;
-		while(sections--) // If there are 0 splits, there is 1 section, it is section 0;
-			transferred += peer[n].file[f].split_progress[sections];
+		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
+			transferred += peer[n].file[f].split_progress[section];
 		torx_unlock(n) // XXX
 	}
 	else
@@ -1932,29 +1931,13 @@ uint64_t calculate_transferred(const int n,const int f)
 	return transferred; // BEWARE of baseline. See above.
 }
 
-uint64_t calculate_section_start(const uint64_t size,const uint8_t splits,const int section) // section starts at 0. One split == 2 sections, 0 and 1.
-{ // FUNCTION HAS NO ERROR CHECKING, use carefully.
-/*	if(peer[n].file[f].splits == 0)
-	{ // TODO open file to check check current file size (note: this assumes we are not pre-allocating) and return ftell+1
-		error_simple(0,"TODO: Not checking whether file is already partially transferred.");
-		// TEMP INCORRECT
-		return peer[n].file[f].size+1;	
-	} // NOTE: would only be relevant with non-full duplex so perhaps no point
-	else */
-	const int sections = splits+1;
-	if(section == 0) // prevent division by 0
-		return 0;
-	else if(section > 0 && section < sections)// any section between 1 and .splits, inclusive
-		return (uint64_t)((float)size*((float)section/(float)sections)); // TODO TODO TODO XXX XXX XXX 2023/10/18 UNTESTED: this is a disaster and might cause failure
-	else if(section > 0 && section == sections) // non-existant, being called most probably to determine endpoint, so lets humor the request
-		return size;//+1;
-	else
-	{ // Negative or beyond-bounds section
-		error_printf(0,"calculate_section_start was called with an invalid section number: %d. Report this. This can be exploited to corrupt a file.",section);
-		breakpoint();
-		return 0; // XXX will corrupt file, but nothing we can do here because we can't return -1. THIS MUST NOT BE ALLOWED TO OCCUR especially on inbound libevent.c (note: 2023/10/17, implemented a check)
-	} // Prevent it from occuring by ensuring that packet_start is always <= file size (<= or < ??)
-//		return peer[n].file[f].size*(section/(long double)sections);
+uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)
+{ // XXX DO NOT MODIFY/REMOVE THE CASTING OR MATH IN HERE WITHOUT EXTENSIVE TESTING XXX
+	if(size < (uint64_t)splits + 1 || section > splits + 1 || section < 0 || !size) // Sanity checks necessary to prevent exploitation that could corrupt a file.
+		error_printf(-1,"Sanity check failure in calculate_section_start: %lu %u %d. Coding error. Report this.",size,splits,section);
+	if(end_p)
+		*end_p = size*(uint64_t)(section+1)/(splits+1)-1;
+	return size*(uint64_t)section/(splits+1);
 }
 
 int vptoi(const void* arg)

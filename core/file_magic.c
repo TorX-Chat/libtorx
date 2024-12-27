@@ -252,6 +252,9 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			goto error;
 		const uint8_t splits = *(const uint8_t*)(const void*)&message[CHECKSUM_BIN_LEN];
 		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
+		const uint64_t size = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len]));
+		if((uint64_t)splits + 1 > size)
+			goto error; // cannot have more sections than bytes
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL && message_len < FILE_OFFER_PARTIAL_LEN) // CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint64_t) * (splits + 1) + date_len + signature_len)
 			goto error;
 		else if((protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) && message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) + (size_t)(CHECKSUM_BIN_LEN *(splits + 1)) + sizeof(uint64_t) + sizeof(uint32_t) + 1 + date_len + signature_len)
@@ -293,7 +296,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			peer[group_n].file[f].splits = splits; // verified via hash of hashes
 			peer[group_n].file[f].split_hashes = torx_secure_malloc(split_hashes_len+sizeof(uint64_t)); // verified via hash of hashes
 			memcpy(peer[group_n].file[f].split_hashes,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],split_hashes_len+sizeof(uint64_t));
-			peer[group_n].file[f].size = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len])); // verified via hash of hashes
+			peer[group_n].file[f].size = size; // verified via hash of hashes
 			if(protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
 			{ // handle filename
 				peer[group_n].file[f].modified = be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)]));
@@ -314,20 +317,19 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		}
 	//	else // We only check in groups because malicious peers
 	//		error_simple(0,"Received file offer for file we already have in struct (partial or full). (NOT Allocating split hashes)");
-		const uint64_t size = getter_uint64(group_n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		const int o = set_o(group_n,f,n);
 		setter(group_n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n),&n,sizeof(n));
 		torx_write(group_n) // XXX
 		if(peer[group_n].file[f].offer[o].offer_progress == NULL)
 			peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-			for(int section = 0; section <= splits; section++)
+			for(int16_t section = 0; section <= splits; section++)
 				peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
 		else
-			for(int section = 0; section <= splits; section++)
+			for(int16_t section = 0; section <= splits; section++)
 			{ // setting every section to 100% because this offer type is of a complete file
-				const uint64_t start = calculate_section_start(size,splits,section);
-				const uint64_t end = calculate_section_start(size,splits,section+1)-1;
+				uint64_t end = 0;
+				const uint64_t start = calculate_section_start(&end,size,splits,section);
 				peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
 			}
 		torx_unlock(group_n) // XXX
@@ -744,19 +746,18 @@ static inline int split_read(const int n,const int f)
 	}
 //	else
 //		printf("Checkpoint no split file found\n");
-	uint16_t sections = splits+1;
-	const size_t read_size = sizeof(uint64_t)*sections;
+	const size_t read_size = sizeof(uint64_t)*(size_t)(splits+1);
 //	printf("Checkpoint split_read allocating n=%d f=%d splits=%u\n",n,f,splits);
 	uint64_t *split_progress = torx_insecure_malloc(read_size);
-	int *split_status_n = torx_insecure_malloc(sizeof(int)*sections);
-	int8_t *split_status_fd = torx_insecure_malloc(sizeof(int8_t)*sections);
-	uint64_t *split_status_req = torx_insecure_malloc(sizeof(uint64_t)*sections);
-	while(sections--)
+	int *split_status_n = torx_insecure_malloc(sizeof(int)*(size_t)(splits+1));
+	int8_t *split_status_fd = torx_insecure_malloc(sizeof(int8_t)*(size_t)(splits+1));
+	uint64_t *split_status_req = torx_insecure_malloc(sizeof(uint64_t)*(size_t)(splits+1));
+	for(int16_t section = 0; section <= splits; section++)
 	{ // initialize info to zero and status to -1 (invalid n)
-		split_progress[sections] = 0;
-		split_status_n[sections] = -1; // no one yet claims this
-		split_status_fd[sections] = -1; // no one yet claims this
-		split_status_req[sections] = 0;
+		split_progress[section] = 0;
+		split_status_n[section] = -1; // no one yet claims this
+		split_status_fd[section] = -1; // no one yet claims this
+		split_status_req[section] = 0;
 	}
 	if(fp && fread(split_progress,1,read_size,fp) != read_size)
 		error_simple(0,"Could not open split file or found an invalid checksum."); // read sections
@@ -832,24 +833,22 @@ int initialize_split_info(const int n,const int f)
 				torx_free((void*)&split_path);
 				return -1;
 			}
-			unsigned char checksum[CHECKSUM_BIN_LEN];
-			getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-			fwrite(checksum,1,CHECKSUM_BIN_LEN,fp); // TODO we fwrite multiple times unnecessarily
-			sodium_memzero(checksum,sizeof(checksum));
-			uint64_t relevant_split_progress[splits+1];
+			unsigned char split_data[CHECKSUM_BIN_LEN + sizeof(splits) + sizeof(uint64_t)*(splits+1)];
+			getter_array(&split_data,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+			memcpy(&split_data[CHECKSUM_BIN_LEN],&splits,sizeof(splits));
 			torx_read(n) // XXX
-			memcpy(relevant_split_progress,peer[n].file[f].split_progress,sizeof(relevant_split_progress));
+			memcpy(&split_data[CHECKSUM_BIN_LEN + sizeof(splits)],peer[n].file[f].split_progress,sizeof(uint64_t)*(splits+1));
 			torx_unlock(n) // XXX
-			fwrite(&splits,1,sizeof(splits),fp); // TODO we fwrite multiple times unnecessarily
-			fwrite(relevant_split_progress,1,sizeof(relevant_split_progress),fp); // TODO we fwrite multiple times unnecessarily
+			fwrite(split_data,1,sizeof(split_data),fp);
 			close_sockets_nolock(fp);
+			sodium_memzero(split_data,sizeof(split_data));
 		}
 		torx_free((void*)&split_path);
 	}
 	return 0;
 }
 
-void split_update(const int n,const int f,const int section)
+void split_update(const int n,const int f,const int16_t section)
 { // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
@@ -888,16 +887,21 @@ void split_update(const int n,const int f,const int section)
 		torx_read(n) // XXX
 		const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
 		torx_unlock(n) // XXX
-		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits TODO might be +1 byte off
+		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
 		fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
 		close_sockets_nolock(fp);
 	}
 }
 
-void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const uint16_t section,const uint64_t section_end,const int peer_n)
+void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n)
 { // INBOUND FILE TRANSFER ONLY To be called after write during file transfer. Updates .split_progress, determines whether to call split_update. peer_n is only used for blacklisting.
 	if(wrote < 1)
 		return;
+	if(n < 0 || f < 0 || fd_type < 0 || section < 0 || peer_n < 0)
+	{
+		error_simple(0,"Sanity check failure in section_update. Coding error. Report this.");
+		return;
+	}
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_write(n) // XXX yes, its a write, see +=
 	const uint64_t section_info_current = peer[n].file[f].split_progress[section] += wrote;
@@ -917,9 +921,9 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		{ // Verify checksum
 			if(owner == ENUM_OWNER_GROUP_CTRL)
 			{ // Run checksum on the group file's individual section
-				const uint64_t start = calculate_section_start(size,splits,section);
-				const uint64_t end = calculate_section_start(size,splits,section+1)-1;
-				const uint64_t len = end-start+1;
+				uint64_t end = 0;
+				const uint64_t start = calculate_section_start(&end,size,splits,section);
+				const uint64_t len = end - start + 1;
 				unsigned char checksum[CHECKSUM_BIN_LEN];
 				const uint64_t ret1 = b3sum_bin(checksum,file_path,NULL,start,len);
 				torx_read(n) // XXX
@@ -984,9 +988,9 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		else
 			file_request_internal(n,f,fd_type);
 		torx_free((void*)&file_path);
-		split_update(n,f,section); // should usually occur when a section is finished, ie == Writes may go slightly beyond a section. This might be OK (with non-malicious peers) because it will just incur minor overwrites later, since that overwrite area will still be requested again, but would be bad from a malicious peer TODO
+		split_update(n,f,section);
 	}
-	else if(splits && (section_info_current - wrote) / (120*SPLIT_DELAY*1024) != section_info_current / (120*SPLIT_DELAY*1024)) // Checking whether to call split_update
+	else if(splits && section_info_current && (section_info_current - wrote) / (120*SPLIT_DELAY*1024) != section_info_current / (120*SPLIT_DELAY*1024)) // Checking whether to call split_update
 		split_update(n,f,section); // ~8 times per 1mb with SPLIT_DELAY = 1
 }
 

@@ -524,7 +524,13 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		if(file_offer)
 		{
 			if(stat == ENUM_MESSAGE_RECV)
-				process_file_offer_inbound(n,p_iter,tmp_message,message_len);
+			{
+				if(process_file_offer_inbound(n,p_iter,tmp_message,message_len) == -1)
+				{ // Bad message
+					error_simple(0,"process_file_offer_inbound returned -1 in load_messages_struc");
+					return INT_MIN;
+				}
+			}
 			else if(message_len)  // TODO use protocol_lookup to check all protocols for minimum size
 			{
 				if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)

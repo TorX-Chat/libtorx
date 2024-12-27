@@ -103,8 +103,8 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 			torx_unlock(n) // XXX
 			return was_transferring;
 		}
-		for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
-		{ // yes this is right, dont change it
+		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
+		{
 			if(peer[n].file[f].split_status_n[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
 			{
 				torx_unlock(n) // XXX
@@ -114,7 +114,7 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 				peer[n].file[f].split_status_req[section] = 0;
 				torx_unlock(n) // XXX
 				error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = -1"RESET,n,f,section);
-				was_transferring = 1;
+				was_transferring++;
 				torx_read(n) // XXX
 			}
 			else if(peer[n].file[f].split_status_n[section] > -1)
@@ -223,12 +223,12 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash64,sizeof(uint64_t));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-			for(uint8_t section_local = 0; section_local <= splits; section_local++)
+			for(int16_t section_local = 0; section_local <= splits; section_local++)
 			{ // Add how much is completed on each section
 				torx_read(n) // XXX
 				trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
 				torx_unlock(n) // XXX
-				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + section_local * sizeof(uint64_t)],&trash64,sizeof(uint64_t));
+				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
 			}
 		else /* if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) */
 		{ // Add modification date and filename
@@ -717,9 +717,9 @@ void kill_code(const int n,const char *explanation)
 	}
 }
 
-static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,const int f,const int o,const uint8_t section)
-{ // NOTE: This does NOT account for contents of peer offer
-	if(!start || !end || n < 0 || f < 0)
+static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,const int f,const int o,const int16_t section)
+{ // NOTE: This does NOT account for contents of peer offer, unless o is passed. This accounts mainly for what we already have.
+	if(!start || !end || n < 0 || f < 0 || section < 0)
 	{
 		error_simple(0,"Sanity check failed in calculate_file_request_start_end. Coding error. Report this.");
 		return -1;
@@ -727,20 +727,20 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 	const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
-	const uint64_t current = peer[n].file[f].split_progress[section];
+	const uint64_t our_progress = peer[n].file[f].split_progress[section];
 	torx_unlock(n) // XXX
-	*start = calculate_section_start(file_size,splits,section) + current;
+	const uint64_t section_start = calculate_section_start(end,file_size,splits,section);
+	*start = section_start + our_progress;
 	if(o > -1)
 	{ // Group transfer
 		torx_read(n) // XXX
-		*end = *start + peer[n].file[f].offer[o].offer_progress[section] - 1;
+		const uint64_t peer_progress = peer[n].file[f].offer[o].offer_progress[section];
 		torx_unlock(n) // XXX
+		if(!peer_progress)
+			return -1; // XXX DO NOT ELIMINATE THIS CHECK, otherwise we can get a negative int overflow on the next line
+		*end = section_start + peer_progress - 1;
 	}
-	else
-		*end = calculate_section_start(file_size,splits,section+1)-1;
-	if((int64_t)*end == -1) // 18446744073709551615
-		*end = *start; // Experimental support for one byte files
-	if(*start >= file_size || *start > *end)
+	if(*start > *end)
 		return -1; // Section appears finished. Cannot request any data.
 	return 0;
 }
@@ -781,7 +781,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				continue;
 			uint8_t utilized = 0;
 			int8_t utilized_fd_type = -1;
-			for(uint8_t section = 0; section <= splits; section++)
+			for(int16_t section = 0; section <= splits; section++)
 			{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
 				torx_read(n) // XXX
 				const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
@@ -795,7 +795,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			}
 			if(utilized >= online)
 				continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
-			for(uint8_t section = 0; section <= splits; section++)
+			for(int16_t section = 0; section <= splits; section++)
 			{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 				torx_read(n) // XXX
 				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
@@ -828,7 +828,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				error_simple(0,"target_n can only be GROUP_PEER. Coding error. Report this.");
 				return -1;
 			}
-			if(calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,target_o,(uint8_t)file_request_strc.section))
+			if(calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,target_o,file_request_strc.section))
 			{
 				error_simple(0,"calculate_file_request_start_end failed with a group_ctrl. Coding error. Report this."); // possible race if this occurs?
 				return -1;
@@ -855,7 +855,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				error_simple(0,"We already have a request for a section of this file on this fd_type. Coding error. Report this.");
 				return -1;
 			}
-			if(relevant_split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,(uint8_t)file_request_strc.section) == 0)
+			if(relevant_split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,file_request_strc.section) == 0)
 				break; // Target section aquired
 		}
 		if(file_request_strc.section > splits)
@@ -1013,8 +1013,8 @@ void file_accept(const int n,const int f)
 				torx_unlock(n) // XXX
 				return;
 			}
-			for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
-			{ // yes this is right, dont change it
+			for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
+			{
 				const int peer_n = peer[n].file[f].split_status_n[section];
 				if(peer_n > -1)
 				{
@@ -1137,8 +1137,8 @@ void file_cancel(const int n,const int f)
 				torx_unlock(n) // XXX
 				return;
 			}
-			for(uint16_t section = peer[n].file[f].splits+1; section-- ; )
-			{ // yes this is right, dont change it
+			for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
+			{
 				const int peer_n = peer[n].file[f].split_status_n[section];
 				if(peer_n > -1)
 				{
@@ -1193,18 +1193,17 @@ static inline void *file_init(void *arg)
 		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
 		split_hashes_and_size = torx_secure_malloc(split_hashes_len+sizeof(uint64_t));
 		size_t size_total = 0; // sum of sections
-		for(int section = 0; section <= splits; section++)
+		for(int16_t section = 0; section <= splits; section++)
 		{ // populate split_hashes
-			const uint64_t start = calculate_section_start(size,splits,section);
-			const uint64_t end = calculate_section_start(size,splits,section+1)-1;
-			const uint64_t len = end-start+1;
-		//	printf("Checkpoint section %d %lu %lu\n",section,start,len);
+			uint64_t end = 0;
+			const uint64_t start = calculate_section_start(&end,size,splits,section);
+			const uint64_t len = end - start + 1;
 			size_total += b3sum_bin(&split_hashes_and_size[CHECKSUM_BIN_LEN*section],file_strc->path,NULL,start,len);
+			printf("Checkpoint section=%d start=%lu end=%lu len=%lu total=%lu\n",section,start,end,len,size_total);
 		}
 		if(size != size_total)
 		{
-			error_simple(0,"Coding or IO error. File size != sum of sections");
-			printf("Checkpoint %zu != %zu\n",size,size_total);
+			error_printf(0,"Coding or IO error. File size %zu != %zu sum of sections. Splits=%u",size,size_total,splits);
 			goto error;
 		}
 		const uint64_t trash = htobe64(size);

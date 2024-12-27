@@ -564,7 +564,7 @@ struct file_request_strc { // XXX Do not sodium_malloc structs unless they conta
 	int n;
 	int f;
 	int8_t fd_type;
-	int16_t section;
+	int16_t section; // must NOT be uint8_t because it MUST be able to reach 256, even though the maximum section number is 0-255; avoid uint8_t overflows in for loops.
 	uint64_t start;
 	uint64_t end;
 };
@@ -750,7 +750,7 @@ void transfer_progress(const int n,const int f,const uint64_t transferred);
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
 char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
 uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
-uint64_t calculate_section_start(const uint64_t size,const uint8_t splits,const int section)__attribute__((warn_unused_result));
+uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)__attribute__((warn_unused_result));
 int vptoi(const void* arg)__attribute__((warn_unused_result));
 void *itovp(const int i)__attribute__((warn_unused_result));
 int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_result));
@@ -844,8 +844,8 @@ void change_nick(const int n,const char *freshpeernick);
 uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
 void destroy_file(const char *file_path); // do not use directly for deleting history
 int initialize_split_info(const int n,const int f);
-void split_update(const int n,const int f,const int section);
-void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const uint16_t section,const uint64_t section_end,const int peer_n);
+void split_update(const int n,const int f,const int16_t section);
+void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
 size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
 char *custom_input_file(const char *hs_ed25519_secret_key_file);
 void takedown_onion(const int peer_index,const int delete);
