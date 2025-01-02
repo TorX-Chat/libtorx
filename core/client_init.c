@@ -247,7 +247,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		if(section < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu on fd=%d",n,f,section,start,end,fd_type);
+		error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu peer_n=%d fd=%d",n,f,section,start,end,target_n,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -468,9 +468,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		goto error;
 	}
 	// XXX Step 6: Iterate message
-	const int i = getter_int(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-	expand_message_struc(target_n,i);
 	torx_write(target_n) // XXX
+	const int i = peer[target_n].max_i + 1;
+	expand_message_struc(target_n,i);
 	peer[target_n].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
 	peer[target_n].message[i].time = time;
 	peer[target_n].message[i].nstime = nstime;
@@ -498,9 +498,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				breakpoint();
 				goto error;
 			}
-			iiii = getter_int(nnnn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
-			expand_message_struc(nnnn,iiii);
 			torx_write(nnnn) // XXX
+			iiii = peer[nnnn].max_i + 1;
+			expand_message_struc(nnnn,iiii);
 			peer[nnnn].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
 			peer[nnnn].message[iiii].time = time; // needs to be duplicate so that we can do lookup later
 			peer[nnnn].message[iiii].nstime = nstime;
@@ -626,7 +626,6 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	pthread_rwlock_unlock(&mutex_protocols);
 	int g = -1;
-
 	int target_g = -1; // LIMITED USE currently DO NOT USE EXTENSIVELY
 	uint32_t target_g_peercount = 0;
 	if(owner == ENUM_OWNER_GROUP_CTRL && group_msg)
@@ -801,9 +800,14 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
 				const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
 				const uint64_t relevant_progress = peer[n].file[f].split_progress[section];
+				const int8_t relevant_split_status_fd = peer[n].file[f].split_status_fd[section];
 				torx_unlock(n) // XXX
 				if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
+				{
+					if(relevant_split_status_fd > -1)
+						printf("Checkpoint select_peer existing: n=%d fd=%d sec=%d %lu of %lu\n",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
 					continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
+				}
 				if(offerer_progress >= target_progress)
 				{ // >= should result in the largest most recent offer being selected
 					target_n = offerer_n;
@@ -860,7 +864,9 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		}
 		if(file_request_strc.section > splits)
 			return -1; // No unfinished sections available to request.
-		target_progress = file_request_strc.end - file_request_strc.start + 1; // NOTE: This is unnecessary/unutilized in non-group transfers.
+		const uint64_t file_size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+		const uint64_t section_start = calculate_section_start(NULL,file_size,splits,file_request_strc.section);
+		target_progress = file_request_strc.end - section_start + 1; // MUST utilize section_start, not file_request_strc.start // NOTE: This is unnecessary/unutilized in non-group transfers.
 	}
 	if(target_n > -1)
 	{

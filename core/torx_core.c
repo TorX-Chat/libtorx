@@ -1305,6 +1305,7 @@ time_t message_find_since(const int n)
 	time_t earliest_nstime = 0;
 	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
 	{
+		torx_read(n) // XXX
 		for(int tmp_i = peer[n].min_i ; tmp_i < peer[n].max_i ; tmp_i++)
 		{
 			const int p_iter = peer[n].message[tmp_i].p_iter;
@@ -1321,6 +1322,7 @@ time_t message_find_since(const int n)
 				break;
 			}
 		}
+		torx_unlock(n) // XXX
 		size_t pos = 0;
 		int group_pm_count = 0,group_msg_count = 0;
 		for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
@@ -2221,8 +2223,8 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 	peer[n].message[i].fd_type = -1;
 	peer[n].message[i].time = 0;
 	peer[n].message[i].nstime = 0;
-	while(peer[n].max_i == i && peer[n].message[i].p_iter == -1)
-		peer[n].max_i--; // EXPERIMENTAL ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
+	while(peer[n].max_i == i)
+		peer[n].max_i--; // ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
 }
 
 static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here
@@ -3377,18 +3379,16 @@ static inline int find_message_struc_pointer(const int min_i)
 	return -10;
 }
 
-void expand_message_struc(const int n,const int i)
+void expand_message_struc(const int n,const int i) // XXX do not put locks in here
 { /* Expand messages struct if our current i is unused && divisible by 10 */
 	if(n < 0)
 	{
 		error_simple(0,"expand_message_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	torx_read(n) // XXX
 	const int max_i = peer[n].max_i;
 	const int min_i = peer[n].min_i;
 	const int p_iter = peer[n].message[i].p_iter;
-	torx_unlock(n) // XXX
 	if(p_iter == -1 && i%10 == 0 && (i+10 > max_i + 1 || i-10 < min_i - 1))
 	{ // i > -1
 	//	const int pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
@@ -3401,7 +3401,6 @@ void expand_message_struc(const int n,const int i)
 		}
 		else
 			pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
-		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
 		if(i < 0)
 			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10,1) - pointer_location - current_shift;
@@ -3414,7 +3413,6 @@ void expand_message_struc(const int n,const int i)
 		else // Expanding up
 			for(int j = i+10; j > i; j--)
 				initialize_i(n,j);
-		torx_unlock(n) // XXX
 	}
 }
 

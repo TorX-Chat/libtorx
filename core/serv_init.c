@@ -77,7 +77,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	if(owner != ENUM_OWNER_GROUP_PEER && owner != ENUM_OWNER_CTRL)
 	{
 		error_printf(0,"Questionable action in send_prep: %u Coding error. Report this.",owner);
-		return -1;
+		goto error;
 	}
 	uint64_t start = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
@@ -86,7 +86,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		if(f < 0)
 		{
 			error_printf(0,"Sanity check failure 2 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
-			return -1;
+			goto error;
 		}
 	}
 	else
@@ -96,7 +96,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		if(stat != ENUM_MESSAGE_FAIL)
 		{ // Race condition. This can happen where cascade sends off a message before we anticipated.
 			error_printf(0,"Send_prep message already sent: n=%d i=%d stat=%u.",n,i,stat);
-			return -1;
+			goto error;
 		}
 		const int true_p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
 		if(p_iter != true_p_iter) // TODO 2024/03/21 more efficient would be to just *not* pass p_iter as an arg. We just need to pass whether or not its ENUM_PROTOCOL_FILE_PIECE
@@ -104,7 +104,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			if(true_p_iter < 0)
 			{
 				error_printf(0,"Message deleted: %s. Cannot send_prep. Coding error. Report this.",name);
-				return -1;
+				goto error;
 			}
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const char *true_name = protocols[true_p_iter].name;
@@ -119,7 +119,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			if(utilized_recv == i || utilized_send == i)
 			{ // Critical mitigation of race condition. DO NOT REMOVE.
 				torx_unlock(n) // XXX
-				error_printf(0,"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket.",n,i,fd_type,stat,utilized_recv,utilized_send);
+				error_printf(0,"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket: %s",n,i,fd_type,stat,utilized_recv,utilized_send,name);
 				return -2; // MUST BE -2 not -1 or we will have big issues in packet_removal
 			}
 			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
@@ -143,7 +143,15 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				peer[n].message[i].fd_type = fd_type;
 			peer[n].socket_utilized[fd_type] = i; // XXX TODO AFTER THIS POINT, MUST USE goto error
 			torx_unlock(n) // XXX
-			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d"RESET,n,fd_type,i);
+			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d, %s"RESET,n,fd_type,i,name);
+		}
+		else
+		{ // Sanity check
+			torx_read(n) // XXX
+			const int socket_utilized = peer[n].socket_utilized[fd_type];
+			torx_unlock(n) // XXX
+			if(socket_utilized != i)
+				goto error; // XXX On where pos > 0, socket_utilized must already be set. This is a major coding error.
 		}
 	}
 	FILE **fd_active = {0};
@@ -211,7 +219,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
-				error_simple(0,"File completed in a legacy manner. Coding error or IO error. Report this."); // could be falsely triggered by file shrinkage
+				error_simple(0,PINK"File completed in a legacy manner. Coding error or IO error. Report this."RESET); // could be falsely triggered by file shrinkage
 				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO 2024/12/24 consider removing line
 				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line
 				close_sockets(n,f,*fd_active)
@@ -249,6 +257,11 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				packet_len = (uint16_t)(prefix_len + message_len - start);
 			else // oversized message
 				packet_len = PACKET_SIZE_MAX;
+			if(!packet_len)
+			{ // Adding a 0 length packet to packet struct would cause severe issues. Has never happened.
+				error_printf(0,"Packet length is zero for n=%d i=%d %s. Coding error. Report this.",n,i,name);
+				goto error;
+			}
 			uint16_t trash = htobe16(packet_len);
 			memcpy(&send_buffer[0],&trash,sizeof(uint16_t)); // packet length
 			trash = htobe16(protocol);
@@ -266,15 +279,14 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			torx_unlock(n) // XXX
 		}
 		struct evbuffer *output = NULL; // XXX If getting issues at bufferevent_get_output in valgrind, it means .bev_recv or .bev_send is not being NULL'd properly in libevent after closing
+		struct bufferevent *bev = NULL;
 		torx_read(n) // XXX
-		struct bufferevent *bev_recv = peer[n].bev_recv;
-		struct bufferevent *bev_send = peer[n].bev_send;
+		if(fd_type == 0)
+			bev = peer[n].bev_recv;
+		else if(fd_type == 1)
+			bev = peer[n].bev_send;
 		torx_unlock(n) // XXX
-		if(fd_type == 0 && bev_recv)
-			output = bufferevent_get_output(bev_recv); // 2023/05/12 TODO got a non-fatal invalid read here
-		else if(fd_type == 1 && bev_send)
-			output = bufferevent_get_output(bev_send); // 2023/10/19 TODO invalid read here
-		if(output)
+		if(bev && (output = bufferevent_get_output(bev)))
 		{
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
@@ -300,9 +312,10 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				output,
 				send_buffer,
 				(size_t)packet_len); // TODO does this have a size limit?
-			pthread_rwlock_unlock(&mutex_packet);
-			evbuffer_unlock(output); // XXX
 		//	total_packets_added++; // TODO remove
+			pthread_rwlock_unlock(&mutex_packet);
+			bufferevent_flush(bev,EV_WRITE,BEV_FLUSH); // TODO 2024/12/30 TESTING TODO might use BEV_FINISHED or BEV_FLUSH
+			evbuffer_unlock(output); // XXX
 			sodium_memzero(send_buffer,(size_t)packet_len);
 			return 0;
 		}
@@ -312,17 +325,32 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	else
 		error_simple(0,"Send prep failed for reasons.");
 	error: {}
-	if(protocol != ENUM_PROTOCOL_FILE_PIECE && start == 0)
+	if(protocol != ENUM_PROTOCOL_FILE_PIECE)
 	{
+	//	if(start == 0)
+	//	{
 		torx_read(n) // XXX
-		if(peer[n].socket_utilized[fd_type] == i)
+		const int socket_utilized = peer[n].socket_utilized[fd_type];
+		torx_unlock(n) // XXX
+		if(socket_utilized == i)
 		{
-			torx_unlock(n) // XXX
 			error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
 			torx_write(n) // XXX
 			peer[n].socket_utilized[fd_type] = INT_MIN;
+			torx_unlock(n) // XXX
 		}
-		torx_unlock(n) // XXX
+		else
+			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u"RESET,n,fd_type,i,socket_utilized,start);
+		if(start)
+		{
+			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%lu to pos=0\n"RESET,n,i,fd_type,start);
+			torx_write(n) // XXX
+			peer[n].message[i].pos = 0;
+			torx_unlock(n) // XXX
+		}
+	/*	}
+		else
+			printf(PINK"Checkpoint WE SHOULD BE DE-UTILIZING and .pos -> 0\n"RESET); */
 	}
 	return -1;
 }

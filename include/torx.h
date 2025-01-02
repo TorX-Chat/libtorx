@@ -147,15 +147,25 @@ typedef u_short in_port_t;
 
 //#include <sys/mman.h> // for mlockall(
 
-#define RED     "\x1b[31m" // printf( RED "Hello\n" RESET );
-#define GREEN   "\x1b[32m"
-#define YELLOW  "\x1b[33m"
-#define BLUE    "\x1b[34m"
-#define MAGENTA "\x1b[35m"
-#define CYAN    "\x1b[36m"
-#define WHITE	"\x1b[97m"
-#define PINK	"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
-#define RESET   "\x1b[0m"
+#define RED		"\x1b[31m" // printf( RED "Hello\n" RESET );
+#define GREEN		"\x1b[32m"
+#define YELLOW		"\x1b[33m"
+#define BLUE		"\x1b[34m"
+#define MAGENTA		"\x1b[35m"
+#define CYAN		"\x1b[36m"
+#define WHITE		"\x1b[97m"
+#define PINK		"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
+#define BRIGHT_RED	"\x1b[91m"
+#define BRIGHT_GREEN	"\x1b[92m"
+#define BRIGHT_YELLOW	"\x1b[93m"
+#define BRIGHT_TEAL     "\x1b[96m"
+#define BOLD		"\x1b[1m" // Usage: printf( BOLD BRIGHT_RED BLINKING "hey\n" RESET );
+#define ITALICS		"\x1b[3m"
+#define BLINKING	"\x1b[5m"
+#define UNDERLINE	"\x1b[4m"
+#define HIGHLIGHT	"\x1b[7m"
+#define STRIKETHROUGH	"\x1b[9m"
+#define RESET		"\x1b[0m"
 
 #define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
 #define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common

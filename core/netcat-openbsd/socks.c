@@ -336,23 +336,23 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 			error_simple(0,"Failed to close socket. 142535");
 		return -1;
 	}
-	switch (buf[3]) 
+	if(buf[3] == SOCKS_IPV4)
 	{
-		case SOCKS_IPV4:
-			cnt = atomicio(POLLIN, proxyfd, buf + 4, 6);
-			if(cnt != 6)
-			{ // Occured on 2024/02/21 when taking down a group peer.
-				error_simple(0,"read failed, this will probably never occur because we don't use ipv6");
-				if(evutil_closesocket(proxyfd) == -1)
-					error_simple(0,"Failed to close socket. 95324"); // Occured on 2024/09/28 when repeatedly blocking/unblocking.
-				return -1;
-			}
-			break;
-		default:
-			error_simple(0, "Connection failed, unsupported address type. This should never occur."); // occured 2024/02/26 when deleting some group peers
+		cnt = atomicio(POLLIN, proxyfd, buf + 4, 6);
+		if(cnt != 6)
+		{ // Occured on 2024/02/21 when taking down a group peer.
+			error_simple(0,"read failed, this will probably never occur because we don't use ipv6");
 			if(evutil_closesocket(proxyfd) == -1)
-				error_simple(0,"Failed to close socket. 841231"); // Occured overnight on 2023/11/02
+				error_simple(0,"Failed to close socket. 95324"); // Occured on 2024/09/28 when repeatedly blocking/unblocking.
 			return -1;
+		}
+	}
+	else
+	{
+		error_simple(0, "Connection failed, unsupported address type. This should never occur."); // occured 2024/02/26 when deleting some group peers, occurs 2024/12/27 frequently
+		if(evutil_closesocket(proxyfd) == -1)
+			error_simple(0,"Failed to close socket. 841231"); // Occured overnight on 2023/11/02
+		return -1;
 	}
 	return proxyfd;
 }

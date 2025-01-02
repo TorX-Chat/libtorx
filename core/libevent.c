@@ -254,7 +254,7 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	torx_unlock(event_strc->n) // XXX
 	if(event_strc->authenticated == 0 || socket_utilized > INT_MIN)
 	{ // If socket_utilized EVER triggers here, it indicates either that we call begin_cascade somewhere we shouldn't (where a message_send is already called), or otherwise a race condition (where begin_cascade is being called twice).
-		error_printf(0,"Sanity check failed in begin_cascade. Coding error. Report this. Owner=%u fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->fd_type,socket_utilized,event_strc->authenticated);
+		error_printf(0,"Sanity check failed in begin_cascade. Possible coding error. Report this. Owner=%u n=%d fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->n,event_strc->fd_type,socket_utilized,event_strc->authenticated);
 		return;
 	}
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
@@ -275,212 +275,225 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	}
 }
 
-//uint64_t total_packets_added = 0;
-//uint64_t total_packets_removed = 0;
+// uint64_t total_packets_added = 0; // TODO remove
+// uint64_t total_packets_removed = 0; // TODO remove
 
 static inline size_t packet_removal(struct event_strc *event_strc,const size_t drain_len)
 {
 	size_t drained = 0;
-	time_t time_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
-	time_t nstime_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
-	int o_oldest = -1;
-	int packets_to_remove = 0; // 2024/12/24 Very important, do not modify
-	torx_read(event_strc->n) // XXX
-	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
-	torx_unlock(event_strc->n) // XXX
+	int packets_to_remove = 1; // 2024/12/24 Very important, do not modify
 	pthread_rwlock_wrlock(&mutex_packet);
-	for(uint8_t cycle = 0 ; cycle < 2 ; cycle++)
+	while(packets_to_remove)
+	{
+		torx_read(event_strc->n) // XXX
+		const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
+		torx_unlock(event_strc->n) // XXX
+		time_t time_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
+		time_t nstime_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
+		int o_oldest = -1;
+		packets_to_remove = 0;
 		for(int o = 0 ; o <= highest_ever_o ; o++)
+			if(packet[o].n == event_strc->n && packet[o].fd_type == event_strc->fd_type)
+			{
+				packets_to_remove++;
+				if(time_oldest > packet[o].time || (packet[o].time == time_oldest && nstime_oldest > packet[o].nstime))
+				{ // This packet is older than the current oldest.
+					time_oldest = packet[o].time;
+					nstime_oldest = packet[o].nstime;
+					o_oldest = o;
+				}
+			}
+		const int o = o_oldest;
+		if(o < 0)
+			break; // Done or none
+		packets_to_remove--; // Leave here, before the continue
+		const int p_iter = packet[o].p_iter;
+		if(p_iter < 0) // Should never happen. No good way to handle other than to disconnect and return.
+			error_simple(-1,"p_iter is negative in packet_removal. Potentially serious coding error. Report this.");
+		const int8_t packet_fd_type = packet[o].fd_type;
+		const int packet_f_i = packet[o].f_i;
+		const uint16_t packet_len = packet[o].packet_len;
+		const time_t packet_time = packet[o].time;
+		const time_t packet_nstime = packet[o].nstime;
+		if(!drain_len && packet[o].p_iter != file_piece_p_iter && socket_utilized != packet_f_i)
 		{
-			if(drained && !packets_to_remove)
-				break; // Finished.
-			const int packet_n = packet[o].n;
-			const int8_t packet_fd_type = packet[o].fd_type;
-			if(packet_n == event_strc->n && packet_fd_type == event_strc->fd_type)
-			{ // Found a potential winner, now see if it is oldest before handling
-
-				if(o != o_oldest)
-				{ // Occurs every o on cycle 0, or when not the oldest on cycle 1
-					if(packet[o].p_iter != file_piece_p_iter && packet[o].f_i == socket_utilized)
-					{ // Must force this to be the oldest, even if it isn't. This can trigger due to bugs that happen when restarting, etc
-						time_oldest = 0;
-						nstime_oldest = 0;
-						o_oldest = o;
-					}
-					else if(time_oldest > packet[o].time || (packet[o].time == time_oldest && nstime_oldest > packet[o].nstime))
-					{ // This packet is older than the current oldest. ( can only ever trigger on cycle 0 )
-						time_oldest = packet[o].time;
-						nstime_oldest = packet[o].nstime;
-						o_oldest = o;
-					}
-					if(!drained)
-						packets_to_remove++;
-					continue;
-				}
-				packets_to_remove--; // Leave here, before the continue
-				const int p_iter = packet[o].p_iter;
-				if(p_iter < 0)
-				{ // Should never happen
-					error_simple(0,"p_iter is negative in packet_removal. Potentially serious coding error. Report this.");
-					continue;
-				}
-				const int packet_f_i = packet[o].f_i;
-				const uint16_t packet_len = packet[o].packet_len;
-				packet[o].n = -1; // release it for re-use.
-				packet[o].f_i = INT_MIN; // release it for re-use.
-				packet[o].packet_len = 0; // release it for re-use.
-				packet[o].p_iter = -1; // release it for re-use.
-				packet[o].fd_type = -1; // release it for re-use.
-				packet[o].time = 0;
-				packet[o].nstime = 0;
-				pthread_rwlock_unlock(&mutex_packet); // XXX DO NOT continue AFTER THIS XXX
-				time_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
-				nstime_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
-				o_oldest = -1;
-				cycle = 0; // XXX DO NOT continue; AFTER THIS XXX
-				o = -1; // XXX DO NOT continue; or use o AFTER THIS XXX
-				drained += packet_len;
-			//	total_packets_removed++; // TODO remove
-			//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained);
-				if(!drain_len)
-				{ // For drain_len, we don't do anything except 0 the packets above
-					pthread_rwlock_rdlock(&mutex_protocols);
-					const uint16_t protocol = protocols[p_iter].protocol;
-					const uint8_t stream = protocols[p_iter].stream;
-					const char *name = protocols[p_iter].name;
-					const uint8_t logged = protocols[p_iter].logged;
-					pthread_rwlock_unlock(&mutex_protocols);
-					if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+			int other_socket_utilized;
+			torx_read(event_strc->n) // XXX
+			if(event_strc->fd_type)
+				other_socket_utilized = peer[event_strc->n].socket_utilized[0];
+			else
+				other_socket_utilized = peer[event_strc->n].socket_utilized[1];
+			torx_unlock(event_strc->n) // XXX
+			error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%ld nstime=%ld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,packet[o].time,packet[o].nstime);
+			break;
+		}
+		packet[o].n = -1; // release it for re-use.
+		packet[o].f_i = INT_MIN; // release it for re-use.
+		packet[o].packet_len = 0; // release it for re-use.
+		packet[o].p_iter = -1; // release it for re-use.
+		packet[o].fd_type = -1; // release it for re-use.
+		packet[o].time = 0;
+		packet[o].nstime = 0;
+		pthread_rwlock_unlock(&mutex_packet); // XXX DO NOT continue AFTER THIS XXX
+		time_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
+		nstime_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
+		o_oldest = -1;
+		drained += packet_len;
+	//	total_packets_removed++; // TODO remove
+	//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained); // TODO remove
+		if(!drain_len)
+		{ // For drain_len, we don't do anything except 0 the packets above
+			pthread_rwlock_rdlock(&mutex_protocols);
+			const uint16_t protocol = protocols[p_iter].protocol;
+			const uint8_t stream = protocols[p_iter].stream;
+			const char *name = protocols[p_iter].name;
+			const uint8_t logged = protocols[p_iter].logged;
+			pthread_rwlock_unlock(&mutex_protocols);
+			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+			{
+				const int f = packet_f_i;
+				torx_write(event_strc->n) // XXX
+				peer[event_strc->n].file[f].outbound_transferred[packet_fd_type] += packet_len-16;
+				torx_unlock(event_strc->n) // XXX
+				const uint64_t transferred = calculate_transferred(event_strc->n,f);
+				torx_read(event_strc->n) // XXX
+				uint8_t file_status = peer[event_strc->n].file[f].status;
+				const uint64_t current_pos = peer[event_strc->n].file[f].outbound_start[event_strc->fd_type] + peer[event_strc->n].file[f].outbound_transferred[event_strc->fd_type];
+				const uint64_t current_end = peer[event_strc->n].file[f].outbound_end[event_strc->fd_type]+1;
+				torx_unlock(event_strc->n) // XXX
+				if(current_pos == current_end)
+				{
+					error_printf(0,"Outbound Section Completed n=%d f=%d fd_type=%d",event_strc->n,f,event_strc->fd_type);
+					if(event_strc->fd_type == 0)
+						close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_recvfd)
+					else /* event_strc->fd_type == 1 */
+						close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_sendfd)
+					const uint64_t size = getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size));
+					if(transferred >= size) // All Requested Sections Fully Completed
 					{
-						const int f = packet_f_i;
+						if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
+							error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
+						file_status = ENUM_FILE_OUTBOUND_COMPLETED;
+						setter(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
+					}
+					transfer_progress(event_strc->n,f,transferred);
+				}
+				else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
+				{
+					transfer_progress(event_strc->n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
+					send_prep(event_strc->n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
+				}
+				else // Ceasing send due to status change
+					error_printf(0,"Ceasing to send file n=%d f=%d status=%u",event_strc->n,f,file_status);
+			}
+			else
+			{ // All protocols that contain a message size on the first packet of a message
+				const int i = packet_f_i;
+				torx_write(event_strc->n) // XXX Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
+				if(peer[event_strc->n].message[i].pos == 0) // first packet of a message, has message_len prefix
+					peer[event_strc->n].message[i].pos = packet_len - (2+2+4);
+				else // subsequent packet (ie, second or later packet in a message > PACKET_SIZE_MAX)
+					peer[event_strc->n].message[i].pos += packet_len - (2+2);
+				const uint32_t message_len = peer[event_strc->n].message[i].message_len;
+				const uint32_t pos = peer[event_strc->n].message[i].pos;
+				// printf("Checkpoint MESSAGE STAT: n=%d i=%d stat=%u\n",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
+				torx_unlock(event_strc->n) // XXX
+				if(pos == message_len)
+				{ // complete message, complete send
+					carry_on_regardless: {}
+					if(stream)
+					{
+						if(logged) // Logged stream messages are only logged after being sent
+						{
+							const uint8_t stat = ENUM_MESSAGE_SENT;
+							setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
+							sql_insert_message(event_strc->n,i);
+						}
+						else
+						{ // discard/delete message and attempt rollback
+							torx_write(event_strc->n) // XXX
+							zero_i(event_strc->n,i);
+							torx_unlock(event_strc->n) // XXX
+						/*	printf("Checkpoint actually deleted group_peer's i\n");
+							// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
+							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
+						}
+					}
+					else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
+					{ // We don't need these messages anymore. They only need to be logged until sent. One day we can perhaps make them stream non-disgardable + !logged?
+						if(logged) // yes, it is
+						{
+							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+							const time_t time = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,time));
+							const time_t nstime = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,nstime));
+							sql_delete_message(peer_index,time,nstime);
+						}
 						torx_write(event_strc->n) // XXX
-						peer[event_strc->n].file[f].outbound_transferred[packet_fd_type] += packet_len-16;
+						zero_i(event_strc->n,i);
 						torx_unlock(event_strc->n) // XXX
-						const uint64_t transferred = calculate_transferred(event_strc->n,f);
-						torx_read(event_strc->n) // XXX
-						uint8_t file_status = peer[event_strc->n].file[f].status;
-						const uint64_t current_pos = peer[event_strc->n].file[f].outbound_start[event_strc->fd_type] + peer[event_strc->n].file[f].outbound_transferred[event_strc->fd_type];
-						const uint64_t current_end = peer[event_strc->n].file[f].outbound_end[event_strc->fd_type]+1;
-						torx_unlock(event_strc->n) // XXX
-						if(current_pos == current_end)
-						{
-							error_printf(0,"Outbound Section Completed n=%d f=%d fd_type=%d",event_strc->n,f,event_strc->fd_type);
-							if(event_strc->fd_type == 0)
-								close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_recvfd)
-							else /* event_strc->fd_type == 1 */
-								close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_sendfd)
-							const uint64_t size = getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size));
-							if(transferred >= size) // All Requested Sections Fully Completed
-							{
-								if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
-									error_printf(0,"Checkpoint packet_removal exceeded size of file by %lu bytes",transferred - size);
-								file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-								setter(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
-							}
-							transfer_progress(event_strc->n,f,transferred);
-						}
-						else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
-						{
-							transfer_progress(event_strc->n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
-							send_prep(event_strc->n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
-						}
-						else // Ceasing send due to status change
-							error_printf(0,"Ceasing to send file n=%d f=%d status=%u",event_strc->n,f,file_status);
 					}
 					else
-					{ // All protocols that contain a message size on the first packet of a message
-						const int i = packet_f_i;
-						torx_write(event_strc->n) // XXX Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
-						if(peer[event_strc->n].message[i].pos == 0) // first packet of a message, has message_len prefix
-							peer[event_strc->n].message[i].pos = packet_len - (2+2+4);
-						else // subsequent packet (ie, second or later packet in a message > PACKET_SIZE_MAX)
-							peer[event_strc->n].message[i].pos += packet_len - (2+2);
-						const uint32_t message_len = peer[event_strc->n].message[i].message_len;
-						const uint32_t pos = peer[event_strc->n].message[i].pos;
-						// printf("Checkpoint MESSAGE STAT: n=%d i=%d stat=%u\n",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
-						torx_unlock(event_strc->n) // XXX
-						if(pos == message_len)
-						{ // complete message, complete send
-							carry_on_regardless: {}
-							if(stream)
-							{
-								if(logged) // Logged stream messages are only logged after being sent
-								{
-									const uint8_t stat = ENUM_MESSAGE_SENT;
-									setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
-									sql_insert_message(event_strc->n,i);
-								}
-								else
-								{ // discard/delete message and attempt rollback
-									torx_write(event_strc->n) // XXX
-									zero_i(event_strc->n,i);
-									torx_unlock(event_strc->n) // XXX
-								/*	printf("Checkpoint actually deleted group_peer's i\n");
-									// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
-									// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
-								}
-							}
-							else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
-							{ // We don't need these messages anymore. They only need to be logged until sent. One day we can perhaps make them stream non-disgardable + !logged?
-								if(logged) // yes, it is
-								{
-									const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-									const time_t time = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,time));
-									const time_t nstime = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,nstime));
-									sql_delete_message(peer_index,time,nstime);
-								}
-								torx_write(event_strc->n) // XXX
-								zero_i(event_strc->n,i);
-								torx_unlock(event_strc->n) // XXX
-							}
-							else
-							{
-								const uint8_t stat = ENUM_MESSAGE_SENT;
-								setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
-								sql_update_message(event_strc->n,i);
-								message_modified_cb(event_strc->n,i);
-								if(protocol == ENUM_PROTOCOL_KILL_CODE)
-								{ // Sent Kill Code
-									error_simple(1,"Successfully sent a kill code. Deleting peer.");
-									const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-									takedown_onion(peer_index,1);
-								//	disconnect_forever(event_strc); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
-								}
-							}
-							torx_read(event_strc->n) // XXX
-							const int REMOVE_socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
-							torx_unlock(event_strc->n) // XXX
-							if(REMOVE_socket_utilized != i)
-							{ // Disconnect here to trigger draining of the packet struct. Do not unset socket_utilized before calling disconnect or more packets will be lost. TODO
-								error_printf(0,"Packet removal wrong socket_utilized: %d != %d. Coding error. Report this. Disconnecting n=%d.",REMOVE_socket_utilized,i,event_strc->n);
-								disconnect(event_strc); // 2024/12/25 Enabling this is HIGHLY experimental.
-							}
-							error_printf(0,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
-							error_printf(0,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
-							torx_write(event_strc->n) // XXX
-							peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN; // TODO consider sanity checking that its currently == i
-							torx_unlock(event_strc->n) // XXX
-							if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-								pipe_auth_and_request_peerlist(event_strc); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
-							else // Send next message. Necessary.
-								begin_cascade(event_strc);
-						}
-						else if(pos > message_len)
-						{ // If this triggers, enable FSojoasfoSO lines for debugging. In the past, it was due to send_prep being called twice on the same n,i pair.
-							error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. Protocol: %s. Likely will corrupt message. Packet len was %u. Coding error. Report this."RESET,pos,message_len,name,packet_len);
-							goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
-						}
-						else // incomplete message, complete send
-						{
-						//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
-							printf("."); fflush(stdout);
-							send_prep(event_strc->n,i,p_iter,event_strc->fd_type); // send next packet on same fd
+					{
+						const uint8_t stat = ENUM_MESSAGE_SENT;
+						setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
+						sql_update_message(event_strc->n,i);
+						message_modified_cb(event_strc->n,i);
+						if(protocol == ENUM_PROTOCOL_KILL_CODE)
+						{ // Sent Kill Code
+							error_simple(1,"Successfully sent a kill code. Deleting peer.");
+							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+							takedown_onion(peer_index,1);
+						//	disconnect_forever(event_strc); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
 						}
 					}
+					error_printf(0,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
+					error_printf(0,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
+					torx_write(event_strc->n) // XXX
+					peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+					torx_unlock(event_strc->n) // XXX
+					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+						pipe_auth_and_request_peerlist(event_strc); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
+					else // Send next message. Necessary.
+						begin_cascade(event_strc);
 				}
-				pthread_rwlock_wrlock(&mutex_packet);
+				else if(pos > message_len)
+				{ // If this triggers, enable FSojoasfoSO lines for debugging. In the past, it was due to send_prep being called twice on the same n,i pair.
+					const uint8_t stat = getter_uint8(event_strc->n,i,-1,-1,offsetof(struct message_list,stat));
+					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%ld nstime=%ld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,packet_time,packet_nstime,name);
+					pthread_rwlock_rdlock(&mutex_packet);
+					for(int ooo = 0 ; ooo <= highest_ever_o ; ooo++)
+						if(packet[ooo].p_iter > -1 && packet[ooo].n == event_strc->n && packet[ooo].fd_type == event_strc->fd_type)
+						{ // This is important debug info
+							pthread_rwlock_rdlock(&mutex_protocols);
+							const char *o_name = protocols[packet[ooo].p_iter].name;
+							pthread_rwlock_unlock(&mutex_protocols);
+							printf("-------------Same n, same fd_type-------------\n");
+							printf("Checkpoint packet[%d].name:	%s\n",ooo,o_name);
+							printf("Checkpoint packet[%d].n:		%d\n",ooo,packet[ooo].n);
+							printf("Checkpoint packet[%d].f_i:		%d\n",ooo,packet[ooo].f_i);
+							printf("Checkpoint packet[%d].packet_len:	%u\n",ooo,packet[ooo].packet_len);
+							printf("Checkpoint packet[%d].fd_type:		%d\n",ooo,packet[ooo].fd_type);
+							printf("Checkpoint packet[%d].time:		%ld\n",ooo,packet[ooo].time);
+							printf("Checkpoint packet[%d].nstime:		%ld\n",ooo,packet[ooo].nstime);
+							printf("-----------If not _FILE_PIECE, bug!-----------\n");
+							if(packet[ooo].p_iter != file_piece_p_iter) // Severe coding error
+								error_simple(0,"socket_utilized failed to prevent two non-file packets on the same n+fd_type from getting into our packet struct. Severe coding error. Report this.");
+							else
+								error_simple(0,"Error cause unknown. Coding error. Report this.");
+						}
+					pthread_rwlock_unlock(&mutex_packet);
+					goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
+				}
+				else // incomplete message, complete send
+				{
+				//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
+				//	printf("."); fflush(stdout);
+					send_prep(event_strc->n,i,p_iter,event_strc->fd_type); // send next packet on same fd
+				}
 			}
 		}
+		pthread_rwlock_wrlock(&mutex_packet);
+	}
 	pthread_rwlock_unlock(&mutex_packet);
 	if(!drained)
 		error_simple(0,"Remove packet failed to remove anything. Coding error. Report this.");
@@ -582,6 +595,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	if(socket_utilized > INT_MIN)
 	{
 		torx_write(event_strc->n) // XXX
+		peer[event_strc->n].message[socket_utilized].pos = 0;
 		peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
 		torx_unlock(event_strc->n) // XXX
 		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
@@ -790,7 +804,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_fd_lock(nn,f) // XXX
 				FILE *local = *fd_active;
 				torx_fd_unlock(nn,f) // XXX
-				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 segfaulted here during group file transfer
+				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null.
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local); // TODO 2024/12/17 segfaulted here during group file transfer
 				torx_fd_lock(nn,f) // XXX
 				*fd_active = local;
@@ -819,7 +833,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				if(event_strc->buffer_len + (packet_len - cur) == event_strc->untrusted_message_len) // 2024/02/16 can be == , >= is to catch excessive, just in case
 					complete = 1;
-				else if(event_strc->buffer_len > 0 && event_strc->buffer_len + (packet_len - cur) > event_strc->untrusted_message_len)
+				else if(event_strc->buffer_len && event_strc->buffer_len + (packet_len - cur) > event_strc->untrusted_message_len) // Note: event_strc->buffer_len is required because otherwise this is perhaps 2+ packets.
 				{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
 					error_printf(0,"Disgarding a oversized message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,event_strc->buffer_len,packet_len,cur,event_strc->untrusted_message_len);
 					break;
@@ -1122,7 +1136,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						fseek(*fd_active,(long int)requested_start,SEEK_SET);
 						torx_fd_unlock(nn,f) // XXX
 						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,owner_nn,nn,event_strc->fd_type);
-						send_prep(nn,f,protocol_lookup(ENUM_PROTOCOL_FILE_PIECE),event_strc->fd_type);
+						send_prep(nn,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
 						continue; // because this is now stream
 					}
@@ -1413,9 +1427,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 							set_time(&time,&nstime);
-						const int i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1; // need to set this to prevent issues with full-duplex
-						expand_message_struc(nn,i);
 						torx_write(nn) // XXX
+						const int i = peer[nn].max_i + 1; // need to set this to prevent issues with full-duplex
+						expand_message_struc(nn,i);
 						peer[nn].max_i++; // NOTHING CAN BE DONE WITH "peer[event_strc->n].message[peer[event_strc->n].max_i]." AFTER THIS
 						if(group_peer_n > -1 && group_peer_n == event_strc->group_n) // we received a message that we signed... it was resent to us.
 							peer[nn].message[i].stat = ENUM_MESSAGE_SENT;

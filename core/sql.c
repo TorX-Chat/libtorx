@@ -273,11 +273,6 @@ int message_edit(const int n,const int i,const char *message)
 							torx_write(nn) // XXX
 							zero_i(nn,ii);
 							torx_unlock(nn) // XXX
-							if(ii == max_i)
-							{
-								max_i--;
-								setter(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
-							}
 							break;
 						}
 					}
@@ -287,12 +282,6 @@ int message_edit(const int n,const int i,const char *message)
 		torx_write(n) // XXX
 		zero_i(n,i);
 		torx_unlock(n) // XXX
-		int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-		if(i == max_i)
-		{
-			max_i--;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i),&max_i,sizeof(max_i));
-		}
 		message_deleted_cb(n,i);
 	}
 	return 0;
@@ -560,15 +549,15 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		}
 	}
 	int i;
+	torx_write(n) // XXX
 	if(offset < 0)
-		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i)) - offset - 1;
+		i = peer[n].max_i - offset - 1;
 	else if(offset > 0)
-		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + offset + 1;
+		i = peer[n].max_i + offset + 1;
 	else
-		i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i)) + 1;
+		i = peer[n].max_i + 1;
 	if(!offset)
 		expand_message_struc(n,i);
-	torx_write(n) // XXX
 	if(!offset)
 		peer[n].max_i++;
 	peer[n].message[i].time = time;
@@ -1138,8 +1127,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		{
 			i--;
 			offset--;
-			expand_message_struc(n,i); // before adjusting min_i
 			torx_write(n) // XXX
+			expand_message_struc(n,i); // before adjusting min_i
 			peer[n].min_i--;
 			torx_unlock(n) // XXX
 
