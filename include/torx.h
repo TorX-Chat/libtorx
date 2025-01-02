@@ -238,17 +238,18 @@ typedef u_short in_port_t;
 	pthread_rwlock_unlock(&mutex_expand); \
 }
 
-/* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. TODO TODO TODO currently holding page locks because simplicity (but will hang on io error/delay) 
-	Need to localize file descriptors ( .fd_ ) and then stop holding page locks */
+/* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. */
 #define torx_fd_lock(n,f) \
 { \
 	torx_read(n) \
 	pthread_mutex_lock(&peer[n].file[f].mutex_file); \
+	torx_unlock(n) \
 }
 
 #define torx_fd_unlock(n,f) \
 { \
-	pthread_mutex_unlock(&peer[n].file[f].mutex_file);\
+	torx_read(n) \
+	pthread_mutex_unlock(&peer[n].file[f].mutex_file); \
 	torx_unlock(n) \
 }
 /* Convenience function for cloning a page */ // WARNING: Do not make a "torx_page_save". That would be a very bad thing because very much could change elsewhere between open and close.
@@ -276,11 +277,17 @@ typedef u_short in_port_t;
 { \
 	if(fd) { fclose(fd); fd = NULL; } \
 }
-
-#define close_sockets(n,f,fd) \
+/* XXX This is the CORRECT order, do not modify. torx_fd_lock, THEN torx_read, localize, close, torx_write, globalize, torx_fd_unlock, otherwise races could occur. XXX */
+#define close_sockets(n,f) \
 { \
 	torx_fd_lock(n,f) \
-	close_sockets_nolock(fd) \
+	torx_read(n) \
+	FILE *fd_active_tmp = peer[n].file[f].fd; \
+	torx_unlock(n) \
+	close_sockets_nolock(fd_active_tmp) \
+	torx_write(n) \
+	peer[n].file[f].fd = fd_active_tmp; \
+	torx_unlock(n) \
 	torx_fd_unlock(n,f) \
 }
 
@@ -339,11 +346,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint64_t outbound_transferred[2];	// not re-using split_progress/split_status_n because thats for INCOMING, which ideally can occur concurrently
 		/* Exclusively Group related */
 		unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
-		/* File descriptors */
-		FILE *fd_out_recvfd;	// fd_type == 0
-		FILE *fd_out_sendfd;	// fd_type == 1
-		FILE *fd_in_recvfd;	// fd_type == 2
-		FILE *fd_in_sendfd;	// fd_type == 3
+		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock / torx_fd_unlock
 		struct offer_list {
 			int offerer_n;
 			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have.

@@ -364,10 +364,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				if(current_pos == current_end)
 				{
 					error_printf(0,"Outbound Section Completed n=%d f=%d fd_type=%d",event_strc->n,f,event_strc->fd_type);
-					if(event_strc->fd_type == 0)
-						close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_recvfd)
-					else /* event_strc->fd_type == 1 */
-						close_sockets(event_strc->n,f,peer[event_strc->n].file[f].fd_out_sendfd)
+					close_sockets(event_strc->n,f)
 					const uint64_t size = getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size));
 					if(transferred >= size) // All Requested Sections Fully Completed
 					{
@@ -700,46 +697,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					error_printf(0,"Invalid raw data packet received from owner: %u",event_strc->owner);
 					continue; // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE // TODO consider calling break or blocking peer or something if this triggers. this peer is probably buggy or malicious.
 				}
-				umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
-				FILE **fd_active = {0};
-				torx_read(nn) // XXX
-				if(event_strc->fd_type == 0) // recvfd, inbound
-					fd_active = &peer[nn].file[f].fd_in_recvfd;
-				else /* if(event_strc->fd_type == 1) */ // sendfd, inbound
-					fd_active = &peer[nn].file[f].fd_in_sendfd;
-				if(!*fd_active)
-				{ // Should already be open from file_accept but just in case its not
-					torx_unlock(nn) // XXX
-				//no	error_simple(0,"Re-opening file pointer which we assumed would be open.");
-					char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
-					if(!file_path)
-					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
-						continue;
-					}
-					torx_fd_lock(nn,f) // XXX
-					*fd_active = fopen(file_path, "a"); // Create file if not existing
-					torx_fd_unlock(nn,f) // XXX
-					if(*fd_active == NULL)
-					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						error_printf(0,"Failed to open for writing1: %s",file_path);
-						torx_free((void*)&file_path);
-						continue;
-					}
-					torx_fd_lock(nn,f) // XXX
-					close_sockets_nolock(*fd_active);
-					*fd_active = fopen(file_path, "r+"); // Open file for writing
-					torx_fd_unlock(nn,f) // XXX
-					if(*fd_active == NULL)
-					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						error_printf(0,"Failed to open for writing2: %s",file_path);
-						torx_free((void*)&file_path);
-						continue;
-					}
-					torx_free((void*)&file_path);
-				}
-				else
-					torx_unlock(nn) // XXX
 				uint64_t trash_start; // network order
 				memcpy(&trash_start,&read_buffer[cur],8);
 				cur += 8; // 8 --> 16
@@ -802,12 +759,42 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					continue;
 				}
 				torx_fd_lock(nn,f) // XXX
-				FILE *local = *fd_active;
-				torx_fd_unlock(nn,f) // XXX
-				fseek(local,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null.
-				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,local); // TODO 2024/12/17 segfaulted here during group file transfer
-				torx_fd_lock(nn,f) // XXX
-				*fd_active = local;
+				torx_read(nn) // XXX
+				FILE *fd_active = peer[nn].file[f].fd;
+				torx_unlock(nn) // XXX
+				if(fd_active == NULL)
+				{
+					char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
+					if(!file_path)
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
+						torx_fd_unlock(nn,f) // XXX
+						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
+						continue;
+					}
+					fd_active = fopen(file_path, "a"); // Create file if not existing
+					if(fd_active == NULL)
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
+						torx_fd_unlock(nn,f) // XXX
+						error_printf(0,"Failed to open for writing1: %s",file_path);
+						torx_free((void*)&file_path);
+						continue;
+					}
+					close_sockets_nolock(fd_active);
+					fd_active = fopen(file_path, "r+"); // Open file for writing
+					if(fd_active == NULL)
+					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
+						torx_fd_unlock(nn,f) // XXX
+						error_printf(0,"Failed to open for writing2: %s",file_path);
+						torx_free((void*)&file_path);
+						continue;
+					}
+					torx_free((void*)&file_path);
+				}
+				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
+				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
+				torx_write(nn) // XXX
+				peer[nn].file[f].fd = fd_active;
+				torx_unlock(nn) // XXX
 				torx_fd_unlock(nn,f) // XXX
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
@@ -1115,26 +1102,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						peer[nn].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
 						torx_unlock(nn) // XXX
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
-						FILE **fd_active = {0};
-						torx_read(nn) // XXX
-						if(event_strc->fd_type == 0) // recvfd, outbound
-							fd_active = &peer[nn].file[f].fd_out_recvfd;
-						else /*if(event_strc->fd_type == 1)*/ // sendfd, outbound
-							fd_active = &peer[nn].file[f].fd_out_sendfd;
-						torx_unlock(nn) // XXX
-						torx_fd_lock(nn,f) // XXX
-						*fd_active = fopen(file_path, "r");
-						torx_fd_unlock(nn,f) // XXX
-						if(*fd_active == NULL)
-						{ // NULL sanity check is important TODO triggered 2023/11/10
-							error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
-							torx_free((void*)&file_path);
-							continue;
-						}
 						torx_free((void*)&file_path);
-				/* jwofe9j20w*/	torx_fd_lock(nn,f) // XXX
-						fseek(*fd_active,(long int)requested_start,SEEK_SET);
-						torx_fd_unlock(nn,f) // XXX
 						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,owner_nn,nn,event_strc->fd_type);
 						send_prep(nn,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea

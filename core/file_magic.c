@@ -147,16 +147,8 @@ void process_pause_cancel(const int n,const int f,const uint16_t protocol,const 
 	if(new_file_status == old_file_status)
 		return; // no changes, no action.
 	setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&new_file_status,sizeof(new_file_status));
-	if(new_file_status == ENUM_FILE_OUTBOUND_CANCELLED || new_file_status == ENUM_FILE_OUTBOUND_REJECTED)
-	{ // Close outbound fd
-		close_sockets(n,f,peer[n].file[f].fd_out_recvfd)
-		close_sockets(n,f,peer[n].file[f].fd_out_sendfd)
-	}
-	else if(new_file_status == ENUM_FILE_INBOUND_CANCELLED || new_file_status == ENUM_FILE_INBOUND_REJECTED)
-	{ // Close inbound fd
-		close_sockets(n,f,peer[n].file[f].fd_in_recvfd)
-		close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
-	}
+	if(new_file_status == ENUM_FILE_OUTBOUND_CANCELLED || new_file_status == ENUM_FILE_OUTBOUND_REJECTED || new_file_status == ENUM_FILE_INBOUND_CANCELLED || new_file_status == ENUM_FILE_INBOUND_REJECTED)
+		close_sockets(n,f)
 }
 
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path)
@@ -825,7 +817,6 @@ int initialize_split_info(const int n,const int f)
 		}
 		else if(splits > 0)
 		{ // partial file does not exist, write an initialized .split file
-			umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
 			FILE *fp;
 			if((fp = fopen(split_path,"w+")) == NULL)
 			{ // BAD, permissions issue, cannot create file
@@ -910,10 +901,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 	const uint8_t section_complete = (packet_start + wrote == section_end + 1);
 	if(section_complete || section_info_current == section_req_current)
 	{ // Section complete. Close file descriptors (flushing data to disk)
-		if(fd_type == 0) // recvfd, inbound
-			close_sockets(n,f,peer[n].file[f].fd_in_recvfd)
-		else /* if(fd_type == 1) */ // sendfd, inbound
-			close_sockets(n,f,peer[n].file[f].fd_in_sendfd)
+		close_sockets(n,f)
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));

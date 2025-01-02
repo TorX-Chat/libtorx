@@ -2246,10 +2246,9 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 	torx_free((void*)&peer[n].file[f].split_status_n);
 	torx_free((void*)&peer[n].file[f].split_status_fd);
 	torx_free((void*)&peer[n].file[f].split_status_req);
-	close_sockets_nolock(peer[n].file[f].fd_out_recvfd) // Do not eliminate
-	close_sockets_nolock(peer[n].file[f].fd_out_sendfd)
-	close_sockets_nolock(peer[n].file[f].fd_in_recvfd)
-	close_sockets_nolock(peer[n].file[f].fd_in_sendfd)
+	pthread_mutex_lock(&peer[n].file[f].mutex_file); // Do not replace
+	close_sockets_nolock(peer[n].file[f].fd) // Do not eliminate
+	pthread_mutex_unlock(&peer[n].file[f].mutex_file); // Do not replace
 }
 
 void zero_n(const int n) // XXX do not put locks in here
@@ -3169,10 +3168,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	sodium_memzero(peer[n].file[f].outbound_end,sizeof(peer[n].file[f].outbound_end));
 	sodium_memzero(peer[n].file[f].outbound_transferred,sizeof(peer[n].file[f].outbound_transferred));
 	peer[n].file[f].split_hashes = NULL;
-	peer[n].file[f].fd_out_recvfd = NULL;
-	peer[n].file[f].fd_out_sendfd = NULL;
-	peer[n].file[f].fd_in_recvfd = NULL;
-	peer[n].file[f].fd_in_sendfd = NULL;
+	peer[n].file[f].fd = NULL;
 	peer[n].file[f].last_progress_update_time = 0;
 	peer[n].file[f].last_progress_update_nstime = 0;
 	peer[n].file[f].bytes_per_second = 0;
@@ -4125,6 +4121,9 @@ void initial(void)
 		exit(-1);
 	}
 	sodium_initialized = 1;
+	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Use randombytes_random(). Note: rand() is terrible on Windows.
+	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
+
 	#ifdef WIN32
 		evthread_use_windows_threads();
 		WSADATA wsaData;
@@ -4153,9 +4152,6 @@ void initial(void)
 
 	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
-
-	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Use randombytes_random(). Note: rand() is terrible on Windows.
-	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
 
 	sodium_memzero(protocols,sizeof(protocols)); // XXX initialize protocols struct XXX
 

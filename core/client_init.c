@@ -882,7 +882,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	return -1;
 }
 
-static inline int file_unwritable(const int n,const int f,char *file_path)
+static inline int file_unwritable(const int n,const int f,const char *file_path)
 { // Check whether file permissions issues exist at the destination before requesting a file. Pass either n+f or file_path.
 	if((n < 0 || f < 0) && file_path == NULL)
 	{
@@ -895,26 +895,26 @@ static inline int file_unwritable(const int n,const int f,char *file_path)
 		fp = fopen(file_path, "a");
 	else
 	{
-		torx_read(n) // XXX
-		fp = fopen(peer[n].file[f].file_path, "a");
-		torx_unlock(n) // XXX
+		char *file_path_local = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		fp = fopen(file_path_local, "a");
+		torx_free((void*)&file_path_local);
 	}
 	if(fp)
 	{
 		close_sockets_nolock(fp);
 		return 0;
 	}
-	else
-	{ // TODO not sure if this is a good idea but its simplifying things at the moment
-		error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path and setting to INBOUND_PENDING if n,f was passed so that it can be reset.");
+	else if(file_path == NULL)
+	{ // n,f was necessarily passed
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].file_path);
 		torx_free((void*)&peer[n].file[f].split_path);
 		if(peer[n].file[f].status == ENUM_FILE_INBOUND_ACCEPTED)
 			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING;
 		torx_unlock(n) // XXX
-		return 1;
 	}
+	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path and setting to INBOUND_PENDING if n,f was passed so that it can be reset.");
+	return 1;
 }
 
 void file_request_internal(const int n,const int f,const int8_t fd_type)
@@ -971,7 +971,7 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 }
 
 void file_set_path(const int n,const int f,const char *path)
-{ // To be called before file_accept. This is a helper function for FFI/Flutter.
+{ // To be called before file_accept. This is a helper function for FFI/Flutter. TODO Have this function utilize torx_fd_lock and other things to move/rename an existing file, mid transfer or otherwise.
 	size_t len;
 	if(!path || !(len = strlen(path)))
 	{

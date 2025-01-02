@@ -154,19 +154,8 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				goto error; // XXX On where pos > 0, socket_utilized must already be set. This is a major coding error.
 		}
 	}
-	FILE **fd_active = {0};
 	torx_read(n) // XXX
-	if(fd_type == 0 && peer[n].bev_recv && peer[n].recvfd_connected)
-	{ // We check recvfd_connected to verify that the pipe is auth'd. This is important.
-		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-			fd_active = &peer[n].file[f].fd_out_recvfd;
-	}
-	else if(fd_type == 1 && peer[n].bev_send && peer[n].sendfd_connected)
-	{
-		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
-			fd_active = &peer[n].file[f].fd_out_sendfd;
-	}
-	else
+	if(!(fd_type == 0 && peer[n].bev_recv && peer[n].recvfd_connected) && !(fd_type == 1 && peer[n].bev_send && peer[n].sendfd_connected))
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up, unless it is ENUM_STREAM_DISCARDABLE.
 		torx_unlock(n) // XXX
 		error_printf(2,"Send_prep too early owner=%u n=%d f_i=%d fd=%d: %s",owner,n,f_i,fd_type,name);
@@ -179,32 +168,31 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		uint16_t packet_len = 0;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		{ // only f is initialized
-			torx_read(n) // XXX
-			if(!*fd_active || (start = (uint64_t)ftell(*fd_active)) == (uint64_t)-1)
-			{
-				torx_unlock(n) // XXX
-				error_simple(0,"Null filepointer in send_prep, possibly caused by file being completed.");
-				goto error;
-			}
-			torx_unlock(n) // XXX
-			torx_fd_lock(n,f) // XXX
-			FILE *local = *fd_active; // local file descriptor that has the proper location, then after fread, write the new location to the proper file pointer (avoids lockup if/while read hangs)
-			torx_fd_unlock(n,f) // XXX
-			torx_read(n) // XXX
-			if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start)
-			{ // This is apparently not an error and must exist to prevent corruption
-				error_printf(0,"Shifting filepointer: %lu + %lu != %lu\n",peer[n].file[f].outbound_start[fd_type],peer[n].file[f].outbound_transferred[fd_type],start);
-				fseek(local,(long int)start,SEEK_SET);
-			} // Appears NOT to be our (main?) cause of corruption. Best guess is failing to properly close file descriptors on shutdown.
-			const uint64_t endian_corrected_start = htobe64(start);
 			uint16_t data_size = PACKET_SIZE_MAX-16;
+			torx_fd_lock(n,f)
+			torx_read(n) // XXX
+			FILE *fd_active = peer[n].file[f].fd;
+			start = peer[n].file[f].outbound_start[fd_type];
 			if(start + data_size > peer[n].file[f].outbound_end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[n].file[f].outbound_end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
 			torx_unlock(n) // XXX
-			const size_t bytes = fread(&send_buffer[16],1,data_size,local);
-			torx_fd_lock(n,f) // XXX
-			*fd_active = local;
-			torx_fd_unlock(n,f) // XXX
+			if(fd_active == NULL)
+			{
+				char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+				if((fd_active = fopen(file_path, "r")) == NULL)
+				{
+					torx_fd_unlock(n,f) // XXX
+					error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
+					torx_free((void*)&file_path);
+					goto error;
+				}
+			}
+			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start)
+			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);
+			torx_write(n) // XXX
+			peer[n].file[f].fd = fd_active;
+			torx_unlock(n) // XXX
+			torx_fd_unlock(n,f)
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -215,6 +203,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				torx_read(n) // XXX
 				memcpy(&send_buffer[4],peer[n].file[f].checksum,4);
 				torx_unlock(n) // XXX
+				const uint64_t endian_corrected_start = htobe64(start);
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
@@ -222,7 +211,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				error_simple(0,PINK"File completed in a legacy manner. Coding error or IO error. Report this."RESET); // could be falsely triggered by file shrinkage
 				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO 2024/12/24 consider removing line
 				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line
-				close_sockets(n,f,*fd_active)
+				close_sockets(n,f)
 				transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 				sodium_memzero(send_buffer,(size_t)packet_len);
 				goto error;
