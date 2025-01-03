@@ -3181,9 +3181,9 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].offer = torx_insecure_malloc(sizeof(struct offer_list) *11); // NOT freeing, just ignore the lost bytes. see: fjadfweoifaf
 	for(int j = 0; j < 11; j++) /* Initialize iter 0-10 */
 		initialize_offer(n,f,j);
-
+	pthread_rwlock_unlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_f_cb(n,f);
-
+	pthread_rwlock_wrlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 //	note: we have no max counter for file struc.... we rely on checksum to never be zero'd after initialization (until shutdown or deletion of file). This is safe.
 }
 
@@ -3197,9 +3197,9 @@ static void initialize_i(const int n,const int i) // XXX do not put locks in her
 	peer[n].message[i].message_len = 0;
 	peer[n].message[i].pos = 0;
 	peer[n].message[i].nstime = 0;
-
+	pthread_rwlock_unlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_i_cb(n,i);
-
+	pthread_rwlock_wrlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 //	note: our max is message_n which is handled elsewhere
 }
 
@@ -3236,9 +3236,9 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].thrd_send = 0;
 	peer[n].thrd_recv = 0;
 	peer[n].broadcasts_inbound = 0;
-
+	pthread_rwlock_unlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_n_cb(n); // must be before initialize_i/f
-
+	pthread_rwlock_wrlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 	peer[n].message = (struct message_list *)torx_secure_malloc(sizeof(struct message_list) *21) + 10; // XXX Note the +10
 	for(int j = -10; j < 11; j++)
 		initialize_i(n,j);
@@ -3267,7 +3267,9 @@ static void initialize_g(const int g) // XXX do not put locks in here
 	group[g].msg_index = NULL;
 	group[g].msg_first = NULL;
 	group[g].msg_last = NULL;
+	pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_g_cb(g);
+	pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 	max_group++;
 }
 
@@ -3359,10 +3361,12 @@ static inline void expand_file_struc(const int n,const int f)
 		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
 		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
+		torx_unlock(n) // XXX
 		expand_file_struc_cb(n,f);
+		pthread_rwlock_wrlock(&mutex_expand); // XXX
 		for(int j = f+10; j > f; j--)
 			initialize_f(n,j);
-		torx_unlock(n) // XXX
+		pthread_rwlock_unlock(&mutex_expand); // XXX
 	}
 	sodium_memzero(checksum,sizeof(checksum));
 }
@@ -3402,7 +3406,9 @@ void expand_message_struc(const int n,const int i) // XXX do not put locks in he
 			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10,1) - pointer_location - current_shift;
 		else
 			peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10) - pointer_location;
+		pthread_rwlock_unlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 		expand_message_struc_cb(n,i);
+		pthread_rwlock_wrlock(&mutex_expand); // XXX DANGER, WE ASSUME LOCKS XXX
 		if(i < 0) // Expanding down
 			for(int j = i-10; j < i; j++)
 				initialize_i(n,j);
@@ -3426,10 +3432,10 @@ static inline void expand_peer_struc(const int n)
 		pthread_rwlock_wrlock(&mutex_expand);
 		const size_t current_allocation_size = torx_allocation_len(peer);
 		peer = torx_realloc(peer,current_allocation_size + sizeof(struct peer_list) *10);
-		expand_peer_struc_cb(n);
 		for(int j = n+10; j > n; j--)
 			initialize_n(j);
 		pthread_rwlock_unlock(&mutex_expand);
+		expand_peer_struc_cb(n);
 	}
 }
 
@@ -3445,7 +3451,9 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 	{ // Safe to cast g as size_t because > -1
 		const size_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
+		pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 		expand_group_struc_cb(g);
+		pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 		for(int j = g+10; j > g; j--)
 			initialize_g(j);
 	}
@@ -4298,13 +4306,17 @@ void initial(void)
 		if(first_run)
 			sql_exec(&db_plaintext,table_setting_clear,NULL,0);
 		/* Initialize peer struct */
+		pthread_rwlock_wrlock(&mutex_expand); // XXX
 		peer = torx_secure_malloc(sizeof(struct peer_list) *11);
 		for(int j = 0; j < 11; j++)
 			initialize_n(j);
+		pthread_rwlock_unlock(&mutex_expand); // XXX
 		/* Initialize group struct */
+		pthread_rwlock_wrlock(&mutex_expand_group); // XXX
 		group = torx_secure_malloc(sizeof(struct group_list) *11);
 		for(int j = 0; j < 11; j++)
 			initialize_g(j);
+		pthread_rwlock_unlock(&mutex_expand_group); // XXX
 		/* Initalize the packet struc */
 		for(int o = 0; o < SIZE_PACKET_STRC; o++)
 		{
