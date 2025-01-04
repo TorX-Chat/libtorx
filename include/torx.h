@@ -359,6 +359,13 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint8_t speed_iter;
 		uint64_t last_speeds[256];
 		pthread_mutex_t mutex_file;
+		struct request_list {
+			int requester_n;
+			int8_t fd_type;
+			uint64_t start;
+			uint64_t end;
+			uint64_t transferred;
+		} *request;
 	} *file;
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES]; // ONLY use for CTRL + GROUP_PEER, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
@@ -772,6 +779,7 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)__
 int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)__attribute__((warn_unused_result));
 int set_f_from_i(const int n,const int i)__attribute__((warn_unused_result));
 int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
+int set_r(const int n,const int f,const int passed_requester_n,const int8_t passed_requester_fd_type)__attribute__((warn_unused_result));
 void random_string(char *destination,const unsigned int destination_size);
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));

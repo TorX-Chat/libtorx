@@ -2232,10 +2232,21 @@ static inline void zero_o(const int n,const int f,const int o) // XXX do not put
 	torx_free((void*)&peer[n].file[f].offer[o].offer_progress);
 }
 
+static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here
+{ // Note: We don't `.requester_n = -1` because it will interfere with expand_request_struc
+//	peer[n].file[f].request[r].requester_n = -1;
+	peer[n].file[f].request[r].fd_type = -1;
+	peer[n].file[f].request[r].start = 0;
+	peer[n].file[f].request[r].end = 0;
+	peer[n].file[f].request[r].transferred = 0;
+}
+
 static inline void zero_f(const int n,const int f) // XXX do not put locks in here
 {
 	for(int o = 0 ; peer[n].file[f].offer[o].offerer_n > -1 ; o++)
 		zero_o(n,f,o);
+	for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
+		zero_r(n,f,r);
 //	torx_free((void*)&peer[n].file[f].offer); // fjadfweoifaf disabled because it might (likely will) break things when deleting peers. Let it free naturally on shutdown, no big loss.
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
 	torx_free((void*)&peer[n].file[f].filename);
@@ -3150,6 +3161,15 @@ static void initialize_offer(const int n,const int f,const int o) // XXX do not 
 	peer[n].file[f].offer[o].offer_progress = NULL;
 }
 
+static inline void initialize_request(const int n,const int f,const int r) // XXX do not put locks in here
+{ // initalize an iter of the request struc.
+	peer[n].file[f].request[r].requester_n = -1;
+	peer[n].file[f].request[r].fd_type = -1;
+	peer[n].file[f].request[r].start = 0;
+	peer[n].file[f].request[r].end = 0;
+	peer[n].file[f].request[r].transferred = 0;
+}
+
 static void initialize_f(const int n,const int f) // XXX do not put locks in here
 { // initalize an iter of the file struc.
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
@@ -3335,14 +3355,36 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 		return;
 	}
 	const int offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n));
-	if(offerer_n == -1 && f%10 == 0)
-	{ // Safe to cast f as size_t because > -1
+	if(offerer_n == -1 && o % 10 == 0)
+	{
 		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
 		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,current_allocation_size + sizeof(struct offer_list) *10);
 		// callback unnecessary, not doing
 		for(int j = o+10; j > o; j--)
 			initialize_offer(n,f,j);
+		torx_unlock(n) // XXX
+	}
+}
+
+static inline void expand_request_struc(const int n,const int f,const int r)
+{ /* Expand request struct if our current r is unused && divisible by 10 */
+	if(n < 0 || f < 0 || r < 0)
+	{
+		error_simple(0,"expand_request_struc failed sanity check. Coding error. Report this.");
+		return;
+	}
+	torx_read(n) // XXX
+	const int requester_n = peer[n].file[f].request[r].requester_n;
+	torx_unlock(n) // XXX
+	if(requester_n == -1 && r % 10 == 0)
+	{
+		torx_write(n) // XXX
+		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].request);
+		peer[n].file[f].request = torx_realloc(peer[n].file[f].request,current_allocation_size + sizeof(struct request_list) *10);
+		// callback unnecessary, not doing
+		for(int j = r+10; j > r; j--)
+			initialize_request(n,f,j);
 		torx_unlock(n) // XXX
 	}
 }
@@ -3357,7 +3399,7 @@ static inline void expand_file_struc(const int n,const int f)
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 	if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
-	{ // Safe to cast f as size_t because > -1
+	{
 		torx_write(n) // XXX
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
 		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
@@ -3389,7 +3431,7 @@ void expand_message_struc(const int n,const int i) // XXX do not put locks in he
 	const int max_i = peer[n].max_i;
 	const int min_i = peer[n].min_i;
 	const int p_iter = peer[n].message[i].p_iter;
-	if(p_iter == -1 && i%10 == 0 && (i+10 > max_i + 1 || i-10 < min_i - 1))
+	if(p_iter == -1 && i % 10 == 0 && (i + 10 > max_i + 1 || i - 10 < min_i - 1))
 	{ // i > -1
 	//	const int pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
 		int pointer_location;
@@ -3427,7 +3469,7 @@ static inline void expand_peer_struc(const int n)
 	}
 	char onion = '\0';
 	getter_array(&onion,1,n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
-	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) < 0 && n%10 == 0 && n+10 > max_peer)
+	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) < 0 && n % 10 == 0 && n + 10 > max_peer)
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
 		const size_t current_allocation_size = torx_allocation_len(peer);
@@ -3753,13 +3795,30 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 	if(n < 0 || f < 0 || passed_offerer_n < 0)
 		return -1;
 	int o = 0;
-	int offerer_n;
-	while((offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) > -1 && offerer_n != passed_offerer_n)
+	for(int offerer_n ; (offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) > -1 && offerer_n != passed_offerer_n ; )
 		o++; // check if offerer already exists in our struct
 	expand_offer_struc(n,f,o); // Expand struct if necessary
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	setter(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n),&passed_offerer_n,sizeof(passed_offerer_n));
 	return o;
+}
+
+int set_r(const int n,const int f,const int passed_requester_n,const int8_t passed_requester_fd_type)
+{ // set request iterator
+	if(n < 0 || f < 0 || passed_requester_n < 0 || passed_requester_fd_type < 0)
+		return -1;
+	int r = 0;
+	torx_read(n) // XXX
+	for(int requester_n ; (requester_n = peer[n].file[f].request[r].requester_n) > -1 && requester_n != passed_requester_n ; )
+		r++; // check if offerer already exists in our struct
+	torx_unlock(n) // XXX
+	expand_request_struc(n,f,r); // Expand struct if necessary
+	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
+	torx_write(n) // XXX
+	peer[n].file[f].request[r].requester_n = passed_requester_n;
+	peer[n].file[f].request[r].fd_type = passed_requester_fd_type;
+	torx_unlock(n) // XXX
+	return r;
 }
 
 int group_online(const int g)
