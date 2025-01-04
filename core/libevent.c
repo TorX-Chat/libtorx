@@ -1395,22 +1395,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 							set_time(&time,&nstime);
-						torx_write(nn) // XXX
-						const int i = peer[nn].max_i + 1; // need to set this to prevent issues with full-duplex
-						expand_message_struc(nn,i);
-						peer[nn].max_i++; // NOTHING CAN BE DONE WITH "peer[event_strc->n].message[peer[event_strc->n].max_i]." AFTER THIS
+						uint8_t stat;
 						if(group_peer_n > -1 && group_peer_n == event_strc->group_n) // we received a message that we signed... it was resent to us.
-							peer[nn].message[i].stat = ENUM_MESSAGE_SENT;
+							stat = ENUM_MESSAGE_SENT;
 						else
-							peer[nn].message[i].stat = ENUM_MESSAGE_RECV;
-						peer[nn].message[i].p_iter = p_iter;
-						peer[nn].message[i].message = event_strc->buffer;
-						peer[nn].message[i].message_len = event_strc->buffer_len;
-						peer[nn].message[i].time = time;
-						peer[nn].message[i].nstime = nstime;
-						torx_unlock(nn) // XXX
-					//	const char *name = protocols[p_iter].name;
-					//	printf("Checkpoint read_conn nn=%d i=%d proto=%s\n",nn,i,name);
+							stat = ENUM_MESSAGE_RECV;
+						const int i = increment_i(nn,0,time,nstime,stat,-1,p_iter,event_strc->buffer,event_strc->buffer_len);
 						int repeated = 0; // same time/nstime as another
 						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && (group_msg || group_pm)) // Handle group messages
 							repeated = message_insert(event_strc->g,nn,i);

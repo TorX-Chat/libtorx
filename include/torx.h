@@ -806,7 +806,9 @@ size_t b64_decode(unsigned char *out,const size_t destination_size,const char *i
 char *b64_encode(const void *in,const size_t len)__attribute__((warn_unused_result)); // torx_free required
 void initial_keyed(void);
 void re_expand_callbacks(void);
-void expand_message_struc(const int n,const int i);
+void expand_message_struc(const int n,const int i); // must be called from within locks
+void expand_message_struc_followup(const int n,const int i); // must be called after expand_message_struc, after unlock
+int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message,const uint32_t message_len)__attribute__((warn_unused_result));
 int set_last_message(int *nn,const int n,const int count_back)__attribute__((warn_unused_result));
 int group_online(const int g)__attribute__((warn_unused_result));
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)__attribute__((warn_unused_result));

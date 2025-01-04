@@ -548,27 +548,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			invitee_add(g,n);
 		}
 	}
-	int i;
-	torx_write(n) // XXX
-	if(offset < 0)
-		i = peer[n].max_i - offset - 1;
-	else if(offset > 0)
-		i = peer[n].max_i + offset + 1;
-	else
-		i = peer[n].max_i + 1;
-	if(!offset)
-		expand_message_struc(n,i);
-	if(!offset)
-		peer[n].max_i++;
-	peer[n].message[i].time = time;
-	peer[n].message[i].nstime = nstime;
-//	peer[n].message[i].fd_type = -1; // is already the default. This is redundant.
-	peer[n].message[i].stat = stat;
-	peer[n].message[i].p_iter = p_iter;
-	peer[n].message[i].message = tmp_message;
-	peer[n].message[i].message_len = message_len;
-	torx_unlock(n) // XXX
-	return i;
+	return increment_i(n,offset,time,nstime,stat,-1,p_iter,tmp_message,message_len);
 }
 
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
@@ -1127,11 +1107,17 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		{
 			i--;
 			offset--;
+			uint8_t expanded = 0;
 			torx_write(n) // XXX
-			expand_message_struc(n,i); // before adjusting min_i
+			if(peer[n].message[i].p_iter == -1 && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
+			{ // NOTE: same as joafdoiwfoefjioasdf
+				expand_message_struc(n,i); // before adjusting min_i
+				expanded = 1;
+			}
 			peer[n].min_i--;
 			torx_unlock(n) // XXX
-
+			if(expanded)
+				expand_message_struc_followup(n,i);
 		}
 		sqlite3_reset(stmt);
 	}

@@ -468,19 +468,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		goto error;
 	}
 	// XXX Step 6: Iterate message
-	torx_write(target_n) // XXX
-	const int i = peer[target_n].max_i + 1;
-	expand_message_struc(target_n,i);
-	peer[target_n].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
-	peer[target_n].message[i].time = time;
-	peer[target_n].message[i].nstime = nstime;
-	peer[target_n].message[i].message = message;
-	peer[target_n].message[i].message_len = message_len;
-	peer[target_n].message[i].p_iter = p_iter;
-	peer[target_n].message[i].stat = ENUM_MESSAGE_FAIL;
-	if(!socket_swappable)
-		peer[target_n].message[i].fd_type = fd_type;
-	torx_unlock(target_n) // XXX
+	const int i = increment_i(target_n,0,time,nstime,ENUM_MESSAGE_FAIL,socket_swappable ? -1 : fd_type,p_iter,message,message_len);
 	// XXX Step 7: Send_prep as appropriate
 	while(1)
 	{
@@ -498,19 +486,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				breakpoint();
 				goto error;
 			}
-			torx_write(nnnn) // XXX
-			iiii = peer[nnnn].max_i + 1;
-			expand_message_struc(nnnn,iiii);
-			peer[nnnn].max_i++; // this is critical NOTHING CAN BE DONE WITH "peer[n].message[peer[n].max_i]." AFTER THIS
-			peer[nnnn].message[iiii].time = time; // needs to be duplicate so that we can do lookup later
-			peer[nnnn].message[iiii].nstime = nstime;
-			peer[nnnn].message[iiii].message_len = message_len;
-			peer[nnnn].message[iiii].message = message;
-			peer[nnnn].message[iiii].stat = ENUM_MESSAGE_FAIL;
-			peer[nnnn].message[iiii].p_iter = p_iter;
-			if(!socket_swappable)
-				peer[nnnn].message[iiii].fd_type = fd_type;
-			torx_unlock(nnnn) // XXX
+			iiii = increment_i(nnnn,0,time,nstime,ENUM_MESSAGE_FAIL,socket_swappable ? -1 : fd_type,p_iter,message,message_len);
 		}
 		if(!stream)
 		{ // Stream messages, if logged, are logged in packet_removal after they send
