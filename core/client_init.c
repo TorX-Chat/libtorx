@@ -510,7 +510,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(!repeated && target_g > -1) // MUST go after the first sql_insert_message call (which saves the message initially to GROUP_CTRL)
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
-		if(send_prep(nnnn,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
+		if(send_prep(nnnn,-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
 			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",nnnn,iiii,fd_type,protocol);
 			torx_write(nnnn) // XXX
@@ -917,8 +917,8 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 		unsigned char checksum[CHECKSUM_BIN_LEN];
 		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		const int g = set_g(n,NULL);
-		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int g_f = set_f(group_n,checksum,sizeof(checksum));
+		const int group_n = getter_group_int(g,offsetof(struct group_list,n)); // TODO AUDIT REQUIRED TODO
+		const int g_f = set_f(group_n,checksum,sizeof(checksum)); // TODO AUDIT REQUIRED TODO
 		sodium_memzero(checksum,sizeof(checksum));
 		if(file_unwritable(group_n,g_f,NULL))
 			return;

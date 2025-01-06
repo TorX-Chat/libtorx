@@ -269,7 +269,7 @@ static inline void begin_cascade(struct event_strc *event_strc)
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,i,p_iter,event_strc->fd_type) != -1) // Will do nothing if there are no messages to send
+			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type) != -1) // Will do nothing if there are no messages to send
 				break; // allow cascading effect in packet_removal
 		}
 	}
@@ -311,6 +311,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		if(p_iter < 0) // Should never happen. No good way to handle other than to disconnect and return.
 			error_simple(-1,"p_iter is negative in packet_removal. Potentially serious coding error. Report this.");
 		const int8_t packet_fd_type = packet[o].fd_type;
+		const int packet_file_n = packet[o].file_n;
 		const int packet_f_i = packet[o].f_i;
 		const uint16_t packet_len = packet[o].packet_len;
 		const time_t packet_time = packet[o].time;
@@ -328,6 +329,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 			break;
 		}
 		packet[o].n = -1; // release it for re-use.
+		packet[o].file_n = -1;
 		packet[o].f_i = INT_MIN; // release it for re-use.
 		packet[o].packet_len = 0; // release it for re-use.
 		packet[o].p_iter = -1; // release it for re-use.
@@ -352,36 +354,37 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{
 				const int f = packet_f_i;
-				torx_write(event_strc->n) // XXX
-				peer[event_strc->n].file[f].outbound_transferred[packet_fd_type] += packet_len-16;
-				torx_unlock(event_strc->n) // XXX
-				const uint64_t transferred = calculate_transferred(event_strc->n,f);
-				torx_read(event_strc->n) // XXX
-				uint8_t file_status = peer[event_strc->n].file[f].status;
-				const uint64_t current_pos = peer[event_strc->n].file[f].outbound_start[event_strc->fd_type] + peer[event_strc->n].file[f].outbound_transferred[event_strc->fd_type];
-				const uint64_t current_end = peer[event_strc->n].file[f].outbound_end[event_strc->fd_type]+1;
-				torx_unlock(event_strc->n) // XXX
+				const int r = set_r(packet_file_n,f,event_strc->n);
+				torx_write(packet_file_n) // XXX
+				peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16;
+				torx_unlock(packet_file_n) // XXX
+				const uint64_t transferred = calculate_transferred(packet_file_n,f);
+				torx_read(packet_file_n) // XXX
+				uint8_t file_status = peer[packet_file_n].file[f].status;
+				const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
+				const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
+				torx_unlock(packet_file_n) // XXX
 				if(current_pos == current_end)
 				{
-					error_printf(0,"Outbound Section Completed n=%d f=%d fd_type=%d",event_strc->n,f,event_strc->fd_type);
-					close_sockets(event_strc->n,f)
-					const uint64_t size = getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size));
+					error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
+					close_sockets(packet_file_n,f)
+					const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
 					if(transferred >= size) // All Requested Sections Fully Completed
 					{
 						if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
 							error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
 						file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-						setter(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
+						setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
 					}
-					transfer_progress(event_strc->n,f,transferred);
+					transfer_progress(packet_file_n,f,transferred);
 				}
 				else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
 				{
-					transfer_progress(event_strc->n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
-					send_prep(event_strc->n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
+					transfer_progress(packet_file_n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
+					send_prep(event_strc->n,packet_file_n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
 				}
 				else // Ceasing send due to status change
-					error_printf(0,"Ceasing to send file n=%d f=%d status=%u",event_strc->n,f,file_status);
+					error_printf(0,"Ceasing to send file file_n=%d f=%d status=%u",packet_file_n,f,file_status);
 			}
 			else
 			{ // All protocols that contain a message size on the first packet of a message
@@ -467,6 +470,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							printf("-------------Same n, same fd_type-------------\n");
 							printf("Checkpoint packet[%d].name:	%s\n",ooo,o_name);
 							printf("Checkpoint packet[%d].n:		%d\n",ooo,packet[ooo].n);
+							printf("Checkpoint packet[%d].file_n:		%d\n",ooo,packet[ooo].file_n);
 							printf("Checkpoint packet[%d].f_i:		%d\n",ooo,packet[ooo].f_i);
 							printf("Checkpoint packet[%d].packet_len:	%u\n",ooo,packet[ooo].packet_len);
 							printf("Checkpoint packet[%d].fd_type:		%d\n",ooo,packet[ooo].fd_type);
@@ -485,7 +489,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				{
 				//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
 				//	printf("."); fflush(stdout);
-					send_prep(event_strc->n,i,p_iter,event_strc->fd_type); // send next packet on same fd
+					send_prep(event_strc->n,packet_file_n,i,p_iter,event_strc->fd_type); // send next packet on same fd
 				}
 			}
 		}
@@ -682,32 +686,30 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			}
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{ // Received Message type: Raw File data // TODO we do too much processing here. this might get CPU intensive.
-				int nn = event_strc->n;
-				try_group_n: {}
-				const int f = set_f(nn,&read_buffer[cur],4); // find F from truncated_checksum
-				cur += 4; // 4 --> 8
-				if(f < 0)
-				{
-					if(event_strc->n == nn && event_strc->owner == ENUM_OWNER_GROUP_PEER)
-					{
-						nn = event_strc->group_n;
-						cur -= 4; // 8 --> 4 DO NOT DELETE, will break things
-						goto try_group_n;
-					}
-					error_printf(0,"Invalid raw data packet received from owner: %u",event_strc->owner);
-					continue; // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE // TODO consider calling break or blocking peer or something if this triggers. this peer is probably buggy or malicious.
+				int file_n = event_strc->n;
+				int f = set_f(file_n,&read_buffer[cur],4);
+				if(f < 0 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
+				{ // potential group file transfer, non-pm
+					file_n = event_strc->group_n;
+					f = set_f(file_n,&read_buffer[cur],4);
 				}
+				if(f < 0) // NOT else if, we set f again above
+				{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE // TODO consider calling break or blocking peer or something if this triggers. this peer is probably buggy or malicious.
+					error_printf(0,"Invalid raw data packet received from owner: %u",event_strc->owner);
+					continue;
+				}
+				cur += 4; // 4 --> 8
 				uint64_t trash_start; // network order
 				memcpy(&trash_start,&read_buffer[cur],8);
 				cur += 8; // 8 --> 16
 				uint64_t packet_start = be64toh(trash_start);
-				torx_read(nn) // XXX
-				const uint64_t *split_progress = peer[nn].file[f].split_progress;
-				torx_unlock(nn) // XXX
+				torx_read(file_n) // XXX
+				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
+				torx_unlock(file_n) // XXX
 				if(split_progress == NULL)
-					initialize_split_info(nn,f);
-				const uint64_t size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
-				const uint8_t splits_nn = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,splits));
+					initialize_split_info(file_n,f);
+				const uint64_t size = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
+				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 				const int16_t section = section_determination(size,splits_nn,packet_start);
 				if(section < 0)
 				{ // Very necessary to check
@@ -716,20 +718,20 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				uint64_t section_end = 0;
 				const uint64_t section_start = calculate_section_start(&section_end,size,splits_nn,section);
-				torx_read(nn) // XXX
-				const int *split_status_n = peer[nn].file[f].split_status_n;
-				const int8_t *split_status_fd = peer[nn].file[f].split_status_fd;
-				torx_unlock(nn) // XXX
+				torx_read(file_n) // XXX
+				const int *split_status_n = peer[file_n].file[f].split_status_n;
+				const int8_t *split_status_fd = peer[file_n].file[f].split_status_fd;
+				torx_unlock(file_n) // XXX
 				if(split_status_n == NULL || split_status_fd == NULL)
 				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second
 					error_simple(0,"Peer asked us to a file without initialized split_status. Coding error. Report this. Bailing.");
 					continue;
 				}
-				torx_read(nn) // XXX
-				const uint64_t section_info_current = peer[nn].file[f].split_progress[section];
-				const int8_t relevant_split_status_fd = peer[nn].file[f].split_status_fd[section];
-				const int relevant_split_status = peer[nn].file[f].split_status_n[section];
-				torx_unlock(nn) // XXX
+				torx_read(file_n) // XXX
+				const uint64_t section_info_current = peer[file_n].file[f].split_progress[section];
+				const int8_t relevant_split_status_fd = peer[file_n].file[f].split_status_fd[section];
+				const int relevant_split_status = peer[file_n].file[f].split_status_n[section];
+				torx_unlock(file_n) // XXX
 				if(packet_start + packet_len - cur > section_end + 1)
 				{
 					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
@@ -758,23 +760,23 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					} */
 					continue;
 				}
-				torx_fd_lock(nn,f) // XXX
-				torx_read(nn) // XXX
-				FILE *fd_active = peer[nn].file[f].fd;
-				torx_unlock(nn) // XXX
+				torx_fd_lock(file_n,f) // XXX
+				torx_read(file_n) // XXX
+				FILE *fd_active = peer[file_n].file[f].fd;
+				torx_unlock(file_n) // XXX
 				if(fd_active == NULL)
 				{
-					char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
+					char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 					if(!file_path)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(nn,f) // XXX
+						torx_fd_unlock(file_n,f) // XXX
 						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
 						continue;
 					}
 					fd_active = fopen(file_path, "a"); // Create file if not existing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(nn,f) // XXX
+						torx_fd_unlock(file_n,f) // XXX
 						error_printf(0,"Failed to open for writing1: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
@@ -783,7 +785,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					fd_active = fopen(file_path, "r+"); // Open file for writing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(nn,f) // XXX
+						torx_fd_unlock(file_n,f) // XXX
 						error_printf(0,"Failed to open for writing2: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
@@ -792,21 +794,21 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
-				torx_write(nn) // XXX
-				peer[nn].file[f].fd = fd_active;
-				torx_unlock(nn) // XXX
-				torx_fd_unlock(nn,f) // XXX
+				torx_write(file_n) // XXX
+				peer[file_n].file[f].fd = fd_active;
+				torx_unlock(file_n) // XXX
+				torx_fd_unlock(file_n,f) // XXX
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
 					error_simple(-1,"Failed to write a file packet. Check disk space (this message will NOT repeat).");
 				else
 				{
-					section_update(nn,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
-					const uint8_t file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
-					const uint64_t transferred = calculate_transferred(nn,f);
+					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
+					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
+					const uint64_t transferred = calculate_transferred(file_n,f);
 					if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
-						transfer_progress(nn,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+						transfer_progress(file_n,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
 			}
 			else
@@ -943,16 +945,16 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								int added_one = 1;
 								while(added_one)
 								{ // need to re-do the whole loop every time one or more is added because it might have invited someone
-									for(uint32_t nnn = 0 ; nnn < g_peercount ; nnn++)
+									for(uint32_t count = 0 ; count < g_peercount ; count++)
 									{ // Try each proposed peeronion...
 										added_one = 0;
-										const char *proposed_peeronion = &event_strc->buffer[sizeof(int32_t)+nnn*56];
-										const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*56+nnn*crypto_sign_PUBLICKEYBYTES];
+										const char *proposed_peeronion = &event_strc->buffer[sizeof(int32_t)+count*56];
+										const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*56+count*crypto_sign_PUBLICKEYBYTES];
 										int ret;
 										if(event_strc->invite_required) // pass inviter's signature
 										{
-											const unsigned char *group_peer_invitation = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES];
-										//	printf("Checkpoint invitation/sig in at %lu of %u: %s\n",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+nnn*crypto_sign_BYTES,event_strc->buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
+											const unsigned char *group_peer_invitation = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+count*crypto_sign_BYTES];
+										//	printf("Checkpoint invitation/sig in at %lu of %u: %s\n",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+count*crypto_sign_BYTES,event_strc->buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
 											ret = group_add_peer(event_strc->g,proposed_peeronion,NULL,group_peer_ed25519_pk,group_peer_invitation);
 										}
 										else
@@ -1037,34 +1039,28 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"File request of bad size received.");
 							continue;
 						}
-						const int f = set_f(nn,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
-						const uint8_t owner_nn = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-						uint64_t size;
-						char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path));
-						uint8_t file_status;
-						if(file_path == NULL && owner_nn == ENUM_OWNER_GROUP_PEER)
-						{ // Triggers on requests for group files (non-pm)
-						//	printf("Checkpoint group file request trigger 1\n");
-							const int group_n_f = set_f(event_strc->group_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN);
-							file_path = getter_string(NULL,event_strc->group_n,INT_MIN,group_n_f,offsetof(struct file_list,file_path));
-							size = getter_uint64(event_strc->group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,size));
-							setter(nn,INT_MIN,f,-1,offsetof(struct file_list,size),&size,sizeof(size)); // XXX see below NOTICE. this might be necessary for a peer specific transfer_progress, or something
-							file_status = getter_uint8(event_strc->group_n,INT_MIN,group_n_f,-1,offsetof(struct file_list,status));
+						int file_n = event_strc->n;
+						int f = set_f(file_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
+						if(f < 0 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
+						{ // potential group file transfer, non-pm
+							file_n = event_strc->group_n;
+							f = set_f(file_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
 						}
-						else
-						{ // pm or regular transfer
-						//	printf("Checkpoint non-group (or pm) file request trigger 2\n");
-							size = getter_uint64(nn,INT_MIN,f,-1,offsetof(struct file_list,size));
-							file_status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
+						if(f < 0) // NOT else if, we set f again above
+						{
+							error_simple(0,"Received a request for an unknown file. Bailing out.");
+							continue;
 						}
+						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
 						if(file_status != ENUM_FILE_OUTBOUND_PENDING && file_status != ENUM_FILE_OUTBOUND_ACCEPTED && file_status != ENUM_FILE_OUTBOUND_COMPLETED && file_status != ENUM_FILE_INBOUND_PENDING && file_status != ENUM_FILE_INBOUND_ACCEPTED && file_status != ENUM_FILE_INBOUND_COMPLETED)
 						{ // Do not modify without extensive testing and thinking
 							error_printf(0,"Peer requested a file that is of a status we're not willing to send: %d",file_status);
-							torx_free((void*)&file_path);
 							continue;
 						}
+						const uint64_t size = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
 						const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
 						const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
+						char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
 						{ // Sanity check on request. File might not exist if size is 0
 							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
@@ -1076,35 +1072,36 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
 						{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
 							struct stat file_stat = {0};
-							time_t modified = getter_time(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,modified));
+							time_t modified = getter_time(file_n,INT_MIN,f,-1,offsetof(struct file_list,modified));
 							const int stat_ret = stat(file_path, &file_stat);
 							if(stat_ret || file_stat.st_mtime != modified)
 							{ // File cannot be accessed or has an unexpected modification time
 								if(!stat_ret && !modified && event_strc->owner == ENUM_OWNER_GROUP_PEER)
 								{ // Necessary
 									modified = file_stat.st_mtime;
-									setter(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,modified),&modified,sizeof(modified));
+									setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,modified),&modified,sizeof(modified));
 								}
 								else
 								{
 									error_simple(0,"Requested file cannot be accessed or has been modified since offer. Try re-offering it.");
-									printf("Checkpoint path: %s %ld ?= %ld\n",file_path,file_stat.st_mtime,getter_time(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,modified)));
+									printf("Checkpoint path: %s %ld ?= %ld\n",file_path,file_stat.st_mtime,modified);
 									torx_free((void*)&file_path);
 									continue;
 								}
 							}
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
-						torx_write(nn) // XXX
-						peer[nn].file[f].outbound_start[event_strc->fd_type] = requested_start;
-						peer[nn].file[f].outbound_end[event_strc->fd_type] = requested_end;
-						peer[nn].file[f].outbound_transferred[event_strc->fd_type] = 0;
-						peer[nn].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
-						torx_unlock(nn) // XXX
+						const int r = set_r(file_n,f,event_strc->n);
+						torx_write(file_n) // XXX
+						peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
+						peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
+						peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
+						peer[file_n].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
+						torx_unlock(file_n) // XXX
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
-						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,owner_nn,nn,event_strc->fd_type);
-						send_prep(nn,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
+						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,event_strc->owner,event_strc->n,event_strc->fd_type);
+						send_prep(event_strc->n,file_n,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
 						continue; // because this is now stream
 					}
@@ -1116,52 +1113,52 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"File pause or cancel of bad size received.");
 							continue;
 						}
-						int f = set_f(event_strc->n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
-						int relevant_n = event_strc->n;
+						int file_n = event_strc->n;
+						int f = set_f(file_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
 						if(f < 0 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
 						{ // potential group file transfer, non-pm
-							relevant_n = event_strc->group_n;
-							f = set_f(relevant_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
+							file_n = event_strc->group_n;
+							f = set_f(file_n,(const unsigned char*)event_strc->buffer,CHECKSUM_BIN_LEN-1); // -1 because we need it to be able to return -1
 						}
 						if(f < 0) // NOT else if, we set f again above
 						{
 							error_simple(0,"Received a pause or cancel for an unknown file. Bailing out.");
 							continue;
 						}
-						torx_read(relevant_n) // XXX
-						const unsigned char *split_hashes = peer[relevant_n].file[f].split_hashes;
-						torx_unlock(relevant_n) // XXX
-						section_unclaim(relevant_n,f,event_strc->n,-1); // must go before process_pause_cancel
+						torx_read(file_n) // XXX
+						const unsigned char *split_hashes = peer[file_n].file[f].split_hashes;
+						torx_unlock(file_n) // XXX
+						section_unclaim(file_n,f,event_strc->n,-1); // must go before process_pause_cancel
 						if(split_hashes == NULL) // avoid triggering for group (non-pm) file transfer
-							process_pause_cancel(relevant_n,f,protocol,ENUM_MESSAGE_RECV);
-						const uint8_t file_status = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel
+							process_pause_cancel(file_n,f,protocol,ENUM_MESSAGE_RECV);
+						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel
 						if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
 						{ // Delete partial inbound files + split. Must go after process_pause_cancel (which sets file_status and closes fd)
-							char *file_path = getter_string(NULL,relevant_n,INT_MIN,f,offsetof(struct file_list,file_path));
+							char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 							destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
 							torx_free((void*)&file_path);
-							split_update(relevant_n,f,-1); // destroys split file and frees/nulls resources
+							split_update(file_n,f,-1); // destroys split file and frees/nulls resources
 						}
 						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && split_hashes && is_inbound_transfer(file_status))
 						{ // Group transfer (non-pm). Build a fake 0/0/0/0 offer to process, as if we received it from peer, to show peer is now offering nothing
 							const int p_iter_partial = protocol_lookup(ENUM_PROTOCOL_FILE_OFFER_PARTIAL);
-							const uint8_t splits = getter_uint8(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+							const uint8_t splits = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 							const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
 							char fake_message[FILE_OFFER_PARTIAL_LEN];
-							torx_read(relevant_n) // XXX
-							memcpy(fake_message,peer[relevant_n].file[f].checksum,CHECKSUM_BIN_LEN); // checksum
+							torx_read(file_n) // XXX
+							memcpy(fake_message,peer[file_n].file[f].checksum,CHECKSUM_BIN_LEN); // checksum
 							*(uint8_t*)(void*)&fake_message[CHECKSUM_BIN_LEN] = splits; // splits
-							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[relevant_n].file[f].split_hashes,split_hashes_len); // split hashes
-							uint64_t trash = htobe64(peer[relevant_n].file[f].size); // size
+							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[file_n].file[f].split_hashes,split_hashes_len); // split hashes
+							uint64_t trash = htobe64(peer[file_n].file[f].size); // size
 							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash,sizeof(trash)); // size
-							torx_unlock(relevant_n) // XXX
+							torx_unlock(file_n) // XXX
 							trash = htobe64(0);
 							for(int16_t section = 0; section <= splits; section++) // 0/0/0/0
 								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)*(size_t)section],&trash,sizeof(trash));
 							process_file_offer_inbound(event_strc->n,p_iter_partial,fake_message,FILE_OFFER_PARTIAL_LEN);
 						}
-						const uint64_t last_transferred = getter_uint64(relevant_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[event_strc->n].file[f].last_transferred;
-						transfer_progress(relevant_n,f,last_transferred); // triggering a stall
+						const uint64_t last_transferred = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[event_strc->n].file[f].last_transferred;
+						transfer_progress(file_n,f,last_transferred); // triggering a stall
 					}
 					else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
@@ -1651,7 +1648,7 @@ void *torx_events(void *arg)
 					pthread_rwlock_unlock(&mutex_protocols);
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
 					{
-						send_prep(event_strc->n,0,p_iter,1);
+						send_prep(event_strc->n,-1,0,p_iter,1);
 						first_connect = 1;
 					}
 				}

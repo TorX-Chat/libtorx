@@ -340,10 +340,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
 		int8_t *split_status_fd;
 		uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
-		/* Exclusively Outbound transfer related */
-		uint64_t outbound_start[2];		// not re-using split_progress/split_status_n because thats for INCOMING, which ideally can occur concurrently
-		uint64_t outbound_end[2];		// not re-using split_progress/split_status_n because thats for INCOMING, which ideally can occur concurrently
-		uint64_t outbound_transferred[2];	// not re-using split_progress/split_status_n because thats for INCOMING, which ideally can occur concurrently
 		/* Exclusively Group related */
 		unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
 		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock / torx_fd_unlock
@@ -359,12 +355,12 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint8_t speed_iter;
 		uint64_t last_speeds[256];
 		pthread_mutex_t mutex_file;
+		/* Exclusively Outbound transfer related */
 		struct request_list {
 			int requester_n;
-			int8_t fd_type;
-			uint64_t start;
-			uint64_t end;
-			uint64_t transferred;
+			uint64_t start[2];
+			uint64_t end[2];
+			uint64_t transferred[2];
 		} *request;
 	} *file;
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
@@ -401,6 +397,7 @@ struct msg_list { // This is ONLY to be allocated by message_sort and message_in
 
 struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
+	int file_n;
 	int f_i; // f value or i value, as appropriate? (cannot be required)
 	uint16_t packet_len; // size of packet, or unsent size of packet if partial
 	int p_iter; // initialize at -1
@@ -531,7 +528,7 @@ enum message_statuses
 };/* TODO set other .status, such as finished (ifin,ofin) and paused (ipau,opau) */
 
 enum file_statuses
-{ // can be > 9
+{ // can be > 9 // XXX WARNING: an _OUTBOUND status must NEVER override an _INBOUND status because it will interfere with anything using is_inbound_transfer XXX
 	/* File Transfer Direction is Outbound ( we are sender ) */ 
 	ENUM_FILE_OUTBOUND_PENDING = 1, // pending or paused
 	ENUM_FILE_OUTBOUND_ACCEPTED = 2,
@@ -777,9 +774,9 @@ int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_resu
 int set_g(const int n,const void *arg)__attribute__((warn_unused_result));
 int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)__attribute__((warn_unused_result));
 int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)__attribute__((warn_unused_result));
-int set_f_from_i(const int n,const int i)__attribute__((warn_unused_result));
+int set_f_from_i(int *file_n,const int n,const int i)__attribute__((warn_unused_result));
 int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
-int set_r(const int n,const int f,const int passed_requester_n,const int8_t passed_requester_fd_type)__attribute__((warn_unused_result));
+int set_r(const int n,const int f,const int passed_requester_n)__attribute__((warn_unused_result));
 void random_string(char *destination,const unsigned int destination_size);
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
@@ -809,7 +806,7 @@ void re_expand_callbacks(void);
 void expand_message_struc(const int n,const int i); // must be called from within locks
 void expand_message_struc_followup(const int n,const int i); // must be called after expand_message_struc, after unlock
 int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message,const uint32_t message_len)__attribute__((warn_unused_result));
-int set_last_message(int *nn,const int n,const int count_back)__attribute__((warn_unused_result));
+int set_last_message(int *last_message_n,const int n,const int count_back)__attribute__((warn_unused_result));
 int group_online(const int g)__attribute__((warn_unused_result));
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)__attribute__((warn_unused_result));
 int group_add_peer(const int g,const char *group_peeronion,const char *group_peernick,const unsigned char *group_peer_ed25519_pk,const unsigned char *inviter_signature);
@@ -887,7 +884,7 @@ void file_cancel(const int n,const int f);
 int file_send(const int n,const char *path);
 
 /* serv_init.c */
-int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type);
+int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
 
 /* libevent.c */
 void *torx_events(void *arg);

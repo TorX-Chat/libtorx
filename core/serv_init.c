@@ -60,11 +60,11 @@ any form.
 severable if found in contradiction with the License or applicable law.
 */
 
-int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
+int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send. Returns -1 on error or peer offline, 0 on success, and -2 on socket utilized (cannot send immediately). We could return 0 instead of -2, but we might use this.
 	if(n < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
 	{
-		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
+		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d %d. Coding error. Report this.",n,file_n,f_i,p_iter,fd_type);
 		return -1;
 	}
 	int f = -1, i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
@@ -82,15 +82,15 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 	uint64_t start = 0;
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 	{
-		f = f_i; // f is passed as f_i
-		if(f < 0)
+		f = f_i;
+		if(f < 0 || file_n < 0)
 		{
-			error_printf(0,"Sanity check failure 2 in send_prep: %d %d %d %d. Coding error. Report this.",n,f_i,p_iter,fd_type);
+			error_printf(0,"Sanity check failure 2 in send_prep: %d %d %d %d %d. Coding error. Report this.",n,file_n,f,p_iter,fd_type);
 			goto error;
 		}
 	}
 	else
-	{ // i is passed as f_i
+	{
 		i = f_i;
 		const uint8_t stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
 		if(stat != ENUM_MESSAGE_FAIL)
@@ -168,31 +168,32 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 		uint16_t packet_len = 0;
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		{ // only f is initialized
+			const int r = set_r(file_n,f,n);
 			uint16_t data_size = PACKET_SIZE_MAX-16;
-			torx_fd_lock(n,f)
-			torx_read(n) // XXX
-			FILE *fd_active = peer[n].file[f].fd;
-			start = peer[n].file[f].outbound_start[fd_type];
-			if(start + data_size > peer[n].file[f].outbound_end[fd_type]) // avoid sending beyond requested amount
-				data_size = (uint16_t)(peer[n].file[f].outbound_end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
-			torx_unlock(n) // XXX
+			torx_fd_lock(file_n,f)
+			torx_read(file_n) // XXX
+			FILE *fd_active = peer[file_n].file[f].fd;
+			start = peer[file_n].file[f].request[r].start[fd_type];
+			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
+				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
+			torx_unlock(file_n) // XXX
 			if(fd_active == NULL)
 			{
-				char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+				char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 				if((fd_active = fopen(file_path, "r")) == NULL)
 				{
-					torx_fd_unlock(n,f) // XXX
+					torx_fd_unlock(file_n,f) // XXX
 					error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
 					torx_free((void*)&file_path);
 					goto error;
 				}
 			}
-			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].outbound_start[fd_type] + peer[n].file[f].outbound_transferred[fd_type] != start)
+			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type] != start)
 			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);
-			torx_write(n) // XXX
-			peer[n].file[f].fd = fd_active;
-			torx_unlock(n) // XXX
-			torx_fd_unlock(n,f)
+			torx_write(file_n) // XXX
+			peer[file_n].file[f].fd = fd_active;
+			torx_unlock(file_n) // XXX
+			torx_fd_unlock(file_n,f)
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -200,9 +201,9 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				memcpy(&send_buffer[0],&trash,sizeof(uint16_t));
 				trash = htobe16(protocol);
 				memcpy(&send_buffer[2],&trash,sizeof(uint16_t));
-				torx_read(n) // XXX
-				memcpy(&send_buffer[4],peer[n].file[f].checksum,4);
-				torx_unlock(n) // XXX
+				torx_read(file_n) // XXX
+				memcpy(&send_buffer[4],peer[file_n].file[f].checksum,4);
+				torx_unlock(file_n) // XXX
 				const uint64_t endian_corrected_start = htobe64(start);
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
@@ -210,9 +211,9 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
 				error_simple(0,PINK"File completed in a legacy manner. Coding error or IO error. Report this."RESET); // could be falsely triggered by file shrinkage
 				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO 2024/12/24 consider removing line
-				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line
-				close_sockets(n,f)
-				transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
+				setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line
+				close_sockets(file_n,f)
+				transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 				sodium_memzero(send_buffer,(size_t)packet_len);
 				goto error;
 			}
@@ -292,6 +293,7 @@ int send_prep(const int n,const int f_i,const int p_iter,int8_t fd_type)
 				error_simple(-1,"Fatal error. Exceeded size of SIZE_PACKET_STRC. Report this.");
 			}
 			packet[o].n = n; // claim it. set first.
+			packet[o].file_n = file_n;
 			packet[o].packet_len = packet_len;
 			packet[o].fd_type = fd_type;
 			packet[o].f_i = f_i;

@@ -1901,6 +1901,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
 	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
 	if(is_inbound_transfer(status))
 	{ // Inbound
@@ -1914,22 +1915,25 @@ uint64_t calculate_transferred(const int n,const int f)
 			transferred += peer[n].file[f].split_progress[section];
 		torx_unlock(n) // XXX
 	}
-	else
+	else if(owner != ENUM_OWNER_GROUP_CTRL)
 	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
 		uint64_t transferred_0 = 0;
 		uint64_t transferred_1 = 0;
+		const int r = 0; // set_r(n,f,n); should be unnecessary because this isn't a group file transfer.
 		torx_read(n) // XXX
-		if(peer[n].file[f].outbound_end[0] > 0)
-			transferred_0 = peer[n].file[f].outbound_end[0] - peer[n].file[f].outbound_start[0] + 1;
-		if(peer[n].file[f].outbound_end[1] > 0)
-			transferred_1 = peer[n].file[f].outbound_end[1] - peer[n].file[f].outbound_start[1] + 1;
+		if(peer[n].file[f].request[r].end[0] > 0)
+			transferred_0 = peer[n].file[f].request[r].end[0] - peer[n].file[f].request[r].start[0] + 1;
+		if(peer[n].file[f].request[r].end[1] > 0)
+			transferred_1 = peer[n].file[f].request[r].end[1] - peer[n].file[f].request[r].start[1] + 1;
 		const uint64_t size = peer[n].file[f].size;
 		uint64_t baseline = size - transferred_0 - transferred_1;
-		if(size < 4 && peer[n].file[f].outbound_end[0] + peer[n].file[f].outbound_end[1] < size)
+		if(size < 4 && peer[n].file[f].request[r].end[0] + peer[n].file[f].request[r].end[1] < size)
 			baseline--; // 2023/10/26 this is the simplest way to fix an obscure issue that occurs when transferring a 1 to 3 byte file.... ie one fd has a request for byte 0 only. Don't waste thought, its complicated, just leave it.
-		transferred = baseline + peer[n].file[f].outbound_transferred[0] + peer[n].file[f].outbound_transferred[1];
+		transferred = baseline + peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
 		torx_unlock(n) // XXX
 	}
+	else
+		error_simple(0,"We currently have no manner of tracking and calculating the total transferred amount of GROUP_CTRL outbound transfers. Coding error. Report this.");
 	return transferred; // BEWARE of baseline. See above.
 }
 
@@ -2235,10 +2239,9 @@ static inline void zero_o(const int n,const int f,const int o) // XXX do not put
 static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here
 { // Note: We don't `.requester_n = -1` because it will interfere with expand_request_struc
 //	peer[n].file[f].request[r].requester_n = -1;
-	peer[n].file[f].request[r].fd_type = -1;
-	peer[n].file[f].request[r].start = 0;
-	peer[n].file[f].request[r].end = 0;
-	peer[n].file[f].request[r].transferred = 0;
+	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
+	sodium_memzero(peer[n].file[f].request[r].end,sizeof(peer[n].file[f].request[r].end));
+	sodium_memzero(peer[n].file[f].request[r].transferred,sizeof(peer[n].file[f].request[r].transferred));
 }
 
 static inline void zero_f(const int n,const int f) // XXX do not put locks in here
@@ -3164,10 +3167,9 @@ static inline void initialize_offer(const int n,const int f,const int o) // XXX 
 static inline void initialize_request(const int n,const int f,const int r) // XXX do not put locks in here
 { // initalize an iter of the request struc.
 	peer[n].file[f].request[r].requester_n = -1;
-	peer[n].file[f].request[r].fd_type = -1;
-	peer[n].file[f].request[r].start = 0;
-	peer[n].file[f].request[r].end = 0;
-	peer[n].file[f].request[r].transferred = 0;
+	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
+	sodium_memzero(peer[n].file[f].request[r].end,sizeof(peer[n].file[f].request[r].end));
+	sodium_memzero(peer[n].file[f].request[r].transferred,sizeof(peer[n].file[f].request[r].transferred));
 }
 
 static void initialize_f(const int n,const int f) // XXX do not put locks in here
@@ -3184,9 +3186,6 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].split_status_n = NULL;
 	peer[n].file[f].split_status_fd = NULL;
 	peer[n].file[f].split_status_req = NULL;
-	sodium_memzero(peer[n].file[f].outbound_start,sizeof(peer[n].file[f].outbound_start));
-	sodium_memzero(peer[n].file[f].outbound_end,sizeof(peer[n].file[f].outbound_end));
-	sodium_memzero(peer[n].file[f].outbound_transferred,sizeof(peer[n].file[f].outbound_transferred));
 	peer[n].file[f].split_hashes = NULL;
 	peer[n].file[f].fd = NULL;
 	peer[n].file[f].last_progress_update_time = 0;
@@ -3554,7 +3553,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 	return i;
 }
 
-int set_last_message(int *nn,const int n,const int count_back)
+int set_last_message(int *last_message_n,const int n,const int count_back)
 { /* Helper to determine the last message worth displaying in peer list. UI can use this or an alternative. */ // WARNING: May return INT_MIN;
 	int finalized_count_back = count_back;
 	int current_count_back = 0;
@@ -3563,9 +3562,9 @@ int set_last_message(int *nn,const int n,const int count_back)
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Last message for a group
-		if(!nn)
+		if(!last_message_n)
 		{
-			error_simple(0,"Set_last_message: nn must not be NULL. Coding error. Report this.");
+			error_simple(0,"Set_last_message: last_message_n must not be NULL. Coding error. Report this.");
 			return INT_MIN;
 		}
 		const int g = set_g(n,NULL);
@@ -3577,12 +3576,12 @@ int set_last_message(int *nn,const int n,const int count_back)
 			const int p_iter = getter_int(page->n,page->i,-1,-1,offsetof(struct message_list,p_iter));
 			if(p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back)
 			{
-				*nn = page->n;
+				*last_message_n = page->n;
 				return page->i;
 			}
 			page = page->message_prior;
 		}
-		*nn = n;
+		*last_message_n = n;
 		return INT_MIN;
 	}
 	else
@@ -3609,8 +3608,8 @@ int set_last_message(int *nn,const int n,const int count_back)
 		}
 		else
 			i = INT_MIN;
-		if(nn)
-			*nn = n;
+		if(last_message_n)
+			*last_message_n = n;
 		return i;
 	}
 }
@@ -3821,10 +3820,13 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	return g;
 }
 
-int set_f_from_i(const int n,const int i)
-{ // Returns -1 if message protocol lacks file_checksum
-	if(n < 0)
+int set_f_from_i(int *file_n,const int n,const int i)
+{ // Returns -1 if message protocol lacks file_checksum. This is primarily a UI helper function.
+	if(n < 0 || !file_n || i == INT_MIN)
+	{
+		error_simple(0,"set_f_from_i sanity check failure. Coding error. Report this.");
 		return -1;
+	}
 	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
 	if(message_len < CHECKSUM_BIN_LEN)
 		return -1;
@@ -3833,13 +3835,24 @@ int set_f_from_i(const int n,const int i)
 		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint8_t file_checksum = protocols[p_iter].file_checksum;
+	const uint8_t group_msg = protocols[p_iter].group_msg;
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(!file_checksum)
 		return -1;
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	if(group_msg && owner == ENUM_OWNER_GROUP_PEER)
+	{
+		const int g = set_g(n,NULL);
+		*file_n = getter_group_int(g,offsetof(struct group_list,n));
+	}
+	else
+		*file_n = n;
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	memcpy(checksum,peer[n].message[i].message,sizeof(checksum));
-	const int f = set_f(n,checksum,sizeof(checksum));
+	getter_array(&checksum,sizeof(checksum),n,i,-1,-1,offsetof(struct message_list,message));
+	const int f = set_f(*file_n,checksum,sizeof(checksum)-1); // XXX MUST be -1 to detect errors, otherwise we'll reserve with potentially bad data.
 	sodium_memzero(checksum,sizeof(checksum));
+	if(f < 0) // Likely a UI coding error where they passed the wrong N (Likely they passed a GROUP_PEER instead of a GROUP_CTRL)
+		error_simple(0,"set_f_from_i returned -1. Coding error. Report this.");
 	return f;
 }
 
@@ -3856,9 +3869,9 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 	return o;
 }
 
-int set_r(const int n,const int f,const int passed_requester_n,const int8_t passed_requester_fd_type)
+int set_r(const int n,const int f,const int passed_requester_n)
 { // set request iterator
-	if(n < 0 || f < 0 || passed_requester_n < 0 || passed_requester_fd_type < 0)
+	if(n < 0 || f < 0 || passed_requester_n < 0)
 		return -1;
 	int r = 0;
 	torx_read(n) // XXX
@@ -3869,7 +3882,6 @@ int set_r(const int n,const int f,const int passed_requester_n,const int8_t pass
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	torx_write(n) // XXX
 	peer[n].file[f].request[r].requester_n = passed_requester_n;
-	peer[n].file[f].request[r].fd_type = passed_requester_fd_type;
 	torx_unlock(n) // XXX
 	return r;
 }
@@ -4014,10 +4026,10 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 		for(uint32_t nn = 0 ; nn < g_peercount ; nn++) // check for existing before adding
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group);
-			const int nnn = group[g].peerlist[nn];
+			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
 			char peeronion[56+1];
-			getter_array(&peeronion,sizeof(peeronion),nnn,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 			const int ret = memcmp(peeronion,local_group_peeronion,56);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			if(!ret || !memcmp(onion_group_n,local_group_peeronion,56))
@@ -4442,6 +4454,7 @@ void initial(void)
 		{
 			pthread_rwlock_wrlock(&mutex_packet);
 			packet[o].n = -1;
+			packet[o].file_n = -1;
 			packet[o].f_i = INT_MIN;
 			packet[o].packet_len = 0;
 			packet[o].p_iter = -1;

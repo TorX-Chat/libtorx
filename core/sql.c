@@ -212,14 +212,14 @@ int message_edit(const int n,const int i,const char *message)
 					for(uint32_t p = 0; p < g_peercount; p++)
 					{
 						pthread_rwlock_rdlock(&mutex_expand_group);
-						const int nn = group[g].peerlist[p];
+						const int peer_n = group[g].peerlist[p];
 						pthread_rwlock_unlock(&mutex_expand_group);
-						const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-						const int min_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+						const int max_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+						const int min_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 						for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 						{
-							const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
-							const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
+							const time_t time_ii = getter_time(peer_n,ii,-1,-1,offsetof(struct message_list,time));
+							const time_t nstime_ii = getter_time(peer_n,ii,-1,-1,offsetof(struct message_list,nstime));
 							if(time_ii == time && nstime_ii == nstime)
 							{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
 								torx_read(n) // XXX
@@ -227,10 +227,10 @@ int message_edit(const int n,const int i,const char *message)
 								char *local_message = peer[n].message[i].message;
 								torx_unlock(n) // XXX
 
-								torx_write(nn) // XXX
-								peer[nn].message[ii].message_len = local_message_len;
-								peer[nn].message[ii].message = local_message;
-								torx_unlock(nn) // XXX
+								torx_write(peer_n) // XXX
+								peer[peer_n].message[ii].message_len = local_message_len;
+								peer[peer_n].message[ii].message = local_message;
+								torx_unlock(peer_n) // XXX
 								break;
 							}
 						}
@@ -260,19 +260,19 @@ int message_edit(const int n,const int i,const char *message)
 				for(uint32_t p = 0; p < g_peercount; p++)
 				{
 					pthread_rwlock_rdlock(&mutex_expand_group);
-					const int nn = group[g].peerlist[p];
+					const int peer_n = group[g].peerlist[p];
 					pthread_rwlock_unlock(&mutex_expand_group);
-					int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-					const int min_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+					int max_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+					const int min_i = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 					for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 					{
-						const time_t time_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,time));
-						const time_t nstime_ii = getter_time(nn,ii,-1,-1,offsetof(struct message_list,nstime));
+						const time_t time_ii = getter_time(peer_n,ii,-1,-1,offsetof(struct message_list,time));
+						const time_t nstime_ii = getter_time(peer_n,ii,-1,-1,offsetof(struct message_list,nstime));
 						if(time_ii == time && nstime_ii == nstime)
 						{ // DO NOT need to print_message_cb here. No private messages will come here.
-							torx_write(nn) // XXX
-							zero_i(nn,ii);
-							torx_unlock(nn) // XXX
+							torx_write(peer_n) // XXX
+							zero_i(peer_n,ii);
+							torx_unlock(peer_n) // XXX
 							break;
 						}
 					}
@@ -876,11 +876,11 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES); \
 	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV) \
 	{ /* save file_path as extraneous */ /* goat */ \
-		int nn = n; \
-		int f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1); \
+		int file_n = n; \
+		int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1); \
 		if(f > -1) \
 		{ \
-			char *file_path = getter_string(NULL,nn,INT_MIN,f,offsetof(struct file_list,file_path)); \
+			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path)); \
 			if(file_path) /* not always true */ \
 			{ \
 				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path)); \
@@ -890,8 +890,8 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		else \
 		{ /* not pm/p2p, must be group transfer */ \
 			const int g = set_g(n,NULL); \
-			nn = getter_group_int(g,offsetof(struct group_list,n)); \
-			f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
+			file_n = getter_group_int(g,offsetof(struct group_list,n)); \
+			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
 		} \
 	}
 
@@ -1156,62 +1156,62 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			process_pause_cancel(n,set_f(n,(const unsigned char *)message,CHECKSUM_BIN_LEN),protocol,message_stat);
 		if(extraneous_len)
 		{
-			int nn = n;
+			int file_n = n;
 			int f = -1;
 			if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
 			{ // handle outbound file related messages
 				if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
+					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
 				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
 				{ // do NOT make else if
 					if(owner == ENUM_OWNER_CTRL)
 					{ // TODO 2024/12/24 hit this issue. The file doesn't exist. Related messages are deleted. Not sure why this one didn't get deleted when history was cleared. This message should be deleted
-						error_printf(0,"Bunk message should probably be deleted: %d %u",nn,protocol);
+						error_printf(0,"Bunk message should probably be deleted: %d %u",file_n,protocol);
 						continue; // TODO delete instead
 					}
 					const int g = set_g(n,NULL);
-					nn = getter_group_int(g,offsetof(struct group_list,n));
-					if(nn < 0)
+					file_n = getter_group_int(g,offsetof(struct group_list,n));
+					if(file_n < 0)
 					{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
-						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",nn,protocol);
+						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",file_n,protocol);
 						continue;
 					}
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 				}
 				else if(f < 0)
-					f = set_f(nn,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			}
 			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
 			{ // Retrieve file_path /* goat */
 				extraneous = NULL;
 				const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
-				torx_write(nn) // XXX
-				peer[nn].file[f].file_path = torx_secure_malloc(extraneous_len+1);
-				memcpy(peer[nn].file[f].file_path,file_path,extraneous_len);
-				peer[nn].file[f].file_path[extraneous_len] = '\0';
-				const uint64_t *split_progress = peer[nn].file[f].split_progress;
-				torx_unlock(nn) // XXX
+				torx_write(file_n) // XXX
+				peer[file_n].file[f].file_path = torx_secure_malloc(extraneous_len+1);
+				memcpy(peer[file_n].file[f].file_path,file_path,extraneous_len);
+				peer[file_n].file[f].file_path[extraneous_len] = '\0';
+				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
+				torx_unlock(file_n) // XXX
 				extraneous_len = 0; // MUST because related to callback
-				uint8_t status = getter_uint8(nn,INT_MIN,f,-1,offsetof(struct file_list,status));
+				uint8_t status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
 				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_progress != NULL)
 				{ // This can trigger when the status == pending due to having received a pause at any time
 					status = ENUM_FILE_INBOUND_ACCEPTED;
-					setter(nn,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+					setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
 				}
 				else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 				{
-					initialize_split_info(nn,f);
-					torx_read(nn) // XXX
-					if(is_inbound_transfer(status) && peer[nn].file[f].splits == 0 && peer[nn].file[f].split_progress[0] == 0)
+					initialize_split_info(file_n,f);
+					torx_read(file_n) // XXX
+					if(is_inbound_transfer(status) && peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress[0] == 0)
 					{ // 2024/05/12 Setting transferred amount according to file size
-						torx_unlock(nn) // XXX
+						torx_unlock(file_n) // XXX
 						const uint64_t size_on_disk = get_file_size(file_path);
-						torx_write(nn) // XXX
-						peer[nn].file[f].split_progress[0] = size_on_disk;
-						if(status == ENUM_FILE_INBOUND_PENDING && peer[nn].file[f].size == size_on_disk)
-							peer[nn].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
+						torx_write(file_n) // XXX
+						peer[file_n].file[f].split_progress[0] = size_on_disk;
+						if(status == ENUM_FILE_INBOUND_PENDING && peer[file_n].file[f].size == size_on_disk)
+							peer[file_n].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
 					}
-					torx_unlock(nn) // XXX
+					torx_unlock(file_n) // XXX
 				}
 			}
 			else
