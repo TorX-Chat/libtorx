@@ -618,7 +618,7 @@ void block_peer(const int n)
 uint64_t get_file_size(const char *file_path)
 { // rarely used, usually we get it from other functions. We use stat instead of opening the file and fseeking the end because we tested it to be 5 times faster.
 	struct stat file_stat;
-	if (stat(file_path, &file_stat) != 0)
+	if (!file_path || stat(file_path, &file_stat) != 0)
 		return 0;
 	return (uint64_t)file_stat.st_size;
 }
@@ -796,9 +796,9 @@ int initialize_split_info(const int n,const int f)
 	{ // Initialize if not already
 		split_read(n,f); // reads split file or initializes in memory
 		struct stat file_stat = {0};
-		torx_read(n) // XXX
-		const int stat_file = stat(peer[n].file[f].file_path, &file_stat);
-		torx_unlock(n) // XXX
+		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		const int stat_file = stat(file_path, &file_stat); // Note: file_path cannot be null, but we checked it earlier.
+		torx_free((void*)&file_path);
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 		if(stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.

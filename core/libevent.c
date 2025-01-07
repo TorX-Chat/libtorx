@@ -147,10 +147,7 @@ static inline void peer_online(struct event_strc *event_strc)
 		{
 			const uint8_t file_status = getter_uint8(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status));
 			if(file_status == ENUM_FILE_INBOUND_ACCEPTED) // re-send request for previously accepted file
-		//	{
-		//		printf("Checkpoint ENUM_PROTOCOL_FILE_REQUEST 3 n==%d\n",event_strc->n);
 				file_request_internal(event_strc->n,f,-1);
-		//	}
 		}
 }
 
@@ -249,7 +246,7 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 
 static inline void begin_cascade(struct event_strc *event_strc)
 { // Triggers a single unsent message // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
-	torx_write(event_strc->n) // XXX
+	torx_read(event_strc->n) // XXX
 	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
 	torx_unlock(event_strc->n) // XXX
 	if(event_strc->authenticated == 0 || socket_utilized > INT_MIN)
@@ -887,6 +884,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 								}
 								// Success. Set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
+								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_wrlock(&mutex_expand); TODO */ 
 								torx_read(event_strc->n) // XXX Do not mess with this block. (below)
 								struct bufferevent *bev_recv = peer[event_strc->n].bev_recv;
 								torx_unlock(event_strc->n) // XXX
@@ -903,6 +901,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
 								event_strc->authenticated = 1;
+								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_unlock(&mutex_expand); TODO */ 
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 							{
@@ -1664,12 +1663,6 @@ void *torx_events(void *arg)
 			break;
 		}
 		event_base_dispatch(base); // XXX this is the important loop... this is the blocker
-	/*	torx_write(event_strc->n) // XXX
-		if(event_strc->fd_type == 0)
-			peer[event_strc->n].bev_send = NULL;
-		else if(event_strc->fd_type == 1)
-			peer[event_strc->n].bev_send = NULL;
-		torx_unlock(event_strc->n) // XXX	*/
 		peer_offline(event_strc);
 		const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
 		if(status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL) && event_strc->fd_type == 0) // Its not an error for a 0'd (deleted) onion to get here.

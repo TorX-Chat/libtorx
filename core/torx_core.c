@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 19 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 20 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -328,26 +328,6 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 	return -1;
 }
 
-#ifdef LLTEST
-void torx_fn_read(struct torx_peer *torx_peer)
-{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
-	if(!torx_peer)
-		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
-	torx_read(torx_peer)
-}
-void torx_fn_write(struct torx_peer *torx_peer)
-{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
-	if(!torx_peer)
-		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
-	torx_write(torx_peer)
-}
-void torx_fn_unlock(struct torx_peer *torx_peer)
-{ // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
-	if(!torx_peer)
-		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read occurred. Coding error. Report this.");
-	torx_unlock(torx_peer)
-}
-#else
 void torx_fn_read(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
 	if(n < 0)
@@ -366,7 +346,6 @@ void torx_fn_unlock(const int n)
 		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read occurred. Coding error. Report this.");
 	torx_unlock(n)
 }
-#endif
 
 static inline void write_debug_file(const char *message)
 {
@@ -2267,7 +2246,6 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 
 void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of the mutex
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
-//	torx_write(n) // XXX
 	for(int i = peer[n].min_i ; i < peer[n].max_i + 1 ; i++) // must go before .owner, for variations in zero_i
 		zero_i(n,i);
 	for(int f = 0 ; !is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN) ; f++)
@@ -2307,7 +2285,6 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	peer[n].thrd_send = 0; // thread_kill(peer[n].thrd_send); // NO. will result in deadlocks.
 	peer[n].thrd_recv = 0; // thread_kill(peer[n].thrd_recv); // NO. will result in deadlocks.
 	peer[n].broadcasts_inbound = 0;
-//	torx_unlock(n) // XXX
 // TODO probably need a callback to UI (to zero the UI struct)
 }
 

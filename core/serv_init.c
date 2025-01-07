@@ -318,8 +318,6 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	error: {}
 	if(protocol != ENUM_PROTOCOL_FILE_PIECE)
 	{
-	//	if(start == 0)
-	//	{
 		torx_read(n) // XXX
 		const int socket_utilized = peer[n].socket_utilized[fd_type];
 		torx_unlock(n) // XXX
@@ -339,9 +337,6 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			peer[n].message[i].pos = 0;
 			torx_unlock(n) // XXX
 		}
-	/*	}
-		else
-			printf(PINK"Checkpoint WE SHOULD BE DE-UTILIZING and .pos -> 0\n"RESET); */
 	}
 	return -1;
 }

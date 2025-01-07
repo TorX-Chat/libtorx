@@ -1353,15 +1353,16 @@ int sql_populate_peer(void)
 						broadcast_add(-1,ciphertext);
 						sodium_memzero(ciphertext,sizeof(ciphertext));
 					}
-					torx_read(n) // XXX
 					unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
+					torx_read(n) // XXX
 					crypto_sign_ed25519_sk_to_pk(ed25519_pk,peer[n].sign_sk);
 				//	if(g_invite_required)
 				//		printf("Checkpoint PRIVATE group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
 				//	else
 				//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 					torx_unlock(n) // XXX
+					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+
 				}
 			}
 			else

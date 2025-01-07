@@ -408,13 +408,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
-//	uint8_t send_both = 0; // Note: send_both must not be set if target_g > -1 because it will interfere with cycle variable
-//	if(!skip_prep) // message is NOT resend, n is > -1
-//		send_both = (target_g < 0 && (protocol == ENUM_PROTOCOL_KILL_CODE || (owner != ENUM_OWNER_GROUP_CTRL && protocol == ENUM_PROTOCOL_FILE_REQUEST && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)) && getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0)));
 	//if(protocol == ENUM_PROTOCOL_FILE_REQUEST) printf("Checkpoint send_both owner%u: %u = (%d < 0 && (%d || %d && %d && %u && %d))\n",owner,send_both,target_g,protocol == ENUM_PROTOCOL_KILL_CODE,owner != ENUM_OWNER_GROUP_CTRL,protocol == ENUM_PROTOCOL_FILE_REQUEST,getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,full_duplex)),getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits)) > 0);
 	uint32_t cycle = 0;
 	int repeated = 0; // MUST BE BEFORE other_fd:{}
-//	other_fd: {} // NOTE: This is a totally new message, unlike messages that just get sent to all peers in a group (see while below)
 	// XXX Step 4: Set date if unset, and set fd
 	if(!time && !nstime)
 		set_time(&time,&nstime);
@@ -424,13 +420,10 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 	const int utilized_recv = peer[target_n].socket_utilized[0];
 	const int utilized_send = peer[target_n].socket_utilized[1];
 	torx_unlock(n) // XXX
-//	int8_t fd_type; // TODO
 	if(fd_type < 0)
 	{
 		if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 			fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
-	//	else if(send_both)
-	//		fd_type = (int8_t)cycle;
 		else if(recvfd_connected && utilized_recv == INT_MIN)
 			fd_type = 0; // prefer recvfd for reliability & speed
 		else if(sendfd_connected && utilized_send == INT_MIN)
@@ -457,14 +450,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		message = message_prep(&message_len,target_n,fd_type,-1,0,0,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	if(message_len < 1)
 	{ // (could just be cycle 2 of a file resumption of a file thats half-done)
-	//	if(cycle == 0 && send_both)
-	//	{ // Only triggers on FILE_REQUEST, where message_prep decided to not to send anything (probably because this fd is utilized already for a section)
-	//		cycle++;
-	//		goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
-	//	}
 		if(protocol != ENUM_PROTOCOL_FILE_REQUEST)
 			error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u",fd_type,protocol);
-		//	error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u send_both=%u",fd_type,protocol,send_both);
 		goto error;
 	}
 	// XXX Step 6: Iterate message
@@ -519,21 +506,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(target_g < 0)
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
-	//	if(cycle == 0 && send_both)
-	//	{ // must send start point on each respective fd.
-	//		cycle++;
-	//		goto other_fd; // TODO 2023/11/16 I don't like this goto but eliminating it is complex
-	//	}
 		if(owner_nnnn != ENUM_OWNER_GROUP_PEER || target_g < 0 || ++cycle >= target_g_peercount)
 			break; // be careful of the logic here and after. note the ++
 	}
-/*	if(target_g > -1 && stream)
-	{ // Finally zero the GROUP_CTRL's message (the GROUP_PEER's messages are zero'd earlier or in outbound_cb TODO NO. cannot do it here. have to do it somehow in outbound_cb after the last 
-		printf("Checkpoint hypothetically deleting group_ctrl's i\n"); // TODO see: sfaoij2309fjfw
-		torx_write(nnnn) // XXX
-		zero_i(nnnn,iiii);
-		torx_unlock(nnnn) // XXX
-	} */
 	return i;
 	error: {}
 	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
@@ -914,6 +889,7 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 	}
 	else if(owner == ENUM_OWNER_GROUP_PEER)
 	{ // has no file path, unless PM transfer
+		error_simple(0,"File request internal called on a transfer with no path. Audit required."); // 2025/01/06 This should NOT be mitigated. Just error out.
 		unsigned char checksum[CHECKSUM_BIN_LEN];
 		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 		const int g = set_g(n,NULL);
