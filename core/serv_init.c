@@ -421,7 +421,7 @@ static inline void *send_init(void *arg)
 	torx_write(n) // XXX
 	pusher(zero_pthread,(void*)&peer[n].thrd_send)
 	torx_unlock(n) // XXX
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	char peeronion[56+1];
 	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));

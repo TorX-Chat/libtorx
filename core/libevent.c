@@ -1569,7 +1569,7 @@ static void error_conn(struct evconnlistener *listener,void *arg)
 
 void *torx_events(void *arg)
 { /* Is called ONLY ONCE for .recvfd (which never closes, unless block/delete), but MULTIPLE TIMES for .sendfd (which closes every time there is disconnect) */
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	struct event_strc *event_strc = (struct event_strc*) arg; // Casting passed struct
 	if(event_strc->fd_type == 0)
 	{

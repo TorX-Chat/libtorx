@@ -1135,7 +1135,7 @@ static inline void *file_init(void *arg)
 { // Send File Offer
 	struct file_strc *file_strc = (struct file_strc*) arg; // Casting passed struct
 	const int n = file_strc->n;
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	size_t size = 0;

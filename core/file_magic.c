@@ -363,7 +363,7 @@ static inline void *peer_init(void *arg)
 	torx_write(n) // XXX
 	pusher(zero_pthread,(void*)&peer[n].thrd_send)
 	torx_unlock(n) // XXX
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	char suffixonion[56+6+1];
 	getter_array(suffixonion,56,n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
 	snprintf(&suffixonion[56],6+1,"%6s",".onion");
@@ -1108,9 +1108,9 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 	//	printf("Checkpoint tor_call takedown_onion\n");
 		tor_call(NULL,-1,apibuffer);
 		sodium_memzero(apibuffer,sizeof(apibuffer));
-		torx_write(n) // XXX
 		int ret_send = 0;
 		int ret_recv = 0;
+		torx_write(n) // XXX
 		if(peer[n].sendfd > 0)
 			ret_send = evutil_closesocket(peer[n].sendfd);
 		if(peer[n].recvfd > 0)

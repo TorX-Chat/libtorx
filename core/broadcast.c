@@ -251,7 +251,7 @@ static inline void *broadcast_threaded(void *arg)
 { // This runs forever even when nothing is queued. TODO for safety, it should ONLY RUN WHEN WE ARE CONNECTED, otherwise it will queue up all our messages and then send them all at once when we get online... totally defeating the purpose of a queue
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_broadcast)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	unsigned int broadcast_delay_local;
 	while(1)
 	{

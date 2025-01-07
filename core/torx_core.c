@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 20 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 21 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2731,7 +2731,7 @@ static inline void remove_lines_with_suffix(char *input)
 static inline void *tor_log_reader(void *arg)
 {
 	pusher(zero_pthread,(void*)&thrd_tor_log_reader)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	char data[40960]; // should be big
 	#ifdef WIN32
 	HANDLE fd_stdout = arg;
@@ -2811,7 +2811,7 @@ static inline void *start_tor_threaded(void *arg)
 { /* Start or Restart Tor and pipe stdout to pipe_tor */ // TODO have a tor_failed global variable that can be somehow set by errors here
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_start_tor)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	if(get_tor_version())
 		return 0; // failed
 	hash_password(); // this will ONLY do anything if Tor failed on startup due to a bad Tor binary and has since been replaced
@@ -4494,7 +4494,7 @@ static inline void *change_password_threaded(void *arg)
  // NOTE 2: ensure that SQL doesn't change its own internal salt when calling rekey (for resumption)
 // Note 3: These above two notes are irrelevant if sqlite3_rekey is atomic
 	pusher(zero_pthread,(void*)&thrd_change_password)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	struct pass_strc *pass_strc = (struct pass_strc*) arg; // Casting passed struct
 	if(threadsafe_read_uint8(&mutex_global_variable,&currently_changing_pass))
 	{ // already changing pass
@@ -4590,7 +4590,7 @@ void change_password_start(const char *password_old,const char *password_new,con
 static inline void *login_threaded(void *arg)
 { // this must run after initial
 	pusher(zero_pthread,(void*)&thrd_login)
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL);
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	unsigned char salt[crypto_pwhash_SALTBYTES]; // 16
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	long long unsigned int local_crypto_pwhash_OPSLIMIT = crypto_pwhash_OPSLIMIT;

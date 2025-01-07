@@ -200,7 +200,7 @@ void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519
 
 static void *onion_gen(void *arg)
 { // For SING/MULT generation, call with pthread_create. THIS IS A BACKEND FUNCTION ONLY. // Note: TorX-ID length will be [52-suffix_length]
-	setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
 	struct serv_strc *serv_strc = (struct serv_strc*) arg; // Casting passed struct
 	if((serv_strc->owner == ENUM_OWNER_SING || serv_strc->owner == ENUM_OWNER_MULT) && (serv_strc->peernick == NULL || strlen(serv_strc->peernick) < 1))
 	{
