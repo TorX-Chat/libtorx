@@ -258,10 +258,15 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
 	{
-		const uint8_t stat = getter_uint8(event_strc->n,i,-1,-1,offsetof(struct message_list,stat));
-		const int8_t fd_type = getter_int8(event_strc->n,i,-1,-1,offsetof(struct message_list,fd_type));
-		const int p_iter = getter_int(event_strc->n,i,-1,-1,offsetof(struct message_list,p_iter));
-		if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type))
+		torx_read(event_strc->n) // XXX
+		const uint8_t stat = peer[event_strc->n].message[i].stat;
+		const int8_t fd_type = peer[event_strc->n].message[i].fd_type;
+		const int p_iter = peer[event_strc->n].message[i].p_iter;
+		const uint32_t pos = peer[event_strc->n].message[i].pos; // TODO This is a GOOD workaround: Socket_utilized is supposed to negate the necessity of this, but doesn't due to races conditions.
+		const int utilized_recv = peer[event_strc->n].socket_utilized[0]; // TODO This MIGHT BE a BAD workaround (may lead to stalling).
+		const int utilized_send = peer[event_strc->n].socket_utilized[1]; // TODO This MIGHT BE a BAD workaround (may lead to stalling).
+		torx_unlock(event_strc->n) // XXX
+		if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && pos == 0 && utilized_recv != i && utilized_send != i)
 		{ // important check, to snuff out deleted messages
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
@@ -269,6 +274,8 @@ static inline void begin_cascade(struct event_strc *event_strc)
 			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type) != -1) // Will do nothing if there are no messages to send
 				break; // allow cascading effect in packet_removal
 		}
+		else if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && (pos != 0 || utilized_recv == i || utilized_send == i)) // TODO debugging here
+			error_printf(0,BRIGHT_YELLOW"Checkpoint NO cascade: n=%d fd=%d pos=%u recv=%d send=%d"RESET,event_strc->n,event_strc->fd_type,pos,utilized_recv,utilized_send);
 	}
 }
 
@@ -803,9 +810,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				{
 					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
 					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
-					const uint64_t transferred = calculate_transferred(file_n,f);
 					if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
-						transfer_progress(file_n,f,transferred); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+						transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
 			}
 			else

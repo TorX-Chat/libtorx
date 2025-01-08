@@ -119,7 +119,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			if(utilized_recv == i || utilized_send == i)
 			{ // Critical mitigation of race condition. DO NOT REMOVE.
 				torx_unlock(n) // XXX
-				error_printf(0,"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket: %s",n,i,fd_type,stat,utilized_recv,utilized_send,name);
+				error_printf(0,PINK"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket: %s"RESET,n,i,fd_type,stat,utilized_recv,utilized_send,name);
 				return -2; // MUST BE -2 not -1 or we will have big issues in packet_removal
 			}
 			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
@@ -306,7 +306,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				(size_t)packet_len); // TODO does this have a size limit?
 		//	total_packets_added++; // TODO remove
 			pthread_rwlock_unlock(&mutex_packet);
-			bufferevent_flush(bev,EV_WRITE,BEV_FLUSH); // TODO 2024/12/30 TESTING TODO might use BEV_FINISHED or BEV_FLUSH
+		//	bufferevent_flush(bev,EV_WRITE,BEV_FLUSH); // TODO 2024/12/30 TESTING
 			evbuffer_unlock(output); // XXX
 			sodium_memzero(send_buffer,(size_t)packet_len);
 			return 0;
@@ -330,7 +330,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(n) // XXX
 		}
 		else
-			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u"RESET,n,fd_type,i,socket_utilized,start);
+			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
 			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%lu to pos=0\n"RESET,n,i,fd_type,start);

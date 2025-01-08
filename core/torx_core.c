@@ -1901,8 +1901,8 @@ uint64_t calculate_transferred(const int n,const int f)
 		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
 		torx_unlock(n) // XXX
 	}
-	else
-		error_simple(0,"We currently have no manner of tracking and calculating the total transferred amount of GROUP_CTRL outbound transfers. Coding error. Report this.");
+//	else
+//		error_simple(0,"We currently have no manner of tracking and calculating the total transferred amount of GROUP_CTRL outbound transfers. Coding error. Report this.");
 	return transferred; // BEWARE of baseline. See above.
 }
 
