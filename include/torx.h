@@ -240,19 +240,21 @@ typedef u_short in_port_t;
 	pthread_rwlock_unlock(&mutex_expand); \
 }
 
-/* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. */
+/* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. XXX Note: Necessary to NOT wrap _mutex_lock in a torx_read because it WILL result in lock-order-inversion */
 #define torx_fd_lock(n,f) \
 { \
 	torx_read(n) \
-	pthread_mutex_lock(&peer[n].file[f].mutex_file); \
+	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
+	pthread_mutex_lock(mutex); \
 }
 
 #define torx_fd_unlock(n,f) \
 { \
 	torx_read(n) \
-	pthread_mutex_unlock(&peer[n].file[f].mutex_file); \
+	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
+	pthread_mutex_unlock(mutex); \
 }
 /* Convenience function for cloning a page */ // WARNING: Do not make a "torx_page_save". That would be a very bad thing because very much could change elsewhere between open and close.
 /* Usage example:

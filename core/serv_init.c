@@ -173,7 +173,8 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_fd_lock(file_n,f)
 			torx_read(file_n) // XXX
 			FILE *fd_active = peer[file_n].file[f].fd;
-			start = peer[file_n].file[f].request[r].start[fd_type];
+			start = peer[file_n].file[f].request[r].start[fd_type] + peer[file_n].file[f].request[r].transferred[fd_type];
+		//	printf("Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu\n",file_n,f,fd_type,r,start); // TODO remove
 			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
 			torx_unlock(file_n) // XXX

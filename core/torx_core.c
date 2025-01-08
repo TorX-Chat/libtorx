@@ -1896,19 +1896,9 @@ uint64_t calculate_transferred(const int n,const int f)
 	}
 	else if(owner != ENUM_OWNER_GROUP_CTRL)
 	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
-		uint64_t transferred_0 = 0;
-		uint64_t transferred_1 = 0;
 		const int r = 0; // set_r(n,f,n); should be unnecessary because this isn't a group file transfer.
 		torx_read(n) // XXX
-		if(peer[n].file[f].request[r].end[0] > 0)
-			transferred_0 = peer[n].file[f].request[r].end[0] - peer[n].file[f].request[r].start[0] + 1;
-		if(peer[n].file[f].request[r].end[1] > 0)
-			transferred_1 = peer[n].file[f].request[r].end[1] - peer[n].file[f].request[r].start[1] + 1;
-		const uint64_t size = peer[n].file[f].size;
-		uint64_t baseline = size - transferred_0 - transferred_1;
-		if(size < 4 && peer[n].file[f].request[r].end[0] + peer[n].file[f].request[r].end[1] < size)
-			baseline--; // 2023/10/26 this is the simplest way to fix an obscure issue that occurs when transferring a 1 to 3 byte file.... ie one fd has a request for byte 0 only. Don't waste thought, its complicated, just leave it.
-		transferred = baseline + peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
+		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
 		torx_unlock(n) // XXX
 	}
 	else
@@ -2239,9 +2229,9 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 	torx_free((void*)&peer[n].file[f].split_status_n);
 	torx_free((void*)&peer[n].file[f].split_status_fd);
 	torx_free((void*)&peer[n].file[f].split_status_req);
-	pthread_mutex_lock(&peer[n].file[f].mutex_file); // Do not replace
+//	pthread_mutex_lock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 	close_sockets_nolock(peer[n].file[f].fd) // Do not eliminate
-	pthread_mutex_unlock(&peer[n].file[f].mutex_file); // Do not replace
+//	pthread_mutex_unlock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 }
 
 void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of the mutex
@@ -2780,8 +2770,8 @@ static inline void *tor_log_reader(void *arg)
 		{ // incomplete, no existing cache
 			read_tor_pipe_cache = torx_secure_malloc((size_t)len+1);
 			memcpy(read_tor_pipe_cache,data,(size_t)len+1); // includes copying null terminator
+			pthread_mutex_unlock(&mutex_tor_pipe);
 		}
-		pthread_mutex_unlock(&mutex_tor_pipe);
 		sodium_memzero(data,(size_t)len);
 	}
 	error_simple(0,"Exiting tor_log_reader, probably because Tor died or was restarted.");

@@ -339,7 +339,6 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		o_oldest = -1;
 		drained += packet_len;
 	//	total_packets_removed++; // TODO remove
-	//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained); // TODO remove
 		if(!drain_len)
 		{ // For drain_len, we don't do anything except 0 the packets above
 			pthread_rwlock_rdlock(&mutex_protocols);
@@ -353,9 +352,10 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				const int f = packet_f_i;
 				const int r = set_r(packet_file_n,f,event_strc->n);
 				torx_write(packet_file_n) // XXX
-				peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16;
+				peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16; // const uint64_t this_r =
 				torx_unlock(packet_file_n) // XXX
 				const uint64_t transferred = calculate_transferred(packet_file_n,f);
+			//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 				torx_read(packet_file_n) // XXX
 				uint8_t file_status = peer[packet_file_n].file[f].status;
 				const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
