@@ -93,7 +93,7 @@ static inline int unclaim(const int n,const int f,const int peer_n,const int8_t 
 		return 0;
 	}
 	int was_transferring = 0;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	if(status == ENUM_FILE_INBOUND_ACCEPTED)
 	{
 		uint16_t active_transfers_ongoing = 0;
@@ -860,8 +860,8 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].file_path);
 		torx_free((void*)&peer[n].file[f].split_path);
-		if(peer[n].file[f].status == ENUM_FILE_INBOUND_ACCEPTED)
-			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING;
+		if(peer[n].file[f].status == ENUM_FILE_INBOUND_ACCEPTED) // TODO DEPRECIATE FILE STATUS TODO
+			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
 		torx_unlock(n) // XXX
 	}
 	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path and setting to INBOUND_PENDING if n,f was passed so that it can be reset.");
@@ -872,7 +872,7 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 { // Internal function only, do not call from UI. Use file_accept
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	if(!is_inbound_transfer(status))
 	{
 		error_simple(0,"Sanity check failed in file_request_internal. File is not inbound.");
@@ -950,7 +950,7 @@ void file_accept(const int n,const int f)
 		return;
 	torx_read(n) // XXX
 	const uint8_t owner = peer[n].owner;
-	uint8_t status = peer[n].file[f].status;
+	uint8_t status = peer[n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
 	const char *filename = peer[n].file[f].filename;
 	torx_unlock(n) // XXX
 	if(filename == NULL)
@@ -1000,8 +1000,8 @@ void file_accept(const int n,const int f)
 	{ // User unpause by re-offering file (safer than setting _ACCEPTED and directly start re-pushing (Section 6RMA8obfs296tlea), even though it could mean some packets / data is sent twice.)
 		if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
 		{
-			status = ENUM_FILE_OUTBOUND_PENDING;
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			status = ENUM_FILE_OUTBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
@@ -1055,8 +1055,8 @@ void file_accept(const int n,const int f)
 		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 		if(calculate_transferred(n,f) < size)
 		{
-			status = ENUM_FILE_INBOUND_ACCEPTED;
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 			file_request_internal(n,f,-1);
 		}
 		else // Complete. Not checking if oversized or wrong hash.
@@ -1064,8 +1064,8 @@ void file_accept(const int n,const int f)
 			error_simple(0,"This code should never execute. If it executes, the split file hasn't been deleted but should have been. Report this.");
 			printf("Checkpoint %"PRIu64" of %"PRIu64" transferred\n",calculate_transferred(n,f),size);
 			breakpoint();
-			status = ENUM_FILE_INBOUND_COMPLETED;
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			status = ENUM_FILE_INBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 			transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 		}
 	}
@@ -1081,7 +1081,7 @@ void file_cancel(const int n,const int f)
 	if(n < 0 || f < 0)
 		return;
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
 	if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_COMPLETED || status == ENUM_FILE_OUTBOUND_REJECTED)
@@ -1178,11 +1178,11 @@ static inline void *file_init(void *arg)
 	const int f = process_file_offer_outbound(n,checksum,splits,split_hashes_and_size,size,file_strc->modified,file_strc->path);
 //	printf("Checkpoint file_init n==%d f==%d size==%lu checksum==%s\n",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	sodium_memzero(checksum,sizeof(checksum));
-	uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
 	{
-		status = ENUM_FILE_OUTBOUND_PENDING;
-		setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+		status = ENUM_FILE_OUTBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
+		setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{

@@ -1723,7 +1723,7 @@ char *file_progress_string(const int n,const int f)
 	const time_t time_left = peer[n].file[f].time_left;
 	const uint64_t bytes_per_second = peer[n].file[f].bytes_per_second;
 	const uint64_t size = peer[n].file[f].size;
-	const uint8_t status = peer[n].file[f].status;
+	const uint8_t status = peer[n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
 	torx_unlock(n) // XXX
 	#define file_size_text_len 128 // TODO perhaps increase this size. its arbitary. By our math it shoud be more than enough though.
 	char *file_size_text = torx_insecure_malloc(file_size_text_len); // arbitrary allocation amount
@@ -1879,7 +1879,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 
 uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
 	if(is_inbound_transfer(status))
@@ -3145,7 +3145,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].filename = NULL;
 	peer[n].file[f].file_path = NULL;
 	peer[n].file[f].size = 0;
-	peer[n].file[f].status = 0;
+	peer[n].file[f].status = 0; // TODO DEPRECIATE FILE STATUS TODO
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
 	peer[n].file[f].split_path = NULL;

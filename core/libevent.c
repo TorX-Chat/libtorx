@@ -145,7 +145,7 @@ static inline void peer_online(struct event_strc *event_strc)
 	if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound)) // XXX Experimental 2023/10/29: Might need to prevent FILE_REQUEST from being sent when we are potentially already receiving data... not sure if this will be an issue
 		for(int f = 0; getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size)) > 0; f++)
 		{
-			const uint8_t file_status = getter_uint8(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status));
+			const uint8_t file_status = getter_uint8(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 			if(file_status == ENUM_FILE_INBOUND_ACCEPTED) // re-send request for previously accepted file
 				file_request_internal(event_strc->n,f,-1);
 		}
@@ -364,7 +364,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				const uint64_t transferred = calculate_transferred(packet_file_n,f);
 			//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 				torx_read(packet_file_n) // XXX
-				uint8_t file_status = peer[packet_file_n].file[f].status;
+				uint8_t file_status = peer[packet_file_n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
 				const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
 				const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
 				torx_unlock(packet_file_n) // XXX
@@ -377,8 +377,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					{
 						if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
 							error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
-						file_status = ENUM_FILE_OUTBOUND_COMPLETED;
-						setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status));
+						file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
+						setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO DEPRECIATE FILE STATUS TODO
 					}
 					transfer_progress(packet_file_n,f,transferred);
 				}
@@ -809,7 +809,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else
 				{
 					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
-					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
+					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 					if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
 						transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
@@ -1056,7 +1056,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"Received a request for an unknown file. Bailing out.");
 							continue;
 						}
-						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
+						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 						if(file_status != ENUM_FILE_OUTBOUND_PENDING && file_status != ENUM_FILE_OUTBOUND_ACCEPTED && file_status != ENUM_FILE_OUTBOUND_COMPLETED && file_status != ENUM_FILE_INBOUND_PENDING && file_status != ENUM_FILE_INBOUND_ACCEPTED && file_status != ENUM_FILE_INBOUND_COMPLETED)
 						{ // Do not modify without extensive testing and thinking
 							error_printf(0,"Peer requested a file that is of a status we're not willing to send: %d",file_status);
@@ -1101,7 +1101,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
 						peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
 						peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
-						peer[file_n].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED;
+						peer[file_n].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
 						torx_unlock(file_n) // XXX
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
@@ -1136,7 +1136,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						section_unclaim(file_n,f,event_strc->n,-1); // must go before process_pause_cancel
 						if(split_hashes == NULL) // avoid triggering for group (non-pm) file transfer
 							process_pause_cancel(file_n,f,protocol,ENUM_MESSAGE_RECV);
-						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel
+						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel // TODO DEPRECIATE FILE STATUS TODO
 						if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
 						{ // Delete partial inbound files + split. Must go after process_pause_cancel (which sets file_status and closes fd)
 							char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));

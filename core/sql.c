@@ -1192,11 +1192,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
 				torx_unlock(file_n) // XXX
 				extraneous_len = 0; // MUST because related to callback
-				uint8_t status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status));
+				uint8_t status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_progress != NULL)
 				{ // This can trigger when the status == pending due to having received a pause at any time
-					status = ENUM_FILE_INBOUND_ACCEPTED;
-					setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+					status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
+					setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 				}
 				else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 				{
@@ -1209,7 +1209,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 						torx_write(file_n) // XXX
 						peer[file_n].file[f].split_progress[0] = size_on_disk;
 						if(status == ENUM_FILE_INBOUND_PENDING && peer[file_n].file[f].size == size_on_disk)
-							peer[file_n].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED;
+							peer[file_n].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
 					}
 					torx_unlock(file_n) // XXX
 				}

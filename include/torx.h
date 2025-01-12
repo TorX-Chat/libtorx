@@ -330,12 +330,12 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint32_t pos; // amount sent TODO utilize for amount received also
 		time_t nstime; // nanoseconds (essentially after a decimal point of time)
 	} *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
-	struct file_list { // variables contained within structs are called "Members"
+	struct file_list { // XXX Group file transfers are held by GROUP_CTRL, whereas PM transfers are held by GROUP_PEER XXX
 		unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
 		char *filename;
 		char *file_path;
 		uint64_t size;
-		uint8_t status; // see enum file_statuses for values
+		uint8_t status; // see enum file_statuses for values // TODO DEPRECIATE FILE STATUS TODO
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
@@ -348,7 +348,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
 		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock / torx_fd_unlock
 		struct offer_list {
-			int offerer_n;
+			int offerer_n; // Do not reset to -1
 			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have.
 		} *offer;
 		time_t last_progress_update_time; // last time we updated progress bar
@@ -361,7 +361,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		pthread_mutex_t mutex_file;
 		/* Exclusively Outbound transfer related */
 		struct request_list {
-			int requester_n;
+			int requester_n; // Do not reset to -1
 			uint64_t start[2];
 			uint64_t end[2];
 			uint64_t transferred[2];
@@ -531,7 +531,7 @@ enum message_statuses
 // TODO these are saved to disk... for file related, we need more than this. We need all file statuses, not just done. Not sure how to implement yet
 };/* TODO set other .status, such as finished (ifin,ofin) and paused (ipau,opau) */
 
-enum file_statuses
+enum file_statuses // TODO DEPRECIATE FILE STATUS TODO
 { // can be > 9 // XXX WARNING: an _OUTBOUND status must NEVER override an _INBOUND status because it will interfere with anything using is_inbound_transfer XXX
 	/* File Transfer Direction is Outbound ( we are sender ) */ 
 	ENUM_FILE_OUTBOUND_PENDING = 1, // pending or paused
@@ -858,7 +858,11 @@ int sql_delete_setting(const int force_plaintext,const int peer_index,const char
 int sql_delete_peer(const int peer_index);
 
 /* file_magic.c */
-int is_inbound_transfer(const uint8_t file_status)__attribute__((warn_unused_result)); // !is_outbound_transfer
+int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_pending(const int n,const int f)__attribute__((warn_unused_result));
+int is_inbound_transfer(const uint8_t file_status)__attribute__((warn_unused_result)); // !is_outbound_transfer // TODO DEPRECIATE FILE STATUS TODO
 void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);

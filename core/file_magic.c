@@ -96,6 +96,61 @@ XXX WARNINGS XXX
 	* don't use a file descriptor after close or it could result in corruption, according to https://www.sqlite.org/howtocorrupt.html
 */
 
+int file_is_cancelled(const int n,const int f)
+{ // Returns 1 if file is cancelled TODO When a file is cancelled, .request and such should be free'd
+	int cancelled = 0;
+	torx_read(n) // XXX
+	if(peer[n].file[f].request == NULL || peer[n].file[f].split_status_fd == NULL)
+		cancelled = 1;
+	torx_unlock(n) // XXX
+	return cancelled;
+}
+
+int file_is_active(const int n,const int f)
+{ // Returns 0 if inactive, 1 if outbound active, 2 if inbound active, 3 if both in/outbound active.
+	if(file_is_cancelled(n,f))
+		return 0;
+	int active = 0;
+	torx_read(n) // XXX
+	for(int8_t fd_type = 0 ; peer[n].file[f].request && fd_type < 2 && active == 0 ; fd_type++)
+		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 && active == 0 ; r++)
+			if(peer[n].file[f].request[r].end[fd_type] > peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type])
+				active += 1; // Outbound active
+	for(int16_t section = 0 ; peer[n].file[f].split_status_fd && section <= peer[n].file[f].splits && active < 2 ; section++)
+		if(peer[n].file[f].split_status_fd[section] > -1)
+			active += 2; // Inbound active
+	torx_unlock(n) // XXX
+	return active;
+}
+
+int file_is_complete(const int n,const int f)
+{ // Assumes split_path is free'd when file is completed
+	torx_read(n) // XXX
+	const uint64_t size = peer[n].file[f].size;
+	const char *split_path = peer[n].file[f].split_path;
+	torx_unlock(n) // XXX
+	if(split_path || file_is_cancelled(n,f) || file_is_active(n,f))
+		return 0;
+	char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+	const uint64_t size_on_disk = get_file_size(file_path);
+	torx_free((void*)&file_path);
+	if(size == size_on_disk)
+		return 1;
+	return 0;
+}
+
+int file_is_pending(const int n,const int f)
+{ // Returns true if not cancelled and not active; file is in pending or paused state.
+	if(file_is_cancelled(n,f)) // Must be before checking file path
+		return 0; // Cancelled is not pending
+	torx_read(n) // XXX
+	const char *file_path = peer[n].file[f].file_path;
+	torx_unlock(n) // XXX
+	if(file_path == NULL)
+		return 1;
+	return !(file_is_active(n,f) || file_is_complete(n,f));
+}
+
 int is_inbound_transfer(const uint8_t file_status)
 {
 	if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_OUTBOUND_ACCEPTED || file_status == ENUM_FILE_OUTBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_REJECTED || file_status == ENUM_FILE_OUTBOUND_CANCELLED)
@@ -118,7 +173,7 @@ void process_pause_cancel(const int n,const int f,const uint16_t protocol,const 
 			error_simple(0,"");
 		return;
 	}	*/
-	const uint8_t old_file_status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t old_file_status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	uint8_t new_file_status = old_file_status;
 	if(protocol == ENUM_PROTOCOL_FILE_PAUSE)
 	{
@@ -146,7 +201,7 @@ void process_pause_cancel(const int n,const int f,const uint16_t protocol,const 
 	}
 	if(new_file_status == old_file_status)
 		return; // no changes, no action.
-	setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&new_file_status,sizeof(new_file_status));
+	setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&new_file_status,sizeof(new_file_status)); // TODO DEPRECIATE FILE STATUS TODO
 	if(new_file_status == ENUM_FILE_OUTBOUND_CANCELLED || new_file_status == ENUM_FILE_OUTBOUND_REJECTED || new_file_status == ENUM_FILE_INBOUND_CANCELLED || new_file_status == ENUM_FILE_INBOUND_REJECTED)
 		close_sockets(n,f)
 }
@@ -189,8 +244,8 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 	snprintf(peer[n].file[f].file_path,file_path_len+1,"%s",file_path);
 	peer[n].file[f].size = size;
 	peer[n].file[f].modified = modified;
-	if(!peer[n].file[f].status) // presumably this will always be true?
-		peer[n].file[f].status = ENUM_FILE_OUTBOUND_PENDING;
+	if(!peer[n].file[f].status) // presumably this will always be true? // TODO DEPRECIATE FILE STATUS TODO
+		peer[n].file[f].status = ENUM_FILE_OUTBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
 	torx_unlock(n) // XXX
 	sodium_memzero(path_copy,sizeof(path_copy)); // DO NOT DO THIS EARLIER as it modifies 'filename' variable
 	return f;
@@ -233,7 +288,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		peer[n].file[f].size = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN]));
 		peer[n].file[f].modified = be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint64_t)]));
 		if(!peer[n].file[f].status || peer[n].file[f].status == ENUM_FILE_INBOUND_REJECTED || peer[n].file[f].status == ENUM_FILE_INBOUND_CANCELLED) // prevent overriding an existing status
-			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING;
+			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO // TODO DEPRECIATE FILE STATUS TODO // TODO DEPRECIATE FILE STATUS TODO // TODO DEPRECIATE FILE STATUS TODO
 		torx_unlock(n) // XXX
 		// not setting .transferred, will default to 0 if the destination file is empty // TODO open file/split?
 		// file_path is also set elsewhere
@@ -297,15 +352,15 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 				peer[group_n].file[f].filename[filename_len] = '\0';
 				printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
 			}
-			if(!peer[group_n].file[f].status) // prevent overriding an existing status
-				peer[group_n].file[f].status = ENUM_FILE_INBOUND_PENDING;
+			if(!peer[group_n].file[f].status) // prevent overriding an existing status // TODO DEPRECIATE FILE STATUS TODO
+				peer[group_n].file[f].status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
 			torx_unlock(group_n) // XXX
 		}
-		uint8_t status = getter_uint8(group_n,INT_MIN,f,-1,offsetof(struct file_list,status));
+		uint8_t status = getter_uint8(group_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 		if(status == ENUM_FILE_INBOUND_REJECTED || status == ENUM_FILE_INBOUND_CANCELLED)
 		{
-			status = ENUM_FILE_INBOUND_PENDING;
-			setter(group_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
+			setter(group_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 	//	else // We only check in groups because malicious peers
 	//		error_simple(0,"Received file offer for file we already have in struct (partial or full). (NOT Allocating split hashes)");
@@ -806,14 +861,14 @@ int initialize_split_info(const int n,const int f)
 			printf("Checkpoint found an old .split file. Setting file as ACCEPTED.\n");
 			if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
 			{
-				const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED;
-				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+				const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
+				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 			}
 		}
 		else if(stat_file == 0)
 		{
-			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 		else if(splits > 0)
 		{ // partial file does not exist, write an initialized .split file
@@ -847,7 +902,7 @@ void split_update(const int n,const int f,const int16_t section)
 	torx_unlock(n) // XXX
 	if(splits == 0 || split_path == NULL)
 		return;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status));
+	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(status == ENUM_FILE_INBOUND_COMPLETED || status == ENUM_FILE_INBOUND_REJECTED || status == ENUM_FILE_INBOUND_CANCELLED) // || section == -1
 	{ //  destroying split file in case of ENUM_FILE_INBOUND_CANCELLED would be bad in group chats.
@@ -968,8 +1023,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 					torx_unlock(n) // XXX
 				}
 			}
-			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status));
+			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 		else if(owner == ENUM_OWNER_GROUP_CTRL) // (peer_n > -1 && peer[peer_n].blacklisted)
 			file_request_internal(n,f,-1); // 2024/12/17 Experimental, requesting from a different peer on any fd_type
