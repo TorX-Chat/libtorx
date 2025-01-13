@@ -1879,10 +1879,10 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 
 uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
-	if(is_inbound_transfer(status))
+	const int is_active = file_is_active(n,f);
+	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
 	{ // Inbound
 		torx_read(n) // XXX
 		const uint64_t *split_progress = peer[n].file[f].split_progress;

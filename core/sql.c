@@ -1202,14 +1202,12 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				{
 					initialize_split_info(file_n,f);
 					torx_read(file_n) // XXX
-					if(is_inbound_transfer(status) && peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress[0] == 0)
-					{ // 2024/05/12 Setting transferred amount according to file size
+					if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress[0] == 0)
+					{ // 2024/05/12 Setting transferred amount according to file size. This might be depreciated (2025/01/13).
 						torx_unlock(file_n) // XXX
 						const uint64_t size_on_disk = get_file_size(file_path);
 						torx_write(file_n) // XXX
 						peer[file_n].file[f].split_progress[0] = size_on_disk;
-						if(status == ENUM_FILE_INBOUND_PENDING && peer[file_n].file[f].size == size_on_disk)
-							peer[file_n].file[f].status = status = ENUM_FILE_INBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
 					}
 					torx_unlock(file_n) // XXX
 				}

@@ -548,6 +548,14 @@ enum file_statuses // TODO DEPRECIATE FILE STATUS TODO
 	ENUM_FILE_INBOUND_CANCELLED = 10 // they no longer want to send it
 };
 
+enum file_is_active_statuses
+{
+	ENUM_FILE_INACTIVE = 0,
+	ENUM_FILE_ACTIVE_OUT = 1,
+	ENUM_FILE_ACTIVE_IN = 2,
+	ENUM_FILE_ACTIVE_IN_OUT = 3
+};
+
 /* Struct Models/Types used for passing to specific pthread'd functions */ // Don't forget to initialize = {0} when calling these types.
 
 struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
@@ -862,7 +870,6 @@ int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result)
 int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_pending(const int n,const int f)__attribute__((warn_unused_result));
-int is_inbound_transfer(const uint8_t file_status)__attribute__((warn_unused_result)); // !is_outbound_transfer // TODO DEPRECIATE FILE STATUS TODO
 void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);

@@ -109,16 +109,16 @@ int file_is_cancelled(const int n,const int f)
 int file_is_active(const int n,const int f)
 { // Returns 0 if inactive, 1 if outbound active, 2 if inbound active, 3 if both in/outbound active.
 	if(file_is_cancelled(n,f))
-		return 0;
+		return ENUM_FILE_INACTIVE;
 	int active = 0;
 	torx_read(n) // XXX
 	for(int8_t fd_type = 0 ; peer[n].file[f].request && fd_type < 2 && active == 0 ; fd_type++)
 		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 && active == 0 ; r++)
 			if(peer[n].file[f].request[r].end[fd_type] > peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type])
-				active += 1; // Outbound active
+				active += ENUM_FILE_ACTIVE_OUT; // Outbound active, 1
 	for(int16_t section = 0 ; peer[n].file[f].split_status_fd && section <= peer[n].file[f].splits && active < 2 ; section++)
 		if(peer[n].file[f].split_status_fd[section] > -1)
-			active += 2; // Inbound active
+			active += ENUM_FILE_ACTIVE_IN; // Inbound active, 2
 	torx_unlock(n) // XXX
 	return active;
 }
@@ -149,17 +149,6 @@ int file_is_pending(const int n,const int f)
 	if(file_path == NULL)
 		return 1;
 	return !(file_is_active(n,f) || file_is_complete(n,f));
-}
-
-int is_inbound_transfer(const uint8_t file_status)
-{
-	if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_OUTBOUND_ACCEPTED || file_status == ENUM_FILE_OUTBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_REJECTED || file_status == ENUM_FILE_OUTBOUND_CANCELLED)
-		return 0; // File Transfer Direction is Outbound ( we are sender )
-	else if(file_status == ENUM_FILE_INBOUND_PENDING || file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_INBOUND_REJECTED || file_status == ENUM_FILE_INBOUND_CANCELLED)
-		return 1; // File Transfer Direction is Inbound ( we are receiver )
-	else
-		error_simple(-1,"Unrecognized file_status passed to is_inbound_transfer. Coding error. Report this.");
-	return -1; // this is a junk reply, should exit program before this. this is just to suppress warning.
 }
 
 void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat)
@@ -365,23 +354,25 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 	//	else // We only check in groups because malicious peers
 	//		error_simple(0,"Received file offer for file we already have in struct (partial or full). (NOT Allocating split hashes)");
 		const int o = set_o(group_n,f,n);
-		setter(group_n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n),&n,sizeof(n));
-		torx_write(group_n) // XXX
-		if(peer[group_n].file[f].offer[o].offer_progress == NULL)
-			peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
-		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-			for(int16_t section = 0; section <= splits; section++)
-				peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
-		else
-			for(int16_t section = 0; section <= splits; section++)
-			{ // setting every section to 100% because this offer type is of a complete file
-				uint64_t end = 0;
-				const uint64_t start = calculate_section_start(&end,size,splits,section);
-				peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
-			}
-		torx_unlock(group_n) // XXX
-		if(status == ENUM_FILE_INBOUND_ACCEPTED)
-			file_request_internal(group_n,f,-1);
+		if(o > -1)
+		{
+			torx_write(group_n) // XXX
+			if(peer[group_n].file[f].offer[o].offer_progress == NULL)
+				peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
+			if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+				for(int16_t section = 0; section <= splits; section++)
+					peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
+			else
+				for(int16_t section = 0; section <= splits; section++)
+				{ // setting every section to 100% because this offer type is of a complete file
+					uint64_t end = 0;
+					const uint64_t start = calculate_section_start(&end,size,splits,section);
+					peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
+				}
+			torx_unlock(group_n) // XXX
+			if(status == ENUM_FILE_INBOUND_ACCEPTED)
+				file_request_internal(group_n,f,-1);
+		}
 	}
 	return 0;
 	error: {}

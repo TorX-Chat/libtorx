@@ -872,12 +872,6 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 { // Internal function only, do not call from UI. Use file_accept
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
-	if(!is_inbound_transfer(status))
-	{
-		error_simple(0,"Sanity check failed in file_request_internal. File is not inbound.");
-		return;
-	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
 	torx_read(n) // XXX
 	const char *file_path = peer[n].file[f].file_path;
@@ -885,18 +879,6 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 	if(file_path)
 	{
 		if(file_unwritable(n,f,NULL))
-			return;
-	}
-	else if(owner == ENUM_OWNER_GROUP_PEER)
-	{ // has no file path, unless PM transfer
-		error_simple(0,"File request internal called on a transfer with no path. Audit required."); // 2025/01/06 This should NOT be mitigated. Just error out.
-		unsigned char checksum[CHECKSUM_BIN_LEN];
-		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		const int g = set_g(n,NULL);
-		const int group_n = getter_group_int(g,offsetof(struct group_list,n)); // TODO AUDIT REQUIRED TODO
-		const int g_f = set_f(group_n,checksum,sizeof(checksum)); // TODO AUDIT REQUIRED TODO
-		sodium_memzero(checksum,sizeof(checksum));
-		if(file_unwritable(group_n,g_f,NULL))
 			return;
 	}
 	else
@@ -960,41 +942,15 @@ void file_accept(const int n,const int f)
 		return;
 	}
 	if(status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_ACCEPTED)
-	{ // pause in/outbound transfer. Reciever can unpause it.  // Much redundancy in logic applies with file cancel
+	{ // pause in/outbound transfer. Reciever can unpause it.  // Much redundancy in logic applies with file cancel  For group file transfers, like a _PARTIAL, the message is broadcast to everyone.
 		unsigned char checksum[CHECKSUM_BIN_LEN];
 		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-		{ // Send pause to all peers sending us data and unclaim relevant sections.
-			torx_read(n) // XXX
-			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
-			{
-				torx_unlock(n) // XXX
-				return;
-			}
-			for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
-			{
-				const int peer_n = peer[n].file[f].split_status_n[section];
-				if(peer_n > -1)
-				{
-					torx_unlock(n) // XXX
-					message_send(peer_n,ENUM_PROTOCOL_FILE_PAUSE,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
-					if(status == ENUM_FILE_INBOUND_ACCEPTED)
-						section_unclaim(n,f,peer_n,-1);
-					torx_read(n) // XXX
-				}
-			}
-			torx_unlock(n) // XXX
-		}
-		else
-		{
-			message_send(n,ENUM_PROTOCOL_FILE_PAUSE,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
-			if(status == ENUM_FILE_INBOUND_ACCEPTED)
-				section_unclaim(n,f,-1,-1);
-		}
+		message_send(n,ENUM_PROTOCOL_FILE_PAUSE,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
 		sodium_memzero(checksum,sizeof(checksum));
+		section_unclaim(n,f,-1,-1); // Calling this regardless of is_active to avoid potential race conditons. Only relevant to ENUM_FILE_ACTIVE_IN / ENUM_FILE_ACTIVE_IN_OUT
 		process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_PAUSE,ENUM_MESSAGE_FAIL); // set status and close file descriptors, must be set AFTER section_unclaim
 		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
-		transfer_progress(n,f,last_transferred); // trigger a stall // TODO TODO TODO is this too early? should it be after process_pause_cancel?
+		transfer_progress(n,f,last_transferred); // trigger a stall // should probably be after process_pause_cancel
 	}
 	else if(status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
 	{ // User unpause by re-offering file (safer than setting _ACCEPTED and directly start re-pushing (Section 6RMA8obfs296tlea), even though it could mean some packets / data is sent twice.)
@@ -1077,58 +1033,25 @@ void file_accept(const int n,const int f)
 }
 
 void file_cancel(const int n,const int f)
-{ // Much redundancy in logic applies with file pause
+{ // Much redundancy in logic applies with file pause. For group file transfers, like a _PARTIAL, the message is broadcast to everyone.
 	if(n < 0 || f < 0)
 		return;
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
-	if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_COMPLETED || status == ENUM_FILE_OUTBOUND_REJECTED)
-	{
-		const int is_inbound = is_inbound_transfer(status);
-		if(owner == ENUM_OWNER_GROUP_CTRL && is_inbound)
-		{ // Send cancel to all peers sending us data and unclaim relevant sections.
-			torx_read(n) // XXX
-			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
-			{
-				torx_unlock(n) // XXX
-				return;
-			}
-			for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
-			{
-				const int peer_n = peer[n].file[f].split_status_n[section];
-				if(peer_n > -1)
-				{
-					torx_unlock(n) // XXX
-					message_send(peer_n,ENUM_PROTOCOL_FILE_CANCEL,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
-					if(status == ENUM_FILE_INBOUND_ACCEPTED)
-						section_unclaim(n,f,peer_n,-1);
-					torx_read(n) // XXX
-				}
-			}
-			torx_unlock(n) // XXX
-		}
-		else// if(is_inbound)
-		{
-			message_send(n,ENUM_PROTOCOL_FILE_CANCEL,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
-			if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED)
-				section_unclaim(n,f,-1,-1);
-		}
-		sodium_memzero(checksum,sizeof(checksum));
-		process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL); // set status and close file descriptors, must be set AFTER section_unclaim
-		if(status == ENUM_FILE_INBOUND_PENDING || status == ENUM_FILE_INBOUND_ACCEPTED)
-		{ // these are old statuses, which would have been changed by process_pause_cancel, so be aware not to read fresh here
-			char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
-			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
-			torx_free((void*)&file_path);
-			split_update(n,f,-1); // destroys split file and frees/nulls resources
-		}
-		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
-		transfer_progress(n,f,last_transferred); // trigger a stall // TODO TODO TODO is this too early? should it be after process_pause_cancel?
+	const int is_active = file_is_active(n,f); // Should be before we do anything. This is "was_active"
+	message_send(n,ENUM_PROTOCOL_FILE_CANCEL,checksum,CHECKSUM_BIN_LEN);
+	sodium_memzero(checksum,sizeof(checksum));
+	section_unclaim(n,f,-1,-1); // Calling this regardless of is_active to avoid potential race conditons. Only relevant to ENUM_FILE_ACTIVE_IN / ENUM_FILE_ACTIVE_IN_OUT
+	process_pause_cancel(n,f,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL); // set status and close file descriptors, must be set AFTER section_unclaim
+	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
+	{ // these are old statuses, which would have been changed by process_pause_cancel, so be aware not to read fresh here
+		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
+		torx_free((void*)&file_path);
+		split_update(n,f,-1); // destroys split file and frees/nulls resources
 	}
-	else
-		error_printf(0,"Attempted file_cancel on file with unrecognized status: %u. UI Coding error. Report this to UI devs.",status);
+	const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
+	transfer_progress(n,f,last_transferred); // trigger a stall // should probably be after process_pause_cancel
 }
 
 static inline void *file_init(void *arg)

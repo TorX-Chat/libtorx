@@ -1144,23 +1144,17 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							torx_free((void*)&file_path);
 							split_update(file_n,f,-1); // destroys split file and frees/nulls resources
 						}
-						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && split_hashes && is_inbound_transfer(file_status))
-						{ // Group transfer (non-pm). Build a fake 0/0/0/0 offer to process, as if we received it from peer, to show peer is now offering nothing
-							const int p_iter_partial = protocol_lookup(ENUM_PROTOCOL_FILE_OFFER_PARTIAL);
-							const uint8_t splits = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-							const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
-							char fake_message[FILE_OFFER_PARTIAL_LEN];
-							torx_read(file_n) // XXX
-							memcpy(fake_message,peer[file_n].file[f].checksum,CHECKSUM_BIN_LEN); // checksum
-							*(uint8_t*)(void*)&fake_message[CHECKSUM_BIN_LEN] = splits; // splits
-							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[file_n].file[f].split_hashes,split_hashes_len); // split hashes
-							uint64_t trash = htobe64(peer[file_n].file[f].size); // size
-							memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash,sizeof(trash)); // size
-							torx_unlock(file_n) // XXX
-							trash = htobe64(0);
-							for(int16_t section = 0; section <= splits; section++) // 0/0/0/0
-								memcpy(&fake_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)*(size_t)section],&trash,sizeof(trash));
-							process_file_offer_inbound(event_strc->n,p_iter_partial,fake_message,FILE_OFFER_PARTIAL_LEN);
+						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && split_hashes)
+						{ // Group transfer (non-pm)
+							const int o = set_o(file_n,f,event_strc->n);
+							if(o > -1)
+							{
+								const uint8_t splits = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+								torx_write(file_n) // XXX
+								for(int16_t section = 0; section <= splits; section++)
+									peer[file_n].file[f].offer[o].offer_progress[section] = 0;
+								torx_unlock(file_n) // XXX
+							}
 						}
 						const uint64_t last_transferred = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[event_strc->n].file[f].last_transferred;
 						transfer_progress(file_n,f,last_transferred); // triggering a stall
