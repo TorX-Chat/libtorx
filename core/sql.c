@@ -1153,7 +1153,30 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const char *extraneous;
 		uint32_t extraneous_len = (uint32_t)sqlite3_column_bytes(stmt, 8);
 		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
-			process_pause_cancel(n,set_f(n,(const unsigned char *)message,CHECKSUM_BIN_LEN),protocol,message_stat);
+		{ // Probably important to verify !offset
+			if(offset)
+				continue; // This highly likely will screw up a file's status, so we must ignore it.
+			int file_n = n;
+			int f = -1;
+			if(owner == ENUM_OWNER_GROUP_PEER)
+			{ // First check if its a PM transfer
+				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
+				if(f < 0)
+				{ // Second, assume it's a group transfer
+					const int g = set_g(n,NULL);
+					file_n = getter_group_int(g,offsetof(struct group_list,n));
+					if(file_n < 0)
+					{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
+						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",file_n,protocol);
+						continue;
+					}
+					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+				}
+			}
+			else
+				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+			process_pause_cancel(file_n,f,protocol,message_stat);
+		}
 		if(extraneous_len)
 		{
 			int file_n = n;

@@ -1134,7 +1134,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						const unsigned char *split_hashes = peer[file_n].file[f].split_hashes;
 						torx_unlock(file_n) // XXX
 						section_unclaim(file_n,f,event_strc->n,-1); // must go before process_pause_cancel
-						if(split_hashes == NULL) // avoid triggering for group (non-pm) file transfer
+						if(event_strc->owner != ENUM_OWNER_GROUP_CTRL) // avoid triggering for group (non-pm) file transfer
 							process_pause_cancel(file_n,f,protocol,ENUM_MESSAGE_RECV);
 						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel // TODO DEPRECIATE FILE STATUS TODO
 						if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
