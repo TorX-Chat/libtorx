@@ -1886,10 +1886,11 @@ uint64_t calculate_transferred(const int n,const int f)
 	{ // Inbound
 		torx_read(n) // XXX
 		const uint64_t *split_progress = peer[n].file[f].split_progress;
-		torx_unlock(n) // XXX
 		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
+		{
+			torx_unlock(n) // XXX
 			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
-		torx_read(n) // XXX
+		}
 		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
 			transferred += peer[n].file[f].split_progress[section];
 		torx_unlock(n) // XXX
@@ -1898,7 +1899,10 @@ uint64_t calculate_transferred(const int n,const int f)
 	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
 		const int r = 0; // set_r(n,f,n); should be unnecessary because this isn't a group file transfer.
 		torx_read(n) // XXX
-		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
+		if(peer[n].file[f].request == NULL)
+			transferred = 0;
+		else
+			transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
 		torx_unlock(n) // XXX
 	}
 //	else
@@ -2200,12 +2204,12 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 		peer[n].max_i--; // ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
 }
 
-static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here
+static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].offer) before calling! XXX
 { // Note: We don't `.offer_n = -1` because it could cause issues in select_peer if this function was called from outside of zero_f
 	torx_free((void*)&peer[n].file[f].offer[o].offer_progress);
 }
 
-static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here
+static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].request) before calling! XXX
 { // Note: We don't `.requester_n = -1` because it will interfere with expand_request_struc
 //	peer[n].file[f].request[r].requester_n = -1;
 	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
@@ -2214,12 +2218,15 @@ static inline void zero_r(const int n,const int f,const int r) // XXX do not put
 }
 
 static inline void zero_f(const int n,const int f) // XXX do not put locks in here
-{
-	for(int o = 0 ; peer[n].file[f].offer[o].offerer_n > -1 ; o++)
-		zero_o(n,f,o);
-	for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
-		zero_r(n,f,r);
-//	torx_free((void*)&peer[n].file[f].offer); // fjadfweoifaf disabled because it might (likely will) break things when deleting peers. Let it free naturally on shutdown, no big loss.
+{ // see similarities in process_pause_cancel
+	if(peer[n].file[f].offer)
+		for(int o = 0 ; peer[n].file[f].offer[o].offerer_n > -1 ; o++)
+			zero_o(n,f,o);
+	if(peer[n].file[f].request)
+		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
+			zero_r(n,f,r);
+	torx_free((void*)&peer[n].file[f].offer);
+	torx_free((void*)&peer[n].file[f].request);
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
 	torx_free((void*)&peer[n].file[f].filename);
 	torx_free((void*)&peer[n].file[f].file_path);
@@ -3164,7 +3171,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	sodium_memzero(peer[n].file[f].last_speeds,sizeof(peer[n].file[f].last_speeds));
 	pthread_mutex_init(&peer[n].file[f].mutex_file, NULL);
 
-	peer[n].file[f].offer = torx_insecure_malloc(sizeof(struct offer_list) *11); // NOT freeing, just ignore the lost bytes. see: fjadfweoifaf
+	peer[n].file[f].offer = torx_insecure_malloc(sizeof(struct offer_list) *11);
 	peer[n].file[f].request = torx_insecure_malloc(sizeof(struct request_list) *11);
 	for(int j = 0; j < 11; j++) /* Initialize iter 0-10 */
 	{
@@ -3338,10 +3345,16 @@ static inline void expand_request_struc(const int n,const int f,const int r)
 { /* Expand request struct if our current r is unused && divisible by 10 */
 	if(n < 0 || f < 0 || r < 0)
 	{
-		error_simple(0,"expand_request_struc failed sanity check. Coding error. Report this.");
+		error_simple(0,"expand_request_struc failed sanity check1. Coding error. Report this.");
 		return;
 	}
 	torx_read(n) // XXX
+	if(peer[n].file[f].request == NULL)
+	{
+		torx_unlock(n) // XXX
+		error_simple(0,"expand_request_struc failed sanity check2. Coding error. Report this.");
+		return;
+	}
 	const int requester_n = peer[n].file[f].request[r].requester_n;
 	torx_unlock(n) // XXX
 	if(requester_n == -1 && r % 10 == 0)
@@ -3842,13 +3855,20 @@ int set_r(const int n,const int f,const int passed_requester_n)
 		return -1;
 	int r = 0;
 	torx_read(n) // XXX
+	if(peer[n].file[f].request == NULL)
+	{
+		torx_unlock(n) // XXX
+		error_simple(0,"Sanity check failure in set_r. Coding error. Report this.");
+		return -1;
+	}
 	for(int requester_n ; (requester_n = peer[n].file[f].request[r].requester_n) > -1 && requester_n != passed_requester_n ; )
 		r++; // check if offerer already exists in our struct
 	torx_unlock(n) // XXX
 	expand_request_struc(n,f,r); // Expand struct if necessary
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	torx_write(n) // XXX
-	peer[n].file[f].request[r].requester_n = passed_requester_n;
+	if(peer[n].file[f].request) // Necessary sanity check to avoid race conditions
+		peer[n].file[f].request[r].requester_n = passed_requester_n;
 	torx_unlock(n) // XXX
 	return r;
 }

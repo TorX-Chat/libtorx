@@ -345,11 +345,11 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		int8_t *split_status_fd;
 		uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
 		/* Exclusively Group related */
-		unsigned char *split_hashes; // secure malloc. XXX Existance == Group File, non-PM
+		unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM)
 		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock / torx_fd_unlock
-		struct offer_list {
+		struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
 			int offerer_n; // Do not reset to -1
-			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have.
+			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have. XXX ALWAYS DO NULL CHECK
 		} *offer;
 		time_t last_progress_update_time; // last time we updated progress bar
 		time_t last_progress_update_nstime; // last time we updated progress bar
@@ -360,7 +360,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint64_t last_speeds[256];
 		pthread_mutex_t mutex_file;
 		/* Exclusively Outbound transfer related */
-		struct request_list {
+		struct request_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .request is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
 			int requester_n; // Do not reset to -1
 			uint64_t start[2];
 			uint64_t end[2];
@@ -870,7 +870,7 @@ int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result)
 int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_pending(const int n,const int f)__attribute__((warn_unused_result));
-void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat);
+void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
 int peer_save(const char *unstripped_peerid,const char *peernick);
@@ -888,6 +888,8 @@ void block_peer(const int n);
 
 /* client_init.c */
 void DisableNagle(const evutil_socket_t sendfd);
+int file_remove_offer(const int file_n,const int f,const int peer_n);
+int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
 int message_resend(const int n,const int i);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);

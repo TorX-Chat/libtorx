@@ -100,7 +100,7 @@ int file_is_cancelled(const int n,const int f)
 { // Returns 1 if file is cancelled TODO When a file is cancelled, .request and such should be free'd
 	int cancelled = 0;
 	torx_read(n) // XXX
-	if(peer[n].file[f].request == NULL || peer[n].file[f].split_status_fd == NULL)
+	if(peer[n].file[f].request == NULL && peer[n].file[f].offer == NULL && peer[n].file[f].split_status_fd == NULL) // && etc...
 		cancelled = 1;
 	torx_unlock(n) // XXX
 	return cancelled;
@@ -112,13 +112,15 @@ int file_is_active(const int n,const int f)
 		return ENUM_FILE_INACTIVE;
 	int active = 0;
 	torx_read(n) // XXX
-	for(int8_t fd_type = 0 ; peer[n].file[f].request && fd_type < 2 && active == 0 ; fd_type++)
-		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 && active == 0 ; r++)
-			if(peer[n].file[f].request[r].end[fd_type] > peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type])
-				active += ENUM_FILE_ACTIVE_OUT; // Outbound active, 1
-	for(int16_t section = 0 ; peer[n].file[f].split_status_fd && section <= peer[n].file[f].splits && active < 2 ; section++)
-		if(peer[n].file[f].split_status_fd[section] > -1)
-			active += ENUM_FILE_ACTIVE_IN; // Inbound active, 2
+	if(peer[n].file[f].request)
+		for(int8_t fd_type = 0 ; fd_type < 2 && active == 0 ; fd_type++)
+			for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 && active == 0 ; r++)
+				if(peer[n].file[f].request[r].end[fd_type] > peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type])
+					active += ENUM_FILE_ACTIVE_OUT; // Outbound active, 1
+	if(peer[n].file[f].split_status_fd)
+		for(int16_t section = 0 ; section <= peer[n].file[f].splits && active < 2 ; section++)
+			if(peer[n].file[f].split_status_fd[section] > -1)
+				active += ENUM_FILE_ACTIVE_IN; // Inbound active, 2
 	torx_unlock(n) // XXX
 	return active;
 }
@@ -151,48 +153,134 @@ int file_is_pending(const int n,const int f)
 	return !(file_is_active(n,f) || file_is_complete(n,f));
 }
 
-void process_pause_cancel(const int n,const int f,const uint16_t protocol,const uint8_t message_stat)
-{ // XXX This WILL NOT properly handle group file shares. Also this function is one-way (to PENDING/CANCELLED/REJECTED), not a toggle.
-/*	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-	if(owner == ENUM_OWNER_GROUP_CTRL)
+static inline int remove_offer(const int file_n,const int f,const int peer_n)
+{
+	const int o = set_o(file_n,f,peer_n);
+	if(o > -1)
 	{
-		if(message_stat == ENUM_MESSAGE_RECV)
-			error_simple(0,"Received a pause or cancel on Group CTRL or with regards ");
-		else
-			error_simple(0,"");
+		torx_write(file_n) // XXX
+		if(peer[file_n].file[f].offer)
+			zero_o(file_n,f,o);
+		torx_unlock(file_n) // XXX
+		return 1;
+	}
+	return 0;
+}
+
+static inline int remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type)
+{
+	const int r = set_r(file_n,f,peer_n);
+	if(r > -1)
+	{
+		torx_write(file_n) // XXX
+		if(peer[file_n].file[f].request)
+		{ // Necessary sanity check to prevent race conditions
+			if(fd_type == 0 || fd_type == 1)
+			{
+				peer[file_n].file[f].request[r].start[fd_type] = 0;
+				peer[file_n].file[f].request[r].end[fd_type] = 0;
+				peer[file_n].file[f].request[r].transferred[fd_type] = 0;
+			}
+			else // if(fd_type == -1)
+				zero_r(file_n,f,r);
+		}
+		torx_unlock(file_n) // XXX
+		return 1;
+	}
+	return 0;
+}
+
+int file_remove_offer(const int file_n,const int f,const int peer_n)
+{ // modelled after section_unclaim(
+	if(file_n < 0 || peer_n < 0)
+	{ // All other things can be -1
+		error_simple(0,"file_remove_offer failed sanity check.");
+		return 0;
+	}
+	int removed_offers = 0;
+	if(f > -1) // Specific file
+		removed_offers += remove_offer(file_n,f,peer_n);
+	else
+	{ // All relevant files
+		torx_read(file_n) // XXX
+		for(int ff = 0 ; !is_null(peer[file_n].file[ff].checksum,CHECKSUM_BIN_LEN) ; ff++)
+		{
+			torx_unlock(file_n) // XXX
+			removed_offers += remove_offer(file_n,ff,peer_n);
+			torx_read(file_n) // XXX
+		}
+		torx_unlock(file_n) // XXX
+	}
+	return removed_offers;
+}
+
+int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type)
+{ // modelled after section_unclaim(
+	if(file_n < 0 || peer_n < 0)
+	{ // All other things can be -1
+		error_simple(0,"file_remove_request failed sanity check.");
+		return 0;
+	}
+	int removed_requests = 0;
+	if(f > -1) // Specific file
+		removed_requests += remove_request(file_n,f,peer_n,fd_type);
+	else
+	{ // All relevant files
+		torx_read(file_n) // XXX
+		for(int ff = 0 ; !is_null(peer[file_n].file[ff].checksum,CHECKSUM_BIN_LEN) ; ff++)
+		{
+			torx_unlock(file_n) // XXX
+			removed_requests += remove_request(file_n,ff,peer_n,fd_type);
+			torx_read(file_n) // XXX
+		}
+		torx_unlock(file_n) // XXX
+	}
+	return removed_requests;
+}
+
+void process_pause_cancel(const int file_n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat)
+{ // see similarities in zero_f
+	if(file_n < 0 || f < 0 || peer_n < 0 || (protocol != ENUM_PROTOCOL_FILE_PAUSE && protocol != ENUM_PROTOCOL_FILE_CANCEL))
+	{
+		error_printf(0,"Sanity check failed in process_pause_cancel: %u",protocol);
 		return;
-	}	*/
-	const uint8_t old_file_status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
-	uint8_t new_file_status = old_file_status;
-	if(protocol == ENUM_PROTOCOL_FILE_PAUSE)
-	{
-		if(old_file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
-			new_file_status = ENUM_FILE_OUTBOUND_PENDING;
-		else if(old_file_status == ENUM_FILE_INBOUND_ACCEPTED)
-			new_file_status = ENUM_FILE_INBOUND_PENDING;
 	}
-	else if(protocol == ENUM_PROTOCOL_FILE_CANCEL)
-	{
+	section_unclaim(file_n,f,peer_n,-1); // Calling this regardless of file_is_active to avoid potential race conditons. Only relevant to ENUM_FILE_ACTIVE_IN / ENUM_FILE_ACTIVE_IN_OUT
+	const int is_active = file_is_active(file_n,f); // Should be before we do anything. This is "was_active"
+	if(file_n == peer_n && protocol == ENUM_PROTOCOL_FILE_CANCEL)
+	{ // Cancel. Free everything *EXCEPT* checksum, filename, file_path, split_hashes, split_path. XXX DO NOT CALL zero_f.
+		torx_write(file_n) // XXX
+		if(peer[file_n].file[f].offer)
+			for(int o = 0 ; peer[file_n].file[f].offer[o].offerer_n > -1 ; o++)
+				zero_o(file_n,f,o);
+		if(peer[file_n].file[f].request)
+			for(int r = 0 ; peer[file_n].file[f].request[r].requester_n > -1 ; r++)
+				zero_r(file_n,f,r);
+		torx_free((void*)&peer[file_n].file[f].offer);
+		torx_free((void*)&peer[file_n].file[f].request);
+		torx_free((void*)&peer[file_n].file[f].split_progress);
+		torx_free((void*)&peer[file_n].file[f].split_status_n);
+		torx_free((void*)&peer[file_n].file[f].split_status_fd);
+		torx_free((void*)&peer[file_n].file[f].split_status_req);
+		torx_unlock(file_n) // XXX
+	}
+	else
+	{ // Pause
+		file_remove_request(file_n,f,peer_n,-1);
 		if(message_stat == ENUM_MESSAGE_RECV)
-		{
-			if(old_file_status == ENUM_FILE_OUTBOUND_PENDING || old_file_status == ENUM_FILE_OUTBOUND_ACCEPTED || old_file_status == ENUM_FILE_OUTBOUND_COMPLETED)
-				new_file_status = ENUM_FILE_OUTBOUND_REJECTED; // Outbound file recieved cancel --> _REJECTED
-			else if(old_file_status == ENUM_FILE_INBOUND_PENDING || old_file_status == ENUM_FILE_INBOUND_ACCEPTED/* || old_file_status == ENUM_FILE_INBOUND_COMPLETED*/)
-				new_file_status = ENUM_FILE_INBOUND_CANCELLED; // Inbound file recieved cancel --> _CANCELLED
-		}
-		else
-		{
-			if(old_file_status == ENUM_FILE_OUTBOUND_PENDING || old_file_status == ENUM_FILE_OUTBOUND_ACCEPTED || old_file_status == ENUM_FILE_OUTBOUND_COMPLETED || old_file_status == ENUM_FILE_OUTBOUND_REJECTED)
-				new_file_status = ENUM_FILE_OUTBOUND_CANCELLED; // Outbound file SENT cancel --> _CANCELLED
-			else if(old_file_status == ENUM_FILE_INBOUND_PENDING || old_file_status == ENUM_FILE_INBOUND_ACCEPTED/* || old_file_status == ENUM_FILE_INBOUND_COMPLETED*/)
-				new_file_status = ENUM_FILE_INBOUND_REJECTED; // Inbound file SENT cancel --> _REJECTED
+			file_remove_offer(file_n,f,peer_n);
+	}
+	if(file_n == peer_n)
+	{ // PM or P2P, or if *we* are pausing/cancelling a group transfer.
+		close_sockets(file_n,f)
+		if(protocol == ENUM_PROTOCOL_FILE_CANCEL && (is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)) // must go after close_sockets
+		{ // MUST only trigger on files that are actively inbound. DO NOT REMOVE THE CHECK for ACTIVE_IN/ACTIVE_IN_OUT
+			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
+			torx_free((void*)&file_path);
+			split_update(file_n,f,-1); // destroys split file and frees/nulls resources
 		}
 	}
-	if(new_file_status == old_file_status)
-		return; // no changes, no action.
-	setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&new_file_status,sizeof(new_file_status)); // TODO DEPRECIATE FILE STATUS TODO
-	if(new_file_status == ENUM_FILE_OUTBOUND_CANCELLED || new_file_status == ENUM_FILE_OUTBOUND_REJECTED || new_file_status == ENUM_FILE_INBOUND_CANCELLED || new_file_status == ENUM_FILE_INBOUND_REJECTED)
-		close_sockets(n,f)
 }
 
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path)
@@ -357,18 +445,23 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		if(o > -1)
 		{
 			torx_write(group_n) // XXX
-			if(peer[group_n].file[f].offer[o].offer_progress == NULL)
-				peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
-			if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-				for(int16_t section = 0; section <= splits; section++)
-					peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
+			if(peer[group_n].file[f].offer)
+			{ // Sanity check
+				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
+					peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
+				if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+					for(int16_t section = 0; section <= splits; section++)
+						peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
+				else
+					for(int16_t section = 0; section <= splits; section++)
+					{ // setting every section to 100% because this offer type is of a complete file
+						uint64_t end = 0;
+						const uint64_t start = calculate_section_start(&end,size,splits,section);
+						peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
+					}
+			}
 			else
-				for(int16_t section = 0; section <= splits; section++)
-				{ // setting every section to 100% because this offer type is of a complete file
-					uint64_t end = 0;
-					const uint64_t start = calculate_section_start(&end,size,splits,section);
-					peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
-				}
+				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.");
 			torx_unlock(group_n) // XXX
 			if(status == ENUM_FILE_INBOUND_ACCEPTED)
 				file_request_internal(group_n,f,-1);
@@ -816,7 +909,7 @@ static inline int split_read(const int n,const int f)
 }
 
 int initialize_split_info(const int n,const int f)
-{ // Should read split file and set the details, or create and initialize split file ( as 0,0,0,0,etc ). File is in binary format. Checksum,nos,split_progress.
+{ // Should read split file and set the details, or create and initialize split file ( as 0,0,0,0,etc ). File is in binary format. Checksum,nos,split_progress. XXX DO NOT CALL UNLESS ACCEPTING FILE, or a cancelled file can be uncancelled.
 	const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
 	torx_read(n) // XXX
 	if(peer[n].file[f].split_path && peer[n].file[f].split_progress)
@@ -890,6 +983,7 @@ void split_update(const int n,const int f,const int16_t section)
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
 	const char *split_path = peer[n].file[f].split_path;
+	const uint64_t *split_progress = peer[n].file[f].split_progress;
 	torx_unlock(n) // XXX
 	if(splits == 0 || split_path == NULL)
 		return;
@@ -910,7 +1004,7 @@ void split_update(const int n,const int f,const int16_t section)
 		torx_unlock(n) // XXX
 		return;
 	}
-	if(section > -1) // sanity check, should be unnecessary
+	if(section > -1 && split_progress) // sanity check, should be unnecessary
 	{
 		FILE *fp;
 		if((fp = fopen(split_path,"r+")) == NULL)
@@ -922,11 +1016,16 @@ void split_update(const int n,const int f,const int16_t section)
 			}
 		torx_free((void*)&split_path);
 		torx_read(n) // XXX
-		const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
-		torx_unlock(n) // XXX
-		fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
-		fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
-		close_sockets_nolock(fp);
+		if(peer[n].file[f].split_progress)
+		{ // Sanity check to prevent race condition
+			const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
+			torx_unlock(n) // XXX
+			fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
+			fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
+			close_sockets_nolock(fp);
+		}
+		else
+			torx_unlock(n) // XXX
 	}
 }
 
@@ -936,11 +1035,19 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		return;
 	if(n < 0 || f < 0 || fd_type < 0 || section < 0 || peer_n < 0)
 	{
-		error_simple(0,"Sanity check failure in section_update. Coding error. Report this.");
+		error_simple(0,"Sanity check failure in section_update1. Coding error. Report this.");
 		return;
 	}
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-	torx_write(n) // XXX yes, its a write, see +=
+	torx_write(n) // XXX yes, its a write, see += several lines later
+	const uint64_t *split_progress = peer[n].file[f].split_progress;
+	const uint64_t *split_status_req = peer[n].file[f].split_status_req;
+	if(split_progress == NULL || split_status_req == NULL)
+	{
+		torx_unlock(n) // XXX
+		error_simple(0,"Sanity check failure in section_update2. Coding error. Report this.");
+		return;
+	}
 	const uint64_t section_info_current = peer[n].file[f].split_progress[section] += wrote;
 	const uint64_t section_req_current = peer[n].file[f].split_status_req[section];
 	torx_unlock(n) // XXX
@@ -968,7 +1075,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				{ // Has been tested, works.
 					error_printf(0,"Bad section checksum: n=%d f=%d peer_n=%d sec=%u. Blacklisting peer and marking section as incomplete. Requesting from others, if available.",n,f,peer_n,section);
 					torx_write(n) // XXX
-					peer[n].file[f].split_progress[section] = 0;
+					if(peer[n].file[f].split_progress) // sanity check to prevent race condition
+						peer[n].file[f].split_progress[section] = 0;
 					torx_unlock(n) // XXX
 					torx_write(peer_n) // XXX
 					peer[peer_n].blacklisted++;

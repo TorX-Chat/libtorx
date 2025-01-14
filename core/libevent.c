@@ -151,6 +151,19 @@ static inline void peer_online(struct event_strc *event_strc)
 		}
 }
 
+static inline void consider_transfers_paused(struct event_strc *event_strc)
+{ // TODO Question: we typically call section_unclaim before we call file_remove_request. Is that the ideal order?
+	if(!event_strc) // Sanity check
+		return;
+	if(event_strc->group_n > -1) // Unclaim any sections on this socket. (should go last)
+	{
+		section_unclaim(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound Group transfers from this peer
+		file_remove_request(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound Group transfers to this peer
+	}
+	section_unclaim(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound PM or P2P transfers from this peer
+	file_remove_request(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound PM or P2P transfers to this peer
+}
+
 static inline void peer_offline(struct event_strc *event_strc)
 { // Internal Function only. Use the callback. Could combine with peer_online() to be peer_online_change() and peer_online_change_cb()
 	if(!event_strc) // Sanity check
@@ -201,8 +214,7 @@ static inline void peer_offline(struct event_strc *event_strc)
 			}
 		}
 	}
-	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER)
-		section_unclaim(event_strc->n,-1,-1,event_strc->fd_type); // Unclaim any sections on this socket. (should go last)
+	consider_transfers_paused(event_strc);
 }
 
 /*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *arg)
@@ -358,37 +370,43 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 			{
 				const int f = packet_f_i;
 				const int r = set_r(packet_file_n,f,event_strc->n);
-				torx_write(packet_file_n) // XXX
-				peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16; // const uint64_t this_r =
-				torx_unlock(packet_file_n) // XXX
-				const uint64_t transferred = calculate_transferred(packet_file_n,f);
-			//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
-				torx_read(packet_file_n) // XXX
-				uint8_t file_status = peer[packet_file_n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
-				const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
-				const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
-				torx_unlock(packet_file_n) // XXX
-				if(current_pos == current_end)
+				if(r > -1)
 				{
-					error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
-					close_sockets(packet_file_n,f)
-					const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
-					if(transferred >= size) // All Requested Sections Fully Completed
-					{
-						if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
-							error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
-						file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
-						setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO DEPRECIATE FILE STATUS TODO
+					torx_write(packet_file_n) // XXX
+					if(peer[packet_file_n].file[f].request)
+					{ // Necessary sanity check to prevent race conditions
+						peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16; // const uint64_t this_r =
+						uint8_t file_status = peer[packet_file_n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
+						const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
+						const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
+						torx_unlock(packet_file_n) // XXX
+						const uint64_t transferred = calculate_transferred(packet_file_n,f);
+					//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
+						if(current_pos == current_end)
+						{
+							error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
+							close_sockets(packet_file_n,f)
+							const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
+							if(transferred >= size) // All Requested Sections Fully Completed
+							{
+								if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
+									error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
+								file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
+								setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO DEPRECIATE FILE STATUS TODO
+							}
+							transfer_progress(packet_file_n,f,transferred);
+						}
+						else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
+						{
+							transfer_progress(packet_file_n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
+							send_prep(event_strc->n,packet_file_n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
+						}
+						else // Ceasing send due to status change
+							error_printf(0,"Ceasing to send file file_n=%d f=%d status=%u",packet_file_n,f,file_status);
 					}
-					transfer_progress(packet_file_n,f,transferred);
+					else
+						torx_unlock(packet_file_n) // XXX
 				}
-				else if(file_status == ENUM_FILE_OUTBOUND_ACCEPTED)
-				{
-					transfer_progress(packet_file_n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
-					send_prep(event_strc->n,packet_file_n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
-				}
-				else // Ceasing send due to status change
-					error_printf(0,"Ceasing to send file file_n=%d f=%d status=%u",packet_file_n,f,file_status);
 			}
 			else
 			{ // All protocols that contain a message size on the first packet of a message
@@ -707,11 +725,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				memcpy(&trash_start,&read_buffer[cur],8);
 				cur += 8; // 8 --> 16
 				uint64_t packet_start = be64toh(trash_start);
-				torx_read(file_n) // XXX
-				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
-				torx_unlock(file_n) // XXX
-				if(split_progress == NULL)
-					initialize_split_info(file_n,f);
 				const uint64_t size = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
 				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
 				const int16_t section = section_determination(size,splits_nn,packet_start);
@@ -723,15 +736,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				uint64_t section_end = 0;
 				const uint64_t section_start = calculate_section_start(&section_end,size,splits_nn,section);
 				torx_read(file_n) // XXX
-				const int *split_status_n = peer[file_n].file[f].split_status_n;
-				const int8_t *split_status_fd = peer[file_n].file[f].split_status_fd;
-				torx_unlock(file_n) // XXX
-				if(split_status_n == NULL || split_status_fd == NULL)
-				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second
-					error_simple(0,"Peer asked us to a file without initialized split_status. Coding error. Report this. Bailing.");
+				if(peer[file_n].file[f].split_status_n == NULL || peer[file_n].file[f].split_status_fd == NULL || peer[file_n].file[f].split_progress == NULL)
+				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second.
+					torx_unlock(file_n) // XXX
+					error_simple(0,"Peer asked us to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
 					continue;
 				}
-				torx_read(file_n) // XXX
 				const uint64_t section_info_current = peer[file_n].file[f].split_progress[section];
 				const int8_t relevant_split_status_fd = peer[file_n].file[f].split_status_fd[section];
 				const int relevant_split_status = peer[file_n].file[f].split_status_n[section];
@@ -749,10 +759,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
-					if(split_status_n && split_status_fd)
-						error_printf(0,"Checkpoint improper: %d %d , n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",split_status_n ? 1 : 0,split_status_fd ? 1 : 0,event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
-					else
-						error_printf(0,"Checkpoint improper split_status_n and/or split_status_fd null\n");
+					error_printf(0,"Checkpoint improper: n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
 				//	breakpoint();
 				/*	if(!sent_pause++)
 					{
@@ -1097,12 +1104,18 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
 						const int r = set_r(file_n,f,event_strc->n);
-						torx_write(file_n) // XXX
-						peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
-						peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
-						peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
-						peer[file_n].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
-						torx_unlock(file_n) // XXX
+						if(r > -1)
+						{
+							torx_write(file_n) // XXX
+							if(peer[file_n].file[f].request)
+							{ // Necessary sanity check to prevent race condition
+								peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
+								peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
+								peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
+								peer[file_n].file[f].status = ENUM_FILE_OUTBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
+							}
+							torx_unlock(file_n) // XXX
+						}
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
 						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,event_strc->owner,event_strc->n,event_strc->fd_type);
@@ -1130,34 +1143,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"Received a pause or cancel for an unknown file. Bailing out.");
 							continue;
 						}
-						torx_read(file_n) // XXX
-						const unsigned char *split_hashes = peer[file_n].file[f].split_hashes;
-						torx_unlock(file_n) // XXX
-						section_unclaim(file_n,f,event_strc->n,-1); // must go before process_pause_cancel
-						if(event_strc->owner != ENUM_OWNER_GROUP_CTRL) // avoid triggering for group (non-pm) file transfer
-							process_pause_cancel(file_n,f,protocol,ENUM_MESSAGE_RECV);
-						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // must go after process_pause_cancel // TODO DEPRECIATE FILE STATUS TODO
-						if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_status == ENUM_FILE_INBOUND_CANCELLED)
-						{ // Delete partial inbound files + split. Must go after process_pause_cancel (which sets file_status and closes fd)
-							char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
-							destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
-							torx_free((void*)&file_path);
-							split_update(file_n,f,-1); // destroys split file and frees/nulls resources
-						}
-						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && split_hashes)
-						{ // Group transfer (non-pm)
-							const int o = set_o(file_n,f,event_strc->n);
-							if(o > -1)
-							{
-								const uint8_t splits = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
-								torx_write(file_n) // XXX
-								for(int16_t section = 0; section <= splits; section++)
-									peer[file_n].file[f].offer[o].offer_progress[section] = 0;
-								torx_unlock(file_n) // XXX
-							}
-						}
-						const uint64_t last_transferred = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));// peer[event_strc->n].file[f].last_transferred;
-						transfer_progress(file_n,f,last_transferred); // triggering a stall
+						process_pause_cancel(file_n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
 					}
 					else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start

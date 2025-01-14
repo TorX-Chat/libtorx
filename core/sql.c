@@ -1175,7 +1175,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			}
 			else
 				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
-			process_pause_cancel(file_n,f,protocol,message_stat);
+			process_pause_cancel(file_n,f,n,protocol,message_stat);
 		}
 		if(extraneous_len)
 		{
@@ -1225,12 +1225,13 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				{
 					initialize_split_info(file_n,f);
 					torx_read(file_n) // XXX
-					if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress[0] == 0)
+					if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
 					{ // 2024/05/12 Setting transferred amount according to file size. This might be depreciated (2025/01/13).
 						torx_unlock(file_n) // XXX
 						const uint64_t size_on_disk = get_file_size(file_path);
 						torx_write(file_n) // XXX
-						peer[file_n].file[f].split_progress[0] = size_on_disk;
+						if(peer[file_n].file[f].split_progress) // sanity check
+							peer[file_n].file[f].split_progress[0] = size_on_disk;
 					}
 					torx_unlock(file_n) // XXX
 				}

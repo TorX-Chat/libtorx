@@ -169,9 +169,18 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		{ // only f is initialized
 			const int r = set_r(file_n,f,n);
+			if(r < 0) // probably .request is NULL
+				goto error;
 			uint16_t data_size = PACKET_SIZE_MAX-16;
 			torx_fd_lock(file_n,f)
 			torx_read(file_n) // XXX
+			if(peer[file_n].file[f].request == NULL)
+			{ // Necessary sanity check to avoid race conditions
+				torx_unlock(file_n) // XXX
+				torx_fd_unlock(file_n,f) // XXX
+				error_simple(0,"Send_prep sanity check failure. Something is NULL. File may be cancelled. Possible coding error. Report this.");
+				goto error;
+			}
 			FILE *fd_active = peer[file_n].file[f].fd;
 			start = peer[file_n].file[f].request[r].start[fd_type] + peer[file_n].file[f].request[r].transferred[fd_type];
 		//	printf("Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu\n",file_n,f,fd_type,r,start); // TODO remove
