@@ -3323,7 +3323,11 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 		error_simple(0,"expand_offer_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	const int offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n));
+	int offerer_n = -2; // must not initialize as -1
+	torx_read(n) // XXX
+	if(peer[n].file[f].offer)
+		offerer_n = peer[n].file[f].offer[o].offerer_n;
+	torx_unlock(n) // XXX
 	if(offerer_n == -1 && o % 10 == 0)
 	{
 		torx_write(n) // XXX
@@ -3840,12 +3844,23 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 { // set offer iterator
 	if(n < 0 || f < 0 || passed_offerer_n < 0)
 		return -1;
-	int o = 0;
-	for(int offerer_n ; (offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) > -1 && offerer_n != passed_offerer_n ; )
-		o++; // check if offerer already exists in our struct
-	expand_offer_struc(n,f,o); // Expand struct if necessary
-	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
-	setter(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n),&passed_offerer_n,sizeof(passed_offerer_n));
+	int o = -1;
+	torx_read(n) // XXX
+	if(peer[n].file[f].offer)
+	{ // necessary sanity check to prevent race conditions
+		o = 0;
+		while(peer[n].file[f].offer[o].offerer_n > -1 && peer[n].file[f].offer[o].offerer_n != passed_offerer_n)
+			o++; // check if offerer already exists in our struct
+	}
+	torx_unlock(n) // XXX
+	if(o > -1)
+	{
+		expand_offer_struc(n,f,o); // Expand struct if necessary
+		torx_write(n) // XXX
+		if(peer[n].file[f].offer) // necessary sanity check to prevent race conditions
+			peer[n].file[f].offer[o].offerer_n = passed_offerer_n; // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
+		torx_unlock(n) // XXX
+	}
 	return o;
 }
 

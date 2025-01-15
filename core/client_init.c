@@ -144,7 +144,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 		}
 		torx_unlock(n) // XXX
 	}
-	if(!active_transfers_ongoing)
+	if(!active_transfers_ongoing && f > -1)
 	{ // call transfer_progress with .last_transferred to trigger a stall
 		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
 		transfer_progress(n,f,last_transferred);
@@ -724,8 +724,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		int target_o = -1;
-		for(int offerer_n, o = 0 ; (offerer_n = getter_int(n,INT_MIN,f,o,offsetof(struct offer_list,offerer_n))) != -1 ; o++)
+		torx_read(n) // XXX
+		for(int offerer_n, o = 0 ; peer[n].file[f].offer && (offerer_n = peer[n].file[f].offer[o].offerer_n) != -1 ; o++)
 		{
+			torx_unlock(n) // XXX
 			const uint8_t sendfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
 			const uint8_t recvfd_connected = getter_uint8(offerer_n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
 			const uint8_t online = recvfd_connected + sendfd_connected;
@@ -790,7 +792,9 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 						file_request_strc.fd_type = 0;
 				}
 			}
+			torx_read(n) // XXX
 		}
+		torx_unlock(n) // XXX
 		if(target_n > -1)
 		{
 			if(getter_uint8(target_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
