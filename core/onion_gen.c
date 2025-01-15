@@ -366,7 +366,7 @@ static void *onion_gen(void *arg)
 		}
 		else
 			n = load_peer_struc(peer_index,serv_strc->owner,ENUM_STATUS_FRIEND,serv_strc->privkey,99,serv_strc->onion,serv_strc->peernick,NULL,NULL,NULL);
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 		if(!return_privkey && n > -1 && serv_strc->owner != ENUM_OWNER_GROUP_PEER) // sanity check of n returned by load_peer_struc
 		{
 			load_onion(n);

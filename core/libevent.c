@@ -133,19 +133,19 @@ static inline void peer_online(struct event_strc *event_strc)
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
 	const time_t last_seen = time(NULL); // current time
-	setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
+	setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 	peer_online_cb(event_strc->n);
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
-		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
 	if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound)) // XXX Experimental 2023/10/29: Might need to prevent FILE_REQUEST from being sent when we are potentially already receiving data... not sure if this will be an issue
-		for(int f = 0; getter_uint64(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,size)) > 0; f++)
+		for(int f = 0; getter_uint64(event_strc->n,INT_MIN,f,offsetof(struct file_list,size)) > 0; f++)
 		{
-			const uint8_t file_status = getter_uint8(event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
+			const uint8_t file_status = getter_uint8(event_strc->n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 			if(file_status == ENUM_FILE_INBOUND_ACCEPTED) // re-send request for previously accepted file
 				file_request_internal(event_strc->n,f,-1);
 		}
@@ -177,23 +177,23 @@ static inline void peer_offline(struct event_strc *event_strc)
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
 	const time_t last_seen = time(NULL); // current time
-	setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
+	setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 	peer_offline_cb(event_strc->n);
-	const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
-	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 	const uint8_t online = recvfd_connected + sendfd_connected;
-	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-	const int min_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = max_i; i >= min_i; i--) // We go through in reverse because we are deleting and possibly shrinking message struct.
 	{ // Run through messages and clean out stream messages as appropriate.
-		const int p_iter = getter_int(event_strc->n,i,-1,-1,offsetof(struct message_list,p_iter));
+		const int p_iter = getter_int(event_strc->n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter > -1)
 		{
 			pthread_rwlock_rdlock(&mutex_protocols);
@@ -203,8 +203,8 @@ static inline void peer_offline(struct event_strc *event_strc)
 			pthread_rwlock_unlock(&mutex_protocols);
 			if(stream)
 			{
-				const int8_t fd_type = getter_int8(event_strc->n,i,-1,-1,offsetof(struct message_list,fd_type));
-				const uint8_t stat = getter_uint8(event_strc->n,i,-1,-1,offsetof(struct message_list,stat));
+				const int8_t fd_type = getter_int8(event_strc->n,i,-1,offsetof(struct message_list,fd_type));
+				const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
 				if(((!socket_swappable && fd_type == event_strc->fd_type) || !online) && (stat == ENUM_MESSAGE_FAIL || (stat == ENUM_MESSAGE_SENT && !logged)))
 				{ // We don't need to delete them from disk because they aren't saved until sent. We shouldn't actually see any _SENT && !logged here.
 					torx_write(event_strc->n) // XXX
@@ -234,7 +234,7 @@ static inline void pipe_auth_and_request_peerlist(struct event_strc *event_strc)
 		return;
 	}
 	char peeronion[56+1];
-	getter_array(&peeronion,sizeof(peeronion),event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+	getter_array(&peeronion,sizeof(peeronion),event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 	message_send(event_strc->n,ENUM_PROTOCOL_PIPE_AUTH,peeronion,PIPE_AUTH_LEN);
 	sodium_memzero(peeronion,sizeof(peeronion));
 	if(event_strc->g > -1 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
@@ -249,7 +249,7 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 { // Handle Inbound ENUM_PROTOCOL_PIPE_AUTH. Returns n if valid, or -1 if invalid. Relies on message being signed.
 	int ret = -1;
 	char onion_group_n[56+1];
-	getter_array(&onion_group_n,sizeof(onion_group_n),event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+	getter_array(&onion_group_n,sizeof(onion_group_n),event_strc->n,INT_MIN,-1,offsetof(struct peer_list,onion));
 	if(event_strc->fd_type == 0 && event_strc->buffer_len == PIPE_AUTH_LEN + crypto_sign_BYTES && !memcmp(onion_group_n,event_strc->buffer,56))
 		ret = event_strc->n;
 	sodium_memzero(onion_group_n,sizeof(onion_group_n));
@@ -266,8 +266,8 @@ static inline void begin_cascade(struct event_strc *event_strc)
 		error_printf(0,"Sanity check failed in begin_cascade. Possible coding error. Report this. Owner=%u n=%d fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->n,event_strc->fd_type,socket_utilized,event_strc->authenticated);
 		return;
 	}
-	const int max_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-	const int min_i = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
+	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
 	{
 		torx_read(event_strc->n) // XXX
@@ -386,13 +386,13 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						{
 							error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
 							close_sockets(packet_file_n,f)
-							const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
+							const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,offsetof(struct file_list,size));
 							if(transferred >= size) // All Requested Sections Fully Completed
 							{
 								if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
 									error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
 								file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
-								setter(packet_file_n,INT_MIN,f,-1,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO DEPRECIATE FILE STATUS TODO
+								setter(packet_file_n,INT_MIN,f,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO DEPRECIATE FILE STATUS TODO
 							}
 							transfer_progress(packet_file_n,f,transferred);
 						}
@@ -428,7 +428,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						if(logged) // Logged stream messages are only logged after being sent
 						{
 							const uint8_t stat = ENUM_MESSAGE_SENT;
-							setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
+							setter(event_strc->n,i,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 							sql_insert_message(event_strc->n,i);
 						}
 						else
@@ -445,9 +445,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					{ // We don't need these messages anymore. They only need to be logged until sent. One day we can perhaps make them stream non-disgardable + !logged?
 						if(logged) // yes, it is
 						{
-							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-							const time_t time = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,time));
-							const time_t nstime = getter_time(event_strc->n,i,-1,-1,offsetof(struct message_list,nstime));
+							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+							const time_t time = getter_time(event_strc->n,i,-1,offsetof(struct message_list,time));
+							const time_t nstime = getter_time(event_strc->n,i,-1,offsetof(struct message_list,nstime));
 							sql_delete_message(peer_index,time,nstime);
 						}
 						torx_write(event_strc->n) // XXX
@@ -457,13 +457,13 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					else
 					{
 						const uint8_t stat = ENUM_MESSAGE_SENT;
-						setter(event_strc->n,i,-1,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
+						setter(event_strc->n,i,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 						sql_update_message(event_strc->n,i);
 						message_modified_cb(event_strc->n,i);
 						if(protocol == ENUM_PROTOCOL_KILL_CODE)
 						{ // Sent Kill Code
 							error_simple(1,"Successfully sent a kill code. Deleting peer.");
-							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 							takedown_onion(peer_index,1);
 						//	disconnect_forever(event_strc); // this prevents the send from finishing, so instead we rely on connection error to break libevent main loop
 						}
@@ -480,7 +480,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				}
 				else if(pos > message_len)
 				{ // If this triggers, enable FSojoasfoSO lines for debugging. In the past, it was due to send_prep being called twice on the same n,i pair.
-					const uint8_t stat = getter_uint8(event_strc->n,i,-1,-1,offsetof(struct message_list,stat));
+					const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
 					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%ld nstime=%ld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,packet_time,packet_nstime,name);
 					pthread_rwlock_rdlock(&mutex_packet);
 					for(int ooo = 0 ; ooo <= highest_ever_o ; ooo++)
@@ -533,9 +533,9 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 	{
 		if(event_strc->fresh_n > -1) // sanity check of n returned by load_onion()
 		{
-			const uint8_t status_fresh = getter_uint8(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+			const uint8_t status_fresh = getter_uint8(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,status));
 			char peeronion[56+1];
-			getter_array(&peeronion,sizeof(peeronion),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&peeronion,sizeof(peeronion),event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			if(status_fresh == ENUM_STATUS_FRIEND)
 				error_printf(3,"Handshake occured. Peer saved as %s on friends list.",peeronion);
 			else if(status_fresh == ENUM_STATUS_PENDING)
@@ -543,21 +543,21 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 				error_printf(3,"Handshake occured. Peer saved as %s on pending list.",peeronion);
 				incoming_friend_request_cb(event_strc->fresh_n);
 			}
-			const uint16_t peerversion = getter_uint16(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+			const uint16_t peerversion = getter_uint16(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 			char privkey[88+1];
-			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
+			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,privkey));
 			char *peernick = getter_string(NULL,event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			const int peer_index_fresh = sql_insert_peer(ENUM_OWNER_CTRL,status_fresh,peerversion,privkey,peeronion,peernick,0);
 			torx_free((void*)&peernick);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			sodium_memzero(privkey,sizeof(privkey));
-			setter(event_strc->fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index_fresh,sizeof(peer_index_fresh));
+			setter(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index_fresh,sizeof(peer_index_fresh));
 			sql_update_peer(event_strc->fresh_n);
 			peer_new_cb(event_strc->fresh_n);
 		}
 		if(event_strc->owner == ENUM_OWNER_SING) //do not call disconnect_forever(event_strc); need to respond
 		{
-			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,1); // XXX NOTE: n is just going to show 000000 after takedown(onion,1) and be useless.
 			disconnect_forever(event_strc);
 			return;
@@ -565,7 +565,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 	}
 	else // SING and MULT don't use the packet struct, so there is nothing to remove
 		packet_removal(event_strc,0);
-	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // Must be after packet_removal
 		error_simple(0,"Peer is not a friend. Disconnecting from write_finished.");
@@ -577,7 +577,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 static void close_conn(struct bufferevent *bev, short events, void *ctx)
 { /* Peer closes connection, or we do. (either of us closes software) */
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	error_printf(0,YELLOW"Close_conn: n=%d fd_type=%d owner=%u status=%u"RESET,event_strc->n,event_strc->fd_type,event_strc->owner,status);
 	if(events & BEV_EVENT_ERROR)
 	{ // 2024/02/20 happened during outbound file transfer when peer (or we) went offline
@@ -597,7 +597,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	else if(event_strc->owner == ENUM_OWNER_SING) // NOTE: this doesnt trigger for successful handshakes because .owner becomes 0000
 	{
 		error_simple(0,"Spoiled onion due to close.");
-		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,3);
 		disconnect_forever(event_strc); // Run last, will exit event base
 	}
@@ -633,7 +633,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 static void read_conn(struct bufferevent *bev, void *ctx)
 { // Message Received // Followed by write_finished() in the case of incoming friend requests.
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // ENUM_STATUS_FRIEND seems to include active SING/MULT
 		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // TODO 2024/09/28 happens after blocks or deletion, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
@@ -725,8 +725,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				memcpy(&trash_start,&read_buffer[cur],8);
 				cur += 8; // 8 --> 16
 				uint64_t packet_start = be64toh(trash_start);
-				const uint64_t size = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
-				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+				const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
+				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
 				const int16_t section = section_determination(size,splits_nn,packet_start);
 				if(section < 0)
 				{ // Very necessary to check
@@ -764,7 +764,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				/*	if(!sent_pause++)
 					{
 						unsigned char checksum[CHECKSUM_BIN_LEN];
-						getter_array(&checksum,sizeof(checksum),event_strc->n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+						getter_array(&checksum,sizeof(checksum),event_strc->n,INT_MIN,f,offsetof(struct file_list,checksum));
 						message_send(event_strc->n,ENUM_PROTOCOL_FILE_PAUSE,checksum,CHECKSUM_BIN_LEN); // request the sender to stop sending
 						sodium_memzero(checksum,sizeof(checksum));
 						section_unclaim(event_strc->n,-1); // we dont know precisely what fd the file_pause will go out on, so unclaim all.
@@ -816,7 +816,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else
 				{
 					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
-					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
+					const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 					if(file_status == ENUM_FILE_INBOUND_ACCEPTED || file_status == ENUM_FILE_INBOUND_COMPLETED)
 						transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
@@ -908,10 +908,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								peer[event_strc->n].bev_recv = NULL; // 2nd, order important. do not free.
 								torx_unlock(event_strc->n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
 								event_strc->n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
-								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
+								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
 								const uint8_t recvfd_connected = 1; // important
 							//	printf("Checkpoint recvfd connected 1 n=%d\n",event_strc->n);
-								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
 								event_strc->authenticated = 1;
 								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_unlock(&mutex_expand); TODO */ 
@@ -997,7 +997,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						else
 						{ // Check signatures of non-group messages (known sender)
 							unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-							getter_array(&peer_sign_pk,sizeof(peer_sign_pk),event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
+							getter_array(&peer_sign_pk,sizeof(peer_sign_pk),event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
 							char *prefixed_message = affix_protocol_len(protocol,event_strc->buffer,event_strc->buffer_len - crypto_sign_BYTES);
 							if(crypto_sign_verify_detached((unsigned char *)&event_strc->buffer[event_strc->buffer_len - crypto_sign_BYTES],(unsigned char *)prefixed_message,2+4+event_strc->buffer_len - crypto_sign_BYTES,peer_sign_pk) != 0)
 							{
@@ -1021,7 +1021,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								event_strc->authenticated = 1;
 								const uint8_t recvfd_connected = 1;
 							//	printf("Checkpoint recvfd connected 2 n=%d\n",event_strc->n);
-								setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
 								peer_online(event_strc);
 								if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
@@ -1063,13 +1063,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"Received a request for an unknown file. Bailing out.");
 							continue;
 						}
-						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
+						const uint8_t file_status = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 						if(file_status != ENUM_FILE_OUTBOUND_PENDING && file_status != ENUM_FILE_OUTBOUND_ACCEPTED && file_status != ENUM_FILE_OUTBOUND_COMPLETED && file_status != ENUM_FILE_INBOUND_PENDING && file_status != ENUM_FILE_INBOUND_ACCEPTED && file_status != ENUM_FILE_INBOUND_COMPLETED)
 						{ // Do not modify without extensive testing and thinking
 							error_printf(0,"Peer requested a file that is of a status we're not willing to send: %d",file_status);
 							continue;
 						}
-						const uint64_t size = getter_uint64(file_n,INT_MIN,f,-1,offsetof(struct file_list,size));
+						const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 						const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
 						const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
 						char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
@@ -1084,14 +1084,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(file_status == ENUM_FILE_OUTBOUND_PENDING || file_status == ENUM_FILE_INBOUND_COMPLETED || file_status == ENUM_FILE_OUTBOUND_COMPLETED)
 						{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
 							struct stat file_stat = {0};
-							time_t modified = getter_time(file_n,INT_MIN,f,-1,offsetof(struct file_list,modified));
+							time_t modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified));
 							const int stat_ret = stat(file_path, &file_stat);
 							if(stat_ret || file_stat.st_mtime != modified)
 							{ // File cannot be accessed or has an unexpected modification time
 								if(!stat_ret && !modified && event_strc->owner == ENUM_OWNER_GROUP_PEER)
 								{ // Necessary
 									modified = file_stat.st_mtime;
-									setter(file_n,INT_MIN,f,-1,offsetof(struct file_list,modified),&modified,sizeof(modified));
+									setter(file_n,INT_MIN,f,offsetof(struct file_list,modified),&modified,sizeof(modified));
 								}
 								else
 								{
@@ -1153,11 +1153,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							continue;
 						}
 						const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
-						const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+						const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 						if(new_peerversion > peerversion)
 						{ // Note: currently not facilitating downgrades because we would have to take down sendfd
 							error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
-							setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
+							setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
 							sql_update_peer(event_strc->n);
 						/*	if(event_strc->fd_type == 0 && new_peerversion < 2)
 								event_strc->authenticated = 0; */
@@ -1207,7 +1207,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						else
 						{
 							unsigned char invitation[crypto_sign_BYTES];
-							getter_array(&invitation,sizeof(invitation),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation));
+							getter_array(&invitation,sizeof(invitation),group_n,INT_MIN,-1,offsetof(struct peer_list,invitation));
 							const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56];
 							pthread_rwlock_rdlock(&mutex_expand_group);
 							const int *peerlist = group[g].peerlist;
@@ -1217,9 +1217,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
 								{ // NOTE: race condition. Once we set the invitation, anyone else who accepts our invite ... umm... lost thought there.
 									unsigned char verification_message[56+crypto_sign_PUBLICKEYBYTES];
-									getter_array(verification_message,56,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+									getter_array(verification_message,56,group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 									unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-									getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
+									getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 									crypto_sign_ed25519_sk_to_pk(&verification_message[56],sign_sk);
 									sodium_memzero(sign_sk,sizeof(sign_sk));
 									// XXX 2023/10/21 I think we have no signed protocol to be checking here, because this is not a signed message... its different
@@ -1233,7 +1233,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									sodium_memzero(verification_message,sizeof(verification_message));
 									error_simple(2,"Receiving a valid group invitation signature.");
 									memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
-									setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
+									setter(group_n,INT_MIN,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
 									sql_update_peer(group_n);
 								}
 							//	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
@@ -1260,7 +1260,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								// TODO Prevent by not sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY unless we already sent them an offer. So, we need to track offers.
 									error_simple(2,"Receiving a group invitation signature.");
 									memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
-									setter(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
+									setter(group_n,INT_MIN,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
 									sql_update_peer(group_n);
 								}
 								unsigned char invitor_invitation[crypto_sign_BYTES];
@@ -1340,7 +1340,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(threadsafe_read_uint8(&mutex_global_variable,&kill_delete))
 						{
 							error_printf(0,"Received a kill code with reason: %s. Deleting peer.",event_strc->buffer);
-							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 							takedown_onion(peer_index,1);
 						}
 						else // just block, dont delete user and history (BAD IDEA)
@@ -1359,7 +1359,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							sodium_memzero(onion,sizeof(onion));
 							sodium_memzero(privkey,sizeof(privkey));
 							sodium_memzero(peeronion,sizeof(peeronion));
-							if(getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status)) != ENUM_STATUS_BLOCKED) // Note: Checking for safety because block_peer toggles, and we could receive two kill codes.
+							if(getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status)) != ENUM_STATUS_BLOCKED) // Note: Checking for safety because block_peer toggles, and we could receive two kill codes.
 								block_peer(event_strc->n); // this calls sql_update_peer, so no need to call again.
 						}
 						sodium_memzero(read_buffer,packet_len);
@@ -1463,7 +1463,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			else
 				trash = htobe16(torx_library_version[0]);
 			memcpy(&buffer_ln[0],&trash,sizeof(uint16_t));
-			getter_array(&buffer_ln[2],56,fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+			getter_array(&buffer_ln[2],56,fresh_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 			memcpy(&buffer_ln[2+56],ed25519_pk,sizeof(ed25519_pk));
 			if(local_debug > 2)
 				error_printf(3,"Received Version: %u Onion: %s",fresh_peerversion,fresh_peeronion);
@@ -1478,7 +1478,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		if(event_strc->owner == ENUM_OWNER_SING)
 		{ // Spoil SING after bad handshake
 			error_printf(0,"Wrong size connection attempt of size %lu received. Onion spoiled. Report this.",len);
-			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,3);// 2022/08/12, was ,2 but 2 is "delete without taking down". XXX If it says anything other than 250, put the 2 back, otherwise remove this.
 			disconnect_forever(event_strc);
 		}
@@ -1501,7 +1501,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	(void) address; // not using it, this just suppresses -Wextra warning
 	(void) socklen; // not using it, this just suppresses -Wextra warning
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND) // Disconnect if anything other than status 1
 	{
 		error_simple(0,"Coding error 32402. Report this.");
@@ -1536,7 +1536,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 			error_simple(1,"New potential peer has connected.");
 		const uint8_t recvfd_connected = 1;
 	//	printf("Checkpoint recvfd connected 3 n=%d\n",event_strc->n);
-		setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
+		setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 		if(event_strc->owner == ENUM_OWNER_CTRL)
 			begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
 		if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL)
@@ -1599,11 +1599,11 @@ void *torx_events(void *arg)
 			peer[event_strc->n].bev_send = bev_send;
 			torx_unlock(event_strc->n) // XXX
 			// TODO 0u92fj20f230fjw ... to here. TODO
-			const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+			const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue
 			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
 			const uint8_t sendfd_connected = 1;
-			setter(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
+			setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
 			if(event_strc->owner == ENUM_OWNER_CTRL)
 			{
 				uint8_t have_triggered_cascade = 0;
@@ -1623,10 +1623,10 @@ void *torx_events(void *arg)
 			}
 			else if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
 			{ // Put this in front of the queue.
-				const uint8_t stat = getter_uint8(event_strc->n,0,-1,-1,offsetof(struct message_list,stat));
+				const uint8_t stat = getter_uint8(event_strc->n,0,-1,offsetof(struct message_list,stat));
 				uint8_t first_connect = 0;
 				int p_iter;
-				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(event_strc->n,0,-1,-1,offsetof(struct message_list,p_iter))) > -1)
+				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(event_strc->n,0,-1,offsetof(struct message_list,p_iter))) > -1)
 				{ // Put queue skipping protocols first, if unsent, before pipe auth
 					pthread_rwlock_rdlock(&mutex_protocols);
 					const uint16_t protocol = protocols[p_iter].protocol;
@@ -1650,11 +1650,11 @@ void *torx_events(void *arg)
 		}
 		event_base_dispatch(base); // XXX this is the important loop... this is the blocker
 		peer_offline(event_strc);
-		const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+		const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 		if(status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL) && event_strc->fd_type == 0) // Its not an error for a 0'd (deleted) onion to get here.
 		{
-			const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-			const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+			const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 			error_printf(0,"Recv ctrl got out of base. It will die but this is unexpected. NOTE: fd_type recv should not get out unless deleted or blocked. sendfd: %d recvfd: %d owner: %u fd_type: %d",sendfd_connected,recvfd_connected,event_strc->owner,event_strc->fd_type); 	// NOTICE: ONLY SING AND PIPEMODE WILL EVER GET OUT OF BASE edit: i think no one gets out
 		}
 		break;

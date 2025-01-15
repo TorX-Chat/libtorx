@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 21 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 22 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -1145,7 +1145,7 @@ void message_remove(const int g,const int n,const int i)
 	}
 	else
 	{ // TODO 2024/02/24 unable to discern why some fail and some don't. (ie why some are in struct and others aren't -- review message_insert, message_sort)
-		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+		const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter < 0)
 			error_printf(0,"Sanity message_remove called on non-existant message. Coding error. Report this.");
 		else
@@ -1181,10 +1181,10 @@ void message_sort(const int g)
 	group[g].msg_count = 0;
 	pthread_rwlock_unlock(&mutex_expand_group);
 	struct msg_list *message_prior = NULL; // NOTE: this will change
-	const int group_n_max_i = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+	const int group_n_max_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	time_t time_last = 0;
 	time_t nstime_last = 0;
-	const int group_n_min_i = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	const int group_n_min_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = group_n_min_i; i < group_n_max_i + 1; i++)
 	{ // Do outbound messages on group_n. NOTE: For speed of insertion, we assume they are sequential. If that assumption is wrong, *MUST USE* message_insert instead.
 		torx_read(group_n) // XXX
@@ -1277,8 +1277,8 @@ void message_sort(const int g)
 time_t message_find_since(const int n)
 { // Helper function to get approximate age (for calling sql_populate_message with `since` arg) for group_pm (if GROUP_PEER) or group_msg (if GROUP_CTRL) messages of show_log_messages distance
 	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
-	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	char command_supplement[4096] = {0}; // size is somewhat arbitrary
 	time_t earliest_time = 0;
 	time_t earliest_nstime = 0;
@@ -1358,14 +1358,14 @@ time_t message_find_since(const int n)
 
 static inline void inline_load_array(const int g,const int n,int *loaded_array,const int loaded,const int freshly_loaded)
 {
-	const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i, discovered = 0; discovered < freshly_loaded ; i++)
 	{
-		const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+		const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter > -1)
 		{
-			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // do not pass this without thinking
-			const uint8_t message_stat = getter_uint8(n,i,-1,-1,offsetof(struct message_list,stat));
+			const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)); // do not pass this without thinking
+			const uint8_t message_stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t group_msg = protocols[p_iter].group_msg;
 			pthread_rwlock_unlock(&mutex_protocols);
@@ -1381,8 +1381,8 @@ static inline void inline_load_array(const int g,const int n,int *loaded_array,c
 
 int *message_load_more(int *count,const int n)
 {
-	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	int loaded = 0; // must initialize as 0
 	int g = -1;
 	int *loaded_array = NULL; // must initialize as NULL
@@ -1391,7 +1391,7 @@ int *message_load_more(int *count,const int n)
 		const time_t since = message_find_since(n); // YES, use n not group_n here because we respect what our caller is looking for
 		g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int group_n_peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+		const int group_n_peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		loaded_array = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
 		int freshly_loaded;
 		if((freshly_loaded = sql_populate_message(group_n_peer_index,0,0,since)))
@@ -1406,7 +1406,7 @@ int *message_load_more(int *count,const int n)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			if((freshly_loaded = sql_populate_message(peer_n_peer_index,0,0,since)))
 			{ // Do each GROUP_PEER
 				loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
@@ -1674,7 +1674,7 @@ static inline uint64_t calculate_average(const int n,const int f,const uint64_t 
 	else if(peer[n].file[f].average_speed < peer[n].file[f].bytes_per_second)
 		peer[n].file[f].average_speed += (uint64_t)((double)peer[n].file[f].bytes_per_second*smoothing);
 	return peer[n].file[f].average_speed;	*/
-//	const time_t last_progress_update_time = getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,last_progress_update_time));
+//	const time_t last_progress_update_time = getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time));
 //	if(last_progress_update_time == 0) // necessary to prevent putting in bad bytes_per_second data
 //		return 0;
 	uint64_t sum = 0;
@@ -1695,7 +1695,7 @@ static inline uint64_t calculate_average(const int n,const int f,const uint64_t 
 		average_speed = sum/included;
 	else
 		average_speed = 0;
-//	setter(n,INT_MIN,f,-1,offsetof(struct file_list,average_speed),&average_speed,sizeof(average_speed));
+//	setter(n,INT_MIN,f,offsetof(struct file_list,average_speed),&average_speed,sizeof(average_speed));
 	return average_speed;
 }
 
@@ -1704,7 +1704,7 @@ char *message_time_string(const int n,const int i)
 	if(n < 0)
 		return NULL;
 	// Convert Epoch Time to Human Readable
-	const time_t rawtime = getter_time(n,i,-1,-1,offsetof(struct message_list,time));
+	const time_t rawtime = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t diff = time(NULL) - rawtime; // comparing both in UTC
 	struct tm *info = localtime(&rawtime);
 	char *timebuffer = torx_insecure_malloc(20); // not sure whether there is value in having this secure. going to venture to say no.
@@ -1765,10 +1765,10 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 	time_t nstime_current = 0;
 	set_time(&time_current,&nstime_current);
 	torx_read(n) // XXX
-	const uint64_t size = peer[n].file[f].size; // getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
-	const uint64_t last_transferred = peer[n].file[f].last_transferred; // getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,last_transferred));
+	const uint64_t size = peer[n].file[f].size; // getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
+	const uint64_t last_transferred = peer[n].file[f].last_transferred; // getter_uint64(n,INT_MIN,f,offsetof(struct file_list,last_transferred));
 	const time_t last_progress_update_time = peer[n].file[f].last_progress_update_time;
-	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,-1,offsetof(struct file_list,last_progress_update_nstime));
+	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_nstime));
 	torx_unlock(n) // XXX
 	if(transferred == size)
 	{
@@ -1879,7 +1879,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 
 uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
 	const int is_active = file_is_active(n,f);
 	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
@@ -2324,7 +2324,7 @@ static inline void sort_n(int sorted_n[],const int size)
 	time_t last_time[size]; // things get moved around in here (will contain sorted selection)
 	for(int nn = 0; nn < size; nn++)
 	{
-		const uint8_t owner = getter_uint8(nn,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner = getter_uint8(nn,INT_MIN,-1,offsetof(struct peer_list,owner));
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
 			const int g = set_g(nn,NULL);
@@ -2340,9 +2340,9 @@ static inline void sort_n(int sorted_n[],const int size)
 			// TODO Consider: If GROUP_PEER, we should sort by last private message time. This would add (potentially lots of) CPU cycles though and would only be useful if we have a UI developer who wants to seperate private chats into a seperate sorted list.
 		else
 		{
-			const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
+			const int max_i = getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,max_i));
 			if(max_i > INT_MIN)
-				last_time[nn] = getter_time(nn,max_i,-1,-1,offsetof(struct message_list,time)); // last message time
+				last_time[nn] = getter_time(nn,max_i,-1,offsetof(struct message_list,time)); // last message time
 			else
 				last_time[nn] = 0;
 		}
@@ -2432,7 +2432,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 	int g = -1;
 	if(owner == ENUM_OWNER_GROUP_PEER && peer_status > -1)
 		g = peer_status;
-	while(getter_byte(nn,INT_MIN,-1,-1,offsetof(struct peer_list,onion)) != 0 || getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) > -1) // find number of onions / array size
+	while(getter_byte(nn,INT_MIN,-1,offsetof(struct peer_list,onion)) != 0 || getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,peer_index)) > -1) // find number of onions / array size
 		nn++;
 	if(nn == 0)
 	{ // 2023/10/16 added this... not sure if necessary
@@ -2454,12 +2454,12 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 				while(max--)
 				{
 					const int n = sorted_n[max];
-					const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-					const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+					const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+					const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
 					if(local_owner == owner && ((owner == ENUM_OWNER_CTRL && status == peer_status) || (owner == ENUM_OWNER_GROUP_PEER && (g == set_g(n,NULL)))))
 					{
-						const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-						const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+						const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+						const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 						char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 						if((search == NULL || mit_strcasestr(peernick,search) != NULL)\
 						&& ((z == 0 && (sendfd_connected > 0 && recvfd_connected > 0)) /* green */\
@@ -2483,8 +2483,8 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 			while(max--)
 			{
 				const int n = sorted_n[max];
-				const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-				const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+				const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+				const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
 				char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(local_owner == owner && status == peer_status && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 				{
@@ -2500,7 +2500,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 		int max = nn;
 		while(max--)
 		{ // effectively newest first order
-			const uint8_t owner_max = getter_uint8(max,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+			const uint8_t owner_max = getter_uint8(max,INT_MIN,-1,offsetof(struct peer_list,owner));
 			char *peernick = getter_string(NULL,max,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			if(owner_max == owner && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 			{
@@ -3268,19 +3268,19 @@ void re_expand_callbacks(void)
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	for(int n = 0; ; n += 10)
 	{
-		getter_array(&onion,1,n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
-		if(onion == '\0' && getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) < 0 && n%10 == 0 && n+10 > max_peer)
+		getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
+		if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n%10 == 0 && n+10 > max_peer)
 			break;
 		error_simple(0,"Checkpoint re_expand_callbacks n");
 		expand_peer_struc_cb(n);
 		for(int nn = n + 10; nn > n; nn--)
 		{
 			initialize_n_cb(nn);
-			const int max_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-			const int min_i = getter_int(nn,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+			const int max_i = getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,max_i));
+			const int min_i = getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,min_i));
 			for(int i = min_i; ; i += 10)
 			{
-				const int p_iter = getter_int(nn,i,-1,-1,offsetof(struct message_list,p_iter));
+				const int p_iter = getter_int(nn,i,-1,offsetof(struct message_list,p_iter));
 				if(p_iter == -1 && i % 10 == 0 && i + 10 > max_i + 1)
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks i");
@@ -3290,7 +3290,7 @@ void re_expand_callbacks(void)
 			}
 			for(int f = 0; ; f += 10)
 			{
-				getter_array(&checksum,sizeof(checksum),nn,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+				getter_array(&checksum,sizeof(checksum),nn,INT_MIN,f,offsetof(struct file_list,checksum));
 				if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN))
 					break;
 				error_simple(0,"Checkpoint re_expand_callbacks f");
@@ -3381,7 +3381,7 @@ static inline void expand_file_struc(const int n,const int f)
 		return;
 	}
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 	if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
 	{
 		torx_write(n) // XXX
@@ -3444,8 +3444,8 @@ static inline void expand_peer_struc(const int n)
 		return;
 	}
 	char onion = '\0';
-	getter_array(&onion,1,n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
-	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) < 0 && n % 10 == 0 && n + 10 > max_peer)
+	getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
+	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n % 10 == 0 && n + 10 > max_peer)
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
 		const size_t current_allocation_size = torx_allocation_len(peer);
@@ -3543,7 +3543,7 @@ int set_last_message(int *last_message_n,const int n,const int count_back)
 	int current_count_back = 0;
 	if(finalized_count_back < 1) // non-fatal sanity check
 		finalized_count_back = 0;
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Last message for a group
 		if(!last_message_n)
@@ -3557,7 +3557,7 @@ int set_last_message(int *last_message_n,const int n,const int count_back)
 		pthread_rwlock_unlock(&mutex_expand_group);
 		while(page)
 		{
-			const int p_iter = getter_int(page->n,page->i,-1,-1,offsetof(struct message_list,p_iter));
+			const int p_iter = getter_int(page->n,page->i,-1,offsetof(struct message_list,p_iter));
 			if(p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back)
 			{
 				*last_message_n = page->n;
@@ -3570,17 +3570,17 @@ int set_last_message(int *last_message_n,const int n,const int count_back)
 	}
 	else
 	{ // Last message for non-group
-		const int max_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,max_i));
-		const int min_i = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,min_i));
+		const int max_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,max_i));
+		const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 		int i = max_i;
 		if(i >= min_i)
 		{ // Critical check
-		//	for(int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)); threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) == 0 ; p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter)))
+		//	for(int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter)); threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) == 0 ; p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter)))
 		//		if(--i == -1) // do NOT modify. this should be --i, not i++
 		//			break;
 			while(1)
 			{ // DO NOT CHANGE ORDER OR LOGIC. The logic is complex
-				const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+				const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 				if(p_iter > -1 && threadsafe_read_uint8(&mutex_protocols,&protocols[p_iter].notifiable) && current_count_back++ == finalized_count_back)
 					break;
 				else if(--i < min_i)
@@ -3654,9 +3654,9 @@ int set_n(const int peer_index,const char *onion)
 	expand_peer_struc(n); // Expand struct if necessary
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	if(peer_index > -1)
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 	if(onion) // do NOT put 'else if'
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,onion),onion,strlen(onion)); // source is pointer. NOTE: strlen looks odd but it is in case we are looking up with only a partial
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,onion),onion,strlen(onion)); // source is pointer. NOTE: strlen looks odd but it is in case we are looking up with only a partial
 	return n;
 }
 
@@ -3674,7 +3674,7 @@ int set_g(const int n,const void *arg)
 	pthread_rwlock_rdlock(&mutex_expand_group); // XXX
 	if(n > -1)
 	{
-		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 		if(owner == ENUM_OWNER_GROUP_CTRL) // search for a GROUP_CTRL by n
 		{
 			while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && group[g].n != n)
@@ -3756,13 +3756,13 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 	}
 	int f = 0;
 	uint64_t size;
-//	while((size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size))) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
+//	while((size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size))) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
 //		f++; // check if file already exists in our struct
 	int cmp = 1;
-	for( ; (size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size))) ; f++)
+	for( ; (size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size))) ; f++)
 	{ // check if file already exists in our struct
 		unsigned char checksum_local[CHECKSUM_BIN_LEN];
-		getter_array(&checksum_local,sizeof(checksum_local),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+		getter_array(&checksum_local,sizeof(checksum_local),n,INT_MIN,f,offsetof(struct file_list,checksum));
 		cmp = memcmp(checksum_local,checksum,checksum_len);
 		sodium_memzero(checksum_local,sizeof(checksum_local));
 		if(!cmp) // prevent f++
@@ -3773,7 +3773,7 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 	expand_file_struc(n,f); // Expand struct if necessary
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	if(cmp) // does not exist yet at this n,f
-		setter(n,INT_MIN,f,-1,offsetof(struct file_list,checksum),checksum,checksum_len); // source is pointer
+		setter(n,INT_MIN,f,offsetof(struct file_list,checksum),checksum,checksum_len); // source is pointer
 	//	memcpy(peer[n].file[f].checksum,checksum,checksum_len);
 	return f;
 }
@@ -3782,7 +3782,7 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 { // Returns -1 if message protocol isn't group offer. Helper function to be used on Group Offers.
 	if(n < 0)
 		return -1;
-	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
@@ -3790,7 +3790,7 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(protocol != ENUM_PROTOCOL_GROUP_OFFER && protocol != ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 		return -1;
-	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
+	const uint32_t message_len = getter_uint32(n,i,-1,offsetof(struct message_list,message_len));
 	if((protocol == ENUM_PROTOCOL_GROUP_OFFER && message_len < GROUP_OFFER_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST && message_len < GROUP_OFFER_FIRST_LEN))
 		return -1;
 	char tmp_message[GROUP_ID_SIZE + sizeof(uint32_t)];
@@ -3811,10 +3811,10 @@ int set_f_from_i(int *file_n,const int n,const int i)
 		error_simple(0,"set_f_from_i sanity check failure. Coding error. Report this.");
 		return -1;
 	}
-	const uint32_t message_len = getter_uint32(n,i,-1,-1,offsetof(struct message_list,message_len));
+	const uint32_t message_len = getter_uint32(n,i,-1,offsetof(struct message_list,message_len));
 	if(message_len < CHECKSUM_BIN_LEN)
 		return -1;
-	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
@@ -3823,7 +3823,7 @@ int set_f_from_i(int *file_n,const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(!file_checksum)
 		return -1;
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER)
 	{
 		const int g = set_g(n,NULL);
@@ -3832,7 +3832,7 @@ int set_f_from_i(int *file_n,const int n,const int i)
 	else
 		*file_n = n;
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	getter_array(&checksum,sizeof(checksum),n,i,-1,-1,offsetof(struct message_list,message));
+	getter_array(&checksum,sizeof(checksum),n,i,-1,offsetof(struct message_list,message));
 	const int f = set_f(*file_n,checksum,sizeof(checksum)-1); // XXX MUST be -1 to detect errors, otherwise we'll reserve with potentially bad data.
 	sodium_memzero(checksum,sizeof(checksum));
 	if(f < 0) // Likely a UI coding error where they passed the wrong N (Likely they passed a GROUP_PEER instead of a GROUP_CTRL)
@@ -3902,7 +3902,7 @@ int group_online(const int g)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			const uint8_t sendfd_connected = getter_uint8(peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t sendfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 			if(sendfd_connected == 1)
 				online++;
 		}
@@ -3949,9 +3949,9 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
 			char peeronion[56+1];
-			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-			getter_array(&peer_sign_pk,sizeof(peer_sign_pk),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_sign_pk));
+			getter_array(&peer_sign_pk,sizeof(peer_sign_pk),peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
 			if((peeronion_len == 0 || !memcmp(peeronion,peeronion_prefix,peeronion_len)) && crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, peer_sign_pk) == 0)
 			{
 				sodium_memzero(peeronion,sizeof(peeronion));
@@ -3971,7 +3971,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	}
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // TODO could just store this in group_ctrl's peer_sign_pk, since it isn't being used
-	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
+	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	crypto_sign_ed25519_sk_to_pk(ed25519_pk,sign_sk);
 	sodium_memzero(sign_sk,sizeof(sign_sk));
 	if(crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, ed25519_pk) == 0)
@@ -4024,14 +4024,14 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	if(peerlist)
 	{
 		char onion_group_n[56+1];
-		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		for(uint32_t nn = 0 ; nn < g_peercount ; nn++) // check for existing before adding
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
 			char peeronion[56+1];
-			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			const int ret = memcmp(peeronion,local_group_peeronion,56);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			if(!ret || !memcmp(onion_group_n,local_group_peeronion,56))
@@ -4099,10 +4099,10 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	}
 	sql_update_peer(n); // saves group_peer_ed25519_pk
 	// Associate it with a group, save setting
-//	const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+//	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	char setting_name[64]; // arbitrary size
 	snprintf(setting_name,sizeof(setting_name),"group_peer%d",peer_index); // "group_peer" + peer_index, for uniqueness. might make deleting complex.
-	const int peer_index_group = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index_group = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index_group,setting_name,"",0);
 	// Add it to our peerlist
 	pthread_rwlock_wrlock(&mutex_expand_group);
@@ -4160,7 +4160,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 		setter_group(g,offsetof(struct group_list,n),&group_n,sizeof(group_n));
 	}
 	pthread_mutex_unlock(&mutex_group_join);
-	const int peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(const char*)group_id,GROUP_ID_SIZE); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
 	char p1[21];
 	snprintf(p1,sizeof(p1),"%d",g_invite_required);
@@ -4190,7 +4190,7 @@ int group_join_from_i(const int n,const int i)
 {
 	if(n < 0)
 		return -1;
-	const int p_iter = getter_int(n,i,-1,-1,offsetof(struct message_list,p_iter));
+	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
 	pthread_rwlock_rdlock(&mutex_protocols);
@@ -4236,7 +4236,7 @@ int group_generate(const uint8_t invite_required,const char *name)
 	setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
 	const int group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,name); // must do this AFTER reserving group and setting invite_required
 	setter_group(g,offsetof(struct group_list,n),&group_n,sizeof(group_n));
-	const int peer_index = getter_int(group_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+	const int peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(char*)x25519_sk,sizeof(x25519_sk)); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
 	sodium_memzero(x25519_pk,sizeof(x25519_pk));
 	sodium_memzero(x25519_sk,sizeof(x25519_sk));
@@ -4733,13 +4733,13 @@ void cleanup_lib(const int sig_num)
 	pthread_mutex_lock(&mutex_closing); // Note: do not unlock, ever. Ensures that this doesn't get called multiple times.
 	if(log_last_seen == 1)
 	{
-		for(int peer_index,n = 0 ; (peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)) != 0 ; n++)
+		for(int peer_index,n = 0 ; (peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(n,INT_MIN,-1,offsetof(struct peer_list,onion)) != 0 ; n++)
 		{ // storing last_seen time to .key file
 			if(peer_index < 0)
 				continue;
-			const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-			const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,recvfd_connected));
+			const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+			const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 			if(sendfd_connected > 0 && recvfd_connected > 0 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
 			{
 				char p1[21];
@@ -5000,10 +5000,10 @@ int custom_input(const uint8_t owner,const char *identifier,const char *privkey)
 		error_simple(0,"Private Key Length is Wrong.");
 		return -2;
 	}
-	for(int n = 0 ; getter_byte(n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)) != 0 || getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)) > -1 ; n++)
+	for(int n = 0 ; getter_byte(n,INT_MIN,-1,offsetof(struct peer_list,onion)) != 0 || getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) > -1 ; n++)
 	{
 		char privkey_n[88+1];
-		getter_array(&privkey_n,sizeof(privkey_n),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
+		getter_array(&privkey_n,sizeof(privkey_n),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
 		if(!strncmp(privkey,privkey_n,88))
 		{
 			sodium_memzero(privkey_n,sizeof(privkey_n));

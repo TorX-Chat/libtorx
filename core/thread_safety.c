@@ -237,11 +237,6 @@ struct offsets offsets_file[] = {
 	offsize(file_list,last_speeds,"last_speeds")
 };
 
-struct offsets offsets_offer[] = {
-	offsize(offer_list,offerer_n,"offerer_n"),
-	offsize(offer_list,offer_progress,"offer_progress")
-};
-
 struct offsets offsets_group[] = {
 	offsize(group_list,id,"id"),
 	offsize(group_list,n,"n"),
@@ -417,8 +412,6 @@ size_t getter_size(const char *parent,const char *member)
 		getter_offset_return_size(offsets_message)
 	else if(!strcmp(parent,"file"))
 		getter_offset_return_size(offsets_file)
-	else if(!strcmp(parent,"offer"))
-		getter_offset_return_size(offsets_offer)
 	else if(!strcmp(parent,"group"))
 		getter_offset_return_size(offsets_group)
 	else if(!strcmp(parent,"packet"))
@@ -451,8 +444,6 @@ size_t getter_offset(const char *parent,const char *member)
 		getter_offset_return_offset(offsets_message)
 	else if(!strcmp(parent,"file"))
 		getter_offset_return_offset(offsets_file)
-	else if(!strcmp(parent,"offer"))
-		getter_offset_return_offset(offsets_offer)
 	else if(!strcmp(parent,"group"))
 		getter_offset_return_offset(offsets_group)
 	else if(!strcmp(parent,"packet"))
@@ -463,10 +454,10 @@ size_t getter_offset(const char *parent,const char *member)
 	return 0;
 }
 
-char getter_byte(const int n,const int i,const int f,const int o,const size_t offset)
+char getter_byte(const int n,const int i,const int f,const size_t offset)
 { // WARNING: This gets a single byte, without doing any sanity checks that would occur on an integer. I hate this function, but it serves a purpose.
 	char value;
-	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0))
+	if(n < 0 || (i > INT_MIN && f > -1))
 	{
 		error_printf(0,"getter byte sanity check failed at offset: %lu",offset);
 		breakpoint();
@@ -477,8 +468,6 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 	torx_read(n)
 	if(i > INT_MIN)
 		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));
-	else if(f > -1 && o > -1)
-		memcpy(&value,(char*)&peer[n].file[f].offer[o] + offset,sizeof(value));
 	else if(f > -1)
 		memcpy(&value,(char*)&peer[n].file[f] + offset,sizeof(value));
 	else
@@ -493,12 +482,12 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 	while(iter < pages && offset != offsets_struc[iter].offset)\
 		iter++;\
 	if(iter == pages)\
-		error_printf(-1,"Illegal offset. Coding error. Report this. n: %d i: %d f: %d o: %d Offset: %lu",n,i,f,o,offset);\
+		error_printf(-1,"Illegal offset. Coding error. Report this. n: %d i: %d f: %d Offset: %lu",n,i,f,offset);\
 	if(offsets_struc[iter].size != sizeof(value))\
 		error_printf(-1,"Illegal getter return value. Coding error. Report this.2 %lu != %lu",offsets_struc[iter].size,sizeof(value));
 
 #define return_getter_value \
-	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0))\
+	if(n < 0 || (i > INT_MIN && f > -1))\
 	{\
 		error_printf(0,"getter sanity check failed at offset: %lu",offset);\
 		breakpoint();\
@@ -511,12 +500,6 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 		getter_sanity_check(offsets_message)\
 		torx_read(n)\
 		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));\
-	}\
-	else if(f > -1 && o > -1)\
-	{\
-		getter_sanity_check(offsets_offer)\
-		torx_read(n)\
-		memcpy(&value,(char*)&peer[n].file[f].offer[o] + offset,sizeof(value));\
 	}\
 	else if(f > -1)\
 	{\
@@ -543,9 +526,9 @@ char getter_byte(const int n,const int i,const int f,const int o,const size_t of
 	if(offsets_struc[iter].size < size)\
 		error_printf(-1,"Illegal getter return value. Coding error. Report this.3 %lu < %lu",offsets_struc[iter].size,size);
 
-void getter_array(void *array,const size_t size,const int n,const int i,const int f,const int o,const size_t offset)
+void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset)
 { // Be careful on size. Could actually use this on integers, not just arrays. It needs re-writing and better sanity checks. See getter_string as an example.
-	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0) || size < 1 || array == NULL)
+	if(n < 0 || (i > INT_MIN && f > -1) || size < 1 || array == NULL)
 	{
 		error_printf(0,"getter_array sanity check failed at offset: %lu",offset);
 		if(!array)
@@ -571,12 +554,6 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 		else
 			memcpy(array,(char*)&peer[n].message[i] + offset,size);
 	}
-	else if(f > -1 && o > -1)
-	{
-		getter_array_sanity_check(offsets_offer)
-		torx_read(n)
-		memcpy(array,(char*)&peer[n].file[f].offer[o] + offset,size);
-	}
 	else if(f > -1)
 	{
 		getter_array_sanity_check(offsets_file)
@@ -597,83 +574,83 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	torx_unlock(n)
 }
 
-int8_t getter_int8(const int n,const int i,const int f,const int o,const size_t offset)
+int8_t getter_int8(const int n,const int i,const int f,const size_t offset)
 {
 	int8_t value = 0;
 	return_getter_value // macro
 }
 
-int16_t getter_int16(const int n,const int i,const int f,const int o,const size_t offset)
+int16_t getter_int16(const int n,const int i,const int f,const size_t offset)
 {
 	int16_t value = 0;
 	return_getter_value // macro
 }
 
-int32_t getter_int32(const int n,const int i,const int f,const int o,const size_t offset)
+int32_t getter_int32(const int n,const int i,const int f,const size_t offset)
 {
 	int32_t value = 0;
 	return_getter_value // macro
 }
 
-int64_t getter_int64(const int n,const int i,const int f,const int o,const size_t offset)
+int64_t getter_int64(const int n,const int i,const int f,const size_t offset)
 {
 	int64_t value = 0;
 	return_getter_value // macro
 }
 
-uint8_t getter_uint8(const int n,const int i,const int f,const int o,const size_t offset)
+uint8_t getter_uint8(const int n,const int i,const int f,const size_t offset)
 {
 	uint8_t value = 0;
 	return_getter_value // macro
 }
 
-uint16_t getter_uint16(const int n,const int i,const int f,const int o,const size_t offset)
+uint16_t getter_uint16(const int n,const int i,const int f,const size_t offset)
 {
 	uint16_t value = 0;
 	return_getter_value // macro
 }
 
-uint32_t getter_uint32(const int n,const int i,const int f,const int o,const size_t offset)
+uint32_t getter_uint32(const int n,const int i,const int f,const size_t offset)
 {
 	uint32_t value = 0;
 	return_getter_value // macro
 }
 
-uint64_t getter_uint64(const int n,const int i,const int f,const int o,const size_t offset)
+uint64_t getter_uint64(const int n,const int i,const int f,const size_t offset)
 {
 	uint64_t value = 0;
 	return_getter_value // macro
 }
 
-int getter_int(const int n,const int i,const int f,const int o,const size_t offset)
+int getter_int(const int n,const int i,const int f,const size_t offset)
 {
 	int value = 0;
 	return_getter_value // macro
 }
 
-time_t getter_time(const int n,const int i,const int f,const int o,const size_t offset)
+time_t getter_time(const int n,const int i,const int f,const size_t offset)
 {
 	time_t value = 0;
 	return_getter_value // macro
 }
 
-void setter(const int n,const int i,const int f,const int o,const size_t offset,const void *value,const size_t size)
+void setter(const int n,const int i,const int f,const size_t offset,const void *value,const size_t size)
 { /* Suitable for ALL datatypes (string, int, void*, NULL, etc). Note: The (char*) is necessary because otherwise the offset is treated as an addition to the iterator: &peer[n+offset]. https://www.iso-9899.info/n1570.html#6.5.2.1p2
      Integer Usage:
 	int8_t value = 69;
-	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,v3auth),&value,sizeof(value));
+	setter(1,INT_MIN,-1,offsetof(struct peer_list,v3auth),&value,sizeof(value));
      Array Usage:
 	char onion[56+1] = "hello i am a fish";
-	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,onion),&onion,sizeof(onion));
+	setter(1,INT_MIN,-1,offsetof(struct peer_list,onion),&onion,sizeof(onion));
     Pointer Usage (pointer as argument): XXX do not use & argument is a pointer. THIS ERROR WILL NOT BE DETECTED BY COMPILER.
 	char *onion = "hello i am a fish";
-	setter(1,INT_MIN,-1,-1,offsetof(struct peer_list,onion),onion,sizeof(onion));
+	setter(1,INT_MIN,-1,offsetof(struct peer_list,onion),onion,sizeof(onion));
     Pointer Usage (target):
 	not utilized so far / not tested / not sure
 */
-	if(n < 0 || (i > INT_MIN && f > -1) || (i > INT_MIN && o > -1) || (o > -1 && f < 0) || size < 1 || value == NULL)
+	if(n < 0 || (i > INT_MIN && f > -1) || size < 1 || value == NULL)
 	{
-		error_printf(0,"setter sanity check failed at offset: %lu sanity: %d %d %d %d",offset,n,i,f,o);
+		error_printf(0,"setter sanity check failed at offset: %lu sanity: %d %d %d",offset,n,i,f);
 		breakpoint();
 		return;
 	}
@@ -684,12 +661,6 @@ void setter(const int n,const int i,const int f,const int o,const size_t offset,
 		getter_array_sanity_check(offsets_message)
 		torx_write(n) // XXX
 		memcpy((char*)&peer[n].message[i] + offset,value,size);
-	}
-	else if(f > -1 && o > -1)
-	{
-		getter_array_sanity_check(offsets_offer)
-		torx_write(n) // XXX
-		memcpy((char*)&peer[n].file[f].offer[o] + offset,value,size);
 	}
 	else if(f > -1)
 	{

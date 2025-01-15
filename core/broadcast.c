@@ -69,7 +69,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 	}
 	if(origin_n > -1)
 	{ // Check if peer already sent too many broadcasts
-		const uint32_t broadcasts_inbound = getter_uint32(origin_n,INT_MIN,-1,-1,offsetof(struct peer_list,broadcasts_inbound));
+		const uint32_t broadcasts_inbound = getter_uint32(origin_n,INT_MIN,-1,offsetof(struct peer_list,broadcasts_inbound));
 		if(broadcasts_inbound > BROADCAST_MAX_INBOUND_PER_PEER)
 		{
 			error_simple(0,"Peer has already sent > BROADCAST_MAX_INBOUND_PER_PEER. Not accepting their new broadcast.");
@@ -93,7 +93,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 					int origin_or_group_n = origin_n;
 					if(origin_n > -1)
 					{ // Broadcast is being resent for peers, need to avoid sending it to the group we received it from, if applicable
-						const uint8_t owner = getter_uint8(origin_n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+						const uint8_t owner = getter_uint8(origin_n,INT_MIN,-1,offsetof(struct peer_list,owner));
 						if(owner == ENUM_OWNER_GROUP_PEER)
 						{
 							const int g = set_g(origin_n,NULL);
@@ -169,9 +169,9 @@ void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
 	const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 	unsigned char message[GROUP_BROADCAST_DECRYPTED_LEN];
 	randombytes_buf(message,crypto_pwhash_SALTBYTES); // salt the message. crypto_pwhash_SALTBYTES is 16
-	getter_array(&message[crypto_pwhash_SALTBYTES],56,group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)); // affix the group_n
+	getter_array(&message[crypto_pwhash_SALTBYTES],56,group_n,INT_MIN,-1,offsetof(struct peer_list,onion)); // affix the group_n
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,sign_sk));
+	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	crypto_sign_ed25519_sk_to_pk(&message[crypto_pwhash_SALTBYTES+56],sign_sk); // affix the pk of size crypto_box_PUBLICKEYBYTES
 	sodium_memzero(sign_sk,sizeof(sign_sk));
 	unsigned char recipient_pk[crypto_box_PUBLICKEYBYTES];
@@ -214,7 +214,7 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 		if(crypto_box_seal_open(decrypted,ciphertext,GROUP_BROADCAST_LEN,x25519_pk, x25519_sk) == 0)
 		{ // Successful decryption, meaning we have this group
 			char onion[56+1];
-			getter_array(&onion,sizeof(onion),group_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion)); // TODO 2024/02/19 hit this with group_n being -1, which is a possible race because we *have* this group or we couldn't decrypt
+			getter_array(&onion,sizeof(onion),group_n,INT_MIN,-1,offsetof(struct peer_list,onion)); // TODO 2024/02/19 hit this with group_n being -1, which is a possible race because we *have* this group or we couldn't decrypt
 			if(!memcmp(onion,&decrypted[crypto_pwhash_SALTBYTES],56))
 				error_simple(1,"Public broadcast returned to us (our onion was encrypted). Do nothing, ignore.");
 			else
@@ -227,7 +227,7 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 					unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
 					broadcast_prep(ciphertext_new,g);
 					const int i = message_send(new_peer,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
-					printf("Checkpoint GROUP_PUBLIC_ENTRY_REQUEST g=%d n=%d i=%d p_iter=%d\n",g,new_peer,i,getter_int(new_peer,i,-1,-1,offsetof(struct message_list,p_iter)));
+					printf("Checkpoint GROUP_PUBLIC_ENTRY_REQUEST g=%d n=%d i=%d p_iter=%d\n",g,new_peer,i,getter_int(new_peer,i,-1,offsetof(struct message_list,p_iter)));
 					sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
 				}
 				else if(new_peer == -1) // NOT ELSE: as == -2 is already have it
@@ -272,9 +272,9 @@ static inline void *broadcast_threaded(void *arg)
 					const int n = broadcasts_queued[random_broadcast].peers[random_peer];
 					if(n < 0)
 						continue;
-					const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
-					const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
-					const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,sendfd_connected));
+					const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+					const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+					const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 					const uint8_t online = sendfd_connected + recvfd_connected;
 					if(online || owner == ENUM_OWNER_GROUP_CTRL)
 					{ // chose one and send to it, then delist if applicable

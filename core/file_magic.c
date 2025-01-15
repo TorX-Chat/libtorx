@@ -295,14 +295,14 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 //	printf("Checkpoint file_init n==%d f==%d checksum==%s\n",n,f,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	if(split_hashes_and_size)
 	{ // set splits and split_hashes for group files
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 		if(owner != ENUM_OWNER_GROUP_CTRL)
 		{
 			error_simple(0,"Improperly attempting to set split_hashes for a non-GROUP_CTRL. Outbound. Coding error. Report this.");
 			breakpoint();
 			return -1;
 		}
-		setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
+		setter(n,INT_MIN,f,offsetof(struct file_list,splits),&splits,sizeof(splits));
 		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
 		torx_write(n) // XXX
 		peer[n].file[f].split_hashes = torx_secure_malloc(split_hashes_len+sizeof(uint64_t));
@@ -330,7 +330,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len)
 { // processes inbound ENUM_PROTOCOL_FILE_OFFER
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_CTRL || message == NULL || p_iter < 0 || n < 0 || message_len == 0)
 	{ // could do more extensive sanity check on message_len here. we do that later though, so no need
 		error_simple(0,"process_file_offer_inbound triggered on group ctrl or sanity check fail. Coding error. Report this.");
@@ -433,11 +433,11 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 				peer[group_n].file[f].status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
 			torx_unlock(group_n) // XXX
 		}
-		uint8_t status = getter_uint8(group_n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
+		uint8_t status = getter_uint8(group_n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 		if(status == ENUM_FILE_INBOUND_REJECTED || status == ENUM_FILE_INBOUND_CANCELLED)
 		{
 			status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
-			setter(group_n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
+			setter(group_n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 	//	else // We only check in groups because malicious peers
 	//		error_simple(0,"Received file offer for file we already have in struct (partial or full). (NOT Allocating split hashes)");
@@ -504,10 +504,10 @@ static inline void *peer_init(void *arg)
 	torx_unlock(n) // XXX
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	char suffixonion[56+6+1];
-	getter_array(suffixonion,56,n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+	getter_array(suffixonion,56,n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 	snprintf(&suffixonion[56],6+1,"%6s",".onion");
 	const uint16_t vport = INIT_VPORT;
-	setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
+	setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 	char port_string[21];
 	snprintf(port_string,sizeof(port_string),"%d",vport);
 	evutil_socket_t proxyfd;
@@ -527,7 +527,7 @@ static inline void *peer_init(void *arg)
 	else
 		trash = htobe16(torx_library_version[0]);
 	memcpy(&buffer[0],&trash,sizeof(uint16_t));
-	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 	memcpy(&buffer[2+56],ed25519_pk,sizeof(ed25519_pk));
 	DisableNagle(proxyfd); // DO NOT REMOVE THIS it helps packets stay together
 	listen(SOCKET_CAST_OUT proxyfd,1); // Maximum one connect at a time
@@ -564,7 +564,7 @@ static inline void *peer_init(void *arg)
 					}
 					char *peernick_fresh_n = getter_string(NULL,fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 					const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
-					setter(fresh_n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
+					setter(fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 					error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);
 					torx_free((void*)&peernick_fresh_n);
 					sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
@@ -578,7 +578,7 @@ static inline void *peer_init(void *arg)
 				error_printf(0,"Wrong sized init reply received from peer of length: %ld after sending length: %ld. Handshake failed.",r,s); //  Could consider deleting peer (no, because their onion could be a mult)
 			break;
 		}
-		const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,1); // delete our PEER XXX after load_onion, otherwise we'll have zeros in our new onion's peernick
 	}
 	if(evutil_closesocket(proxyfd) == -1)
@@ -648,7 +648,7 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 	//	torx_free((void*)&peeronion_or_torxid);
 		sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
 		int n = set_n(-1,peeronion);
-		uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 		if(owner != 0)
 		{
 			error_simple(0,"Peer already exists.");
@@ -657,20 +657,20 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		error_simple(1,"Peer did not exist.");
 		if((n = load_peer_struc(-1,ENUM_OWNER_PEER,0,NULL,0,peeronion,peernick,NULL,NULL,NULL)) == -1)
 			break;
-		owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // probably unnecessary, n should be the same as before?
-		const uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
-		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,-1,offsetof(struct peer_list,peerversion));
+		owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)); // probably unnecessary, n should be the same as before?
+		const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
+		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 		char privkey[88+1];
-		getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,-1,offsetof(struct peer_list,privkey));
+		getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
 		char peeronion_local[56+1];
-		getter_array(&peeronion_local,sizeof(peeronion_local),n,INT_MIN,-1,-1,offsetof(struct peer_list,peeronion));
+		getter_array(&peeronion_local,sizeof(peeronion_local),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 		const int peer_index = sql_insert_peer(owner,status,peerversion,privkey,peeronion_local,peernick,0);
 		sodium_memzero(privkey,sizeof(privkey));
 		sodium_memzero(peeronion_local,sizeof(peeronion_local));
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 		torx_free((void*)&peeronion);
 		const uint16_t vport = INIT_VPORT;
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 		torx_read(n) // XXX
 		pthread_t *thrd_send = &peer[n].thrd_send;
 		torx_unlock(n) // XXX
@@ -685,12 +685,12 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 
 void peer_accept(const int n)
 { // Was file_magic("incomingpendinglist",onion)
-	uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+	uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // sanity check
 		error_simple(1,"Accepting a peer.");
 		status = ENUM_STATUS_FRIEND;
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,status),&status,sizeof(status));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,status),&status,sizeof(status));
 		sql_update_peer(n);
 		load_onion(n);
 	}
@@ -712,10 +712,10 @@ void change_nick(const int n,const char *freshpeernick)
 
 void block_peer(const int n)
 {
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_GROUP_PEER)
 	{
-		uint8_t status = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,status));
+		uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
 		char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 		if(status == ENUM_STATUS_FRIEND)
 		{
@@ -724,9 +724,9 @@ void block_peer(const int n)
 			else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 				error_printf(3,"Disabling %s",peernick);
 			status = ENUM_STATUS_BLOCKED;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,status),&status,sizeof(status));
+			setter(n,INT_MIN,-1,offsetof(struct peer_list,status),&status,sizeof(status));
 			sql_update_peer(n);
-			const int peer_index = getter_int(n,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index));
+			const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			takedown_onion(peer_index,0);
 		}
 		else if(status == ENUM_STATUS_BLOCKED)
@@ -736,7 +736,7 @@ void block_peer(const int n)
 			else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 				error_printf(3,"Enabling %s",peernick);
 			status = ENUM_STATUS_FRIEND;
-			setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,status),&status,sizeof(status));
+			setter(n,INT_MIN,-1,offsetof(struct peer_list,status),&status,sizeof(status));
 			sql_update_peer(n);
 			load_onion(n);
 		}
@@ -857,12 +857,12 @@ static inline int split_read(const int n,const int f)
 	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
 	torx_free((void*)&split_path);
-	uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	if(fp)
 	{
 		unsigned char checksum_local[CHECKSUM_BIN_LEN];
 		unsigned char checksum[CHECKSUM_BIN_LEN];
-		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 		if(fread(checksum_local,1,CHECKSUM_BIN_LEN,fp) != CHECKSUM_BIN_LEN)
 			error_simple(0,"Failed to read checksum from split file. Invalid split file exists."); // read checksum
 		else if(memcmp(checksum,checksum_local,CHECKSUM_BIN_LEN))
@@ -871,7 +871,7 @@ static inline int split_read(const int n,const int f)
 			error_simple(0,"Failed to read number of splits from split file. Invalid split file exists."); // read splits
 		else
 		{ // this is correct, the previous else if modified splits
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,splits),&splits,sizeof(splits));
+			setter(n,INT_MIN,f,offsetof(struct file_list,splits),&splits,sizeof(splits));
 			sodium_memzero(checksum,sizeof(checksum));
 		}
 	}
@@ -910,7 +910,7 @@ static inline int split_read(const int n,const int f)
 
 int initialize_split_info(const int n,const int f)
 { // Should read split file and set the details, or create and initialize split file ( as 0,0,0,0,etc ). File is in binary format. Checksum,nos,split_progress. XXX DO NOT CALL UNLESS ACCEPTING FILE, or a cancelled file can be uncancelled.
-	const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+	const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 	torx_read(n) // XXX
 	if(peer[n].file[f].split_path && peer[n].file[f].split_progress)
 	{ // Split info appears already initialized. No need to do it again.
@@ -921,7 +921,7 @@ int initialize_split_info(const int n,const int f)
 	{ // Sanity check
 		torx_unlock(n) // XXX
 		error_simple(0,"Cannot initialize split info. Sanity check failed.");
-		printf("Checkpoint owner==%d size==%"PRIu64"\n",getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)),size);
+		printf("Checkpoint owner==%d size==%"PRIu64"\n",getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)),size);
 		return -1;
 	}
 	char *split_path = peer[n].file[f].split_path;
@@ -938,7 +938,7 @@ int initialize_split_info(const int n,const int f)
 		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 		const int stat_file = stat(file_path, &file_stat); // Note: file_path cannot be null, but we checked it earlier.
 		torx_free((void*)&file_path);
-		const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 		if(stat_file == 0 && stat(split_path, &file_stat) == 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // check if file exists. if yes, check if split exists. if yes, read the split file and set the file as INBOUND_ACCEPTED
@@ -946,13 +946,13 @@ int initialize_split_info(const int n,const int f)
 			if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound) && calculate_transferred(n,f) < size)
 			{
 				const uint8_t status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
-				setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
+				setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 			}
 		}
 		else if(stat_file == 0)
 		{
 			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete // TODO DEPRECIATE FILE STATUS TODO
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 		else if(splits > 0)
 		{ // partial file does not exist, write an initialized .split file
@@ -964,7 +964,7 @@ int initialize_split_info(const int n,const int f)
 				return -1;
 			}
 			unsigned char split_data[CHECKSUM_BIN_LEN + sizeof(splits) + sizeof(uint64_t)*(splits+1)];
-			getter_array(&split_data,CHECKSUM_BIN_LEN,n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+			getter_array(&split_data,CHECKSUM_BIN_LEN,n,INT_MIN,f,offsetof(struct file_list,checksum));
 			memcpy(&split_data[CHECKSUM_BIN_LEN],&splits,sizeof(splits));
 			torx_read(n) // XXX
 			memcpy(&split_data[CHECKSUM_BIN_LEN + sizeof(splits)],peer[n].file[f].split_progress,sizeof(uint64_t)*(splits+1));
@@ -980,14 +980,14 @@ int initialize_split_info(const int n,const int f)
 
 void split_update(const int n,const int f,const int16_t section)
 { // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
-	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	torx_read(n) // XXX
 	const char *split_path = peer[n].file[f].split_path;
 	const uint64_t *split_progress = peer[n].file[f].split_progress;
 	torx_unlock(n) // XXX
 	if(splits == 0 || split_path == NULL)
 		return;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
+	const uint8_t status = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
 	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(status == ENUM_FILE_INBOUND_COMPLETED || status == ENUM_FILE_INBOUND_REJECTED || status == ENUM_FILE_INBOUND_CANCELLED) // || section == -1
 	{ //  destroying split file in case of ENUM_FILE_INBOUND_CANCELLED would be bad in group chats.
@@ -1038,7 +1038,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		error_simple(0,"Sanity check failure in section_update1. Coding error. Report this.");
 		return;
 	}
-	const uint8_t splits = getter_uint8(n,INT_MIN,f,-1,offsetof(struct file_list,splits));
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	torx_write(n) // XXX yes, its a write, see += several lines later
 	const uint64_t *split_progress = peer[n].file[f].split_progress;
 	const uint64_t *split_status_req = peer[n].file[f].split_status_req;
@@ -1055,9 +1055,9 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 	if(section_complete || section_info_current == section_req_current)
 	{ // Section complete. Close file descriptors (flushing data to disk)
 		close_sockets(n,f)
-		const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner));
+		const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
-		const uint64_t size = getter_uint64(n,INT_MIN,f,-1,offsetof(struct file_list,size));
+		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(section_complete)
 		{ // Verify checksum
 			if(owner == ENUM_OWNER_GROUP_CTRL)
@@ -1096,7 +1096,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			{ // TODO This blocks, so it should be used for debug purposes only
 				unsigned char checksum_complete[CHECKSUM_BIN_LEN];
 				unsigned char checksum[CHECKSUM_BIN_LEN];
-				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,-1,offsetof(struct file_list,checksum));
+				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 				if(b3sum_bin(checksum_complete,file_path,NULL,0,0) && !memcmp(checksum_complete,checksum,CHECKSUM_BIN_LEN))
 					error_printf(0,"Successfully VERIFIED checksum n=%d f=%d",n,f);
 				else
@@ -1123,7 +1123,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				}
 			}
 			const uint8_t status = ENUM_FILE_INBOUND_COMPLETED; // NOTE: we don't ftell, just consider it complete // TODO DEPRECIATE FILE STATUS TODO
-			setter(n,INT_MIN,f,-1,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
+			setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 		}
 		else if(owner == ENUM_OWNER_GROUP_CTRL) // (peer_n > -1 && peer[peer_n].blacklisted)
 			file_request_internal(n,f,-1); // 2024/12/17 Experimental, requesting from a different peer on any fd_type
@@ -1220,7 +1220,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		return;
 	}
 	const int n = set_n(peer_index,NULL);
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,-1,offsetof(struct peer_list,owner)); // DO NOT ELIMINATE THIS VARIABLE because .owner will get zero'd
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)); // DO NOT ELIMINATE THIS VARIABLE because .owner will get zero'd
 	int g = -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Recursively takedown all GROUP_PEER in peerlist // TODO consider sending a kill code to online peers first ( pro: wastes less peer resources. Con: takes more time to shutdown, peers will be added again when someone who didn't get the kill code shares the peerlist . Conclusion: don't bother.)
@@ -1232,7 +1232,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int specific_peer = group[g].peerlist[count++];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			takedown_onion(getter_int(specific_peer,INT_MIN,-1,-1,offsetof(struct peer_list,peer_index)),delete);
+			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete);
 		}
 		error_printf(0,"Took down %u GROUP_PEER associated with group.",count); // TODO increase debug level after confirming this works
 	}
@@ -1255,7 +1255,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		evbuffer_unlock(bev_recv); // XXX
 		event_base_once(base, -1, EV_TIMEOUT, enter_thread_to_disconnect_forever, bev_recv, NULL);*/
 		char onion[56+1];
-		getter_array(&onion,sizeof(onion),n,INT_MIN,-1,-1,offsetof(struct peer_list,onion));
+		getter_array(&onion,sizeof(onion),n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		char apibuffer[512];
 		snprintf(apibuffer,512,"%s%s%s%s%s","authenticate \"",control_password_clear,"\"\ndel_onion ",onion,"\n");
 		sodium_memzero(onion,sizeof(onion));
@@ -1288,7 +1288,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 	{ // TODO WE SHOULD NOT SET MEMORY STATUS TO 0 HERE ??? because we might be taking it down for other reaons, like in write_finished()
 		error_simple(1,"Notice: Found matching entry in memory. Changing to status 1 (block) in memory.");
 		const uint8_t status = ENUM_STATUS_BLOCKED;
-		setter(n,INT_MIN,-1,-1,offsetof(struct peer_list,status),&status,sizeof(status));
+		setter(n,INT_MIN,-1,offsetof(struct peer_list,status),&status,sizeof(status));
 	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
