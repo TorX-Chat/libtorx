@@ -1215,13 +1215,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
 				torx_unlock(file_n) // XXX
 				extraneous_len = 0; // MUST because related to callback
-				uint8_t status = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && status == ENUM_FILE_INBOUND_PENDING && split_progress != NULL)
-				{ // This can trigger when the status == pending due to having received a pause at any time
-					status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
-					setter(file_n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
-				}
-				else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+				const int file_status = file_status_get(file_n,f);
+				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && file_status != ENUM_FILE_INACTIVE_CANCELLED && (file_status != ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || split_progress == NULL))
 				{
 					initialize_split_info(file_n,f);
 					torx_read(file_n) // XXX

@@ -93,30 +93,26 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 		return 0;
 	}
 	int was_transferring = 0;
-	const uint8_t status = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
-	if(status == ENUM_FILE_INBOUND_ACCEPTED)
+	torx_write(n) // XXX YES, must be write, because we can't unlock or we could have races
+	if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
 	{
-		torx_write(n) // XXX YES, must be write, because we can't unlock or we could have races
-		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
-		{
-			torx_unlock(n) // XXX
-			return was_transferring;
-		}
-		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
-		{
-			if(peer[n].file[f].split_status_n[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
-			{
-				peer[n].file[f].split_status_n[section] = -1; // unclaim section
-				peer[n].file[f].split_status_fd[section] = -1;
-				peer[n].file[f].split_status_req[section] = 0;
-				error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = -1"RESET,n,f,section);
-				was_transferring++;
-			}
-			else if(peer[n].file[f].split_status_n[section] > -1)
-				*active_transfers_ongoing = *active_transfers_ongoing + 1; // cannot use ++ here. Would be invalid pointer math.
-		}
 		torx_unlock(n) // XXX
+		return was_transferring;
 	}
+	for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
+	{
+		if(peer[n].file[f].split_status_n[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
+		{
+			peer[n].file[f].split_status_n[section] = -1; // unclaim section
+			peer[n].file[f].split_status_fd[section] = -1;
+			peer[n].file[f].split_status_req[section] = 0;
+			error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = -1"RESET,n,f,section);
+			was_transferring++;
+		}
+		else if(peer[n].file[f].split_status_n[section] > -1)
+			*active_transfers_ongoing = *active_transfers_ongoing + 1; // cannot use ++ here. Would be invalid pointer math.
+	}
+	torx_unlock(n) // XXX
 	return was_transferring;
 }
 
@@ -891,11 +887,9 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 		torx_write(n) // XXX
 		torx_free((void*)&peer[n].file[f].file_path);
 		torx_free((void*)&peer[n].file[f].split_path);
-		if(peer[n].file[f].status == ENUM_FILE_INBOUND_ACCEPTED) // TODO DEPRECIATE FILE STATUS TODO
-			peer[n].file[f].status = ENUM_FILE_INBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
 		torx_unlock(n) // XXX
 	}
-	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path and setting to INBOUND_PENDING if n,f was passed so that it can be reset.");
+	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path if n,f was passed so that it can be reset.");
 	return 1;
 }
 
@@ -963,16 +957,16 @@ void file_accept(const int n,const int f)
 		return;
 	torx_read(n) // XXX
 	const uint8_t owner = peer[n].owner;
-	uint8_t status = peer[n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
 	const char *filename = peer[n].file[f].filename;
 	torx_unlock(n) // XXX
+	const int file_status = file_status_get(n,f);
 	if(filename == NULL)
 	{ // probably ENUM_OWNER_GROUP_PEER, non-PM message, or where the file path is not yet set by UI
 		error_simple(0,"File information not provided. Cannot accept. Coding error. Report this.");
-		printf("Checkpoint file_accept owner: %u status: %d\n",owner,status);
+		printf("Checkpoint file_accept owner: %u file_status: %d\n",owner,file_status);
 		return;
 	}
-	if(status == ENUM_FILE_INBOUND_ACCEPTED || status == ENUM_FILE_OUTBOUND_ACCEPTED)
+	if(file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_OUT || file_status == ENUM_FILE_ACTIVE_IN_OUT)
 	{ // pause in/outbound transfer. Reciever can unpause it.  // Much redundancy in logic applies with file cancel  For group file transfers, like a _PARTIAL, the message is broadcast to everyone.
 		unsigned char checksum[CHECKSUM_BIN_LEN];
 		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
@@ -980,13 +974,8 @@ void file_accept(const int n,const int f)
 		sodium_memzero(checksum,sizeof(checksum));
 		process_pause_cancel(n,f,n,ENUM_PROTOCOL_FILE_PAUSE,ENUM_MESSAGE_FAIL);
 	}
-	else if(status == ENUM_FILE_OUTBOUND_PENDING || status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
+	else if(file_status == ENUM_FILE_INACTIVE_COMPLETE)
 	{ // User unpause by re-offering file (safer than setting _ACCEPTED and directly start re-pushing (Section 6RMA8obfs296tlea), even though it could mean some packets / data is sent twice.)
-		if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
-		{
-			status = ENUM_FILE_OUTBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
-			setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
-		}
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
 			const int g = set_g(n,NULL);
@@ -1003,7 +992,7 @@ void file_accept(const int n,const int f)
 			message_send(n,ENUM_PROTOCOL_FILE_OFFER,itovp(f),FILE_OFFER_LEN);
 		// DO NOT CALL process_pause_cancel here, do not set _ACCEPTED ; we wait for peer to accept
 	}
-	else if(status == ENUM_FILE_INBOUND_PENDING)
+	else if(file_status == ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || file_status == ENUM_FILE_INACTIVE_ACCEPTED)
 	{ // Accept, re-accept, or unpause a file
 		pthread_rwlock_rdlock(&mutex_global_variable);
 		const char *local_download_dir = download_dir;
@@ -1038,24 +1027,13 @@ void file_accept(const int n,const int f)
 		initialize_split_info(n,f); // calls split_read(n,f);
 		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(calculate_transferred(n,f) < size)
-		{
-			status = ENUM_FILE_INBOUND_ACCEPTED; // TODO DEPRECIATE FILE STATUS TODO
-			setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
 			file_request_internal(n,f,-1);
-		}
 		else // Complete. Not checking if oversized or wrong hash.
-		{ // XXX This should NEVER trigger because the .split file should have been deleted if transferred == .size, unless split_read() is redesigned to check file size
 			error_simple(0,"This code should never execute. If it executes, the split file hasn't been deleted but should have been. Report this.");
-			printf("Checkpoint %"PRIu64" of %"PRIu64" transferred\n",calculate_transferred(n,f),size);
-			breakpoint();
-			status = ENUM_FILE_INBOUND_COMPLETED; // TODO DEPRECIATE FILE STATUS TODO
-			setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
-			transfer_progress(n,f,calculate_transferred(n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
-		}
 	}
 	else
-	{
-		error_printf(0,"Attempted file_accept on file %d with unrecognized status: %u. Coding error. Report this.",f,status);
+	{ // NOTE: This is probably a UI error caused by ENUM_FILE_INACTIVE_CANCELLED
+		error_printf(0,"Attempted file_accept on file %d with unrecognized file_status: %u. Coding error. Report this.",f,file_status);
 		breakpoint();
 	}
 }
@@ -1118,12 +1096,6 @@ static inline void *file_init(void *arg)
 	const int f = process_file_offer_outbound(n,checksum,splits,split_hashes_and_size,size,file_strc->modified,file_strc->path);
 //	printf("Checkpoint file_init n==%d f==%d size==%lu checksum==%s\n",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	sodium_memzero(checksum,sizeof(checksum));
-	uint8_t status = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,status)); // TODO DEPRECIATE FILE STATUS TODO
-	if(status == ENUM_FILE_OUTBOUND_REJECTED || status == ENUM_FILE_OUTBOUND_CANCELLED)
-	{
-		status = ENUM_FILE_OUTBOUND_PENDING; // TODO DEPRECIATE FILE STATUS TODO
-		setter(n,INT_MIN,f,offsetof(struct file_list,status),&status,sizeof(status)); // TODO DEPRECIATE FILE STATUS TODO
-	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		const int g = set_g(n,NULL);

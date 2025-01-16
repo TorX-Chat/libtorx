@@ -335,7 +335,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		char *filename;
 		char *file_path;
 		uint64_t size;
-		uint8_t status; // see enum file_statuses for values // TODO DEPRECIATE FILE STATUS TODO
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
@@ -531,29 +530,15 @@ enum message_statuses
 // TODO these are saved to disk... for file related, we need more than this. We need all file statuses, not just done. Not sure how to implement yet
 };/* TODO set other .status, such as finished (ifin,ofin) and paused (ipau,opau) */
 
-enum file_statuses // TODO DEPRECIATE FILE STATUS TODO
-{ // can be > 9 // XXX WARNING: an _OUTBOUND status must NEVER override an _INBOUND status because it will interfere with anything using is_inbound_transfer XXX
-	/* File Transfer Direction is Outbound ( we are sender ) */ 
-	ENUM_FILE_OUTBOUND_PENDING = 1, // pending or paused
-	ENUM_FILE_OUTBOUND_ACCEPTED = 2,
-	ENUM_FILE_OUTBOUND_COMPLETED = 3,
-	ENUM_FILE_OUTBOUND_REJECTED = 4, // they dont want file
-	ENUM_FILE_OUTBOUND_CANCELLED = 9, // we no longer want to send it
-
-	/* File Transfer Direction is Inbound ( we are receiver ) */ 
-	ENUM_FILE_INBOUND_PENDING = 5, // pending or paused (can determine which is which by whether .split_progress/.split_status_n is NULL (pending) or not (paused))
-	ENUM_FILE_INBOUND_ACCEPTED = 6,
-	ENUM_FILE_INBOUND_COMPLETED = 7,
-	ENUM_FILE_INBOUND_REJECTED = 8, // we dont want file
-	ENUM_FILE_INBOUND_CANCELLED = 10 // they no longer want to send it
-};
-
-enum file_is_active_statuses
-{
-	ENUM_FILE_INACTIVE = 0,
-	ENUM_FILE_ACTIVE_OUT = 1,
-	ENUM_FILE_ACTIVE_IN = 2,
-	ENUM_FILE_ACTIVE_IN_OUT = 3
+enum file_statuses
+{ // NOTE: We don't have a paused status, currently. Paused is ENUM_FILE_INACTIVE_ACCEPTED, which is the default as soon as file_path is set. There is no pause.
+	ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND = 0,
+	ENUM_FILE_ACTIVE_OUT = 1, // Do not modify
+	ENUM_FILE_ACTIVE_IN = 2, // Do not modify
+	ENUM_FILE_ACTIVE_IN_OUT = 3, // Do not modify // XXX ENUM value MUST equal ENUM_FILE_ACTIVE_OUT + ENUM_FILE_ACTIVE_IN XXX
+	ENUM_FILE_INACTIVE_ACCEPTED = 4, // This may be in or outbound originally
+	ENUM_FILE_INACTIVE_CANCELLED = 5,
+	ENUM_FILE_INACTIVE_COMPLETE = 6
 };
 
 /* Struct Models/Types used for passing to specific pthread'd functions */ // Don't forget to initialize = {0} when calling these types.
@@ -789,7 +774,7 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)__attribu
 int set_f_from_i(int *file_n,const int n,const int i)__attribute__((warn_unused_result));
 int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
 int set_r(const int n,const int f,const int passed_requester_n)__attribute__((warn_unused_result));
-void random_string(char *destination,const unsigned int destination_size);
+void random_string(char *destination,const size_t destination_size);
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
 int pid_kill(const pid_t pid,const int signal);
@@ -866,10 +851,10 @@ int sql_delete_setting(const int force_plaintext,const int peer_index,const char
 int sql_delete_peer(const int peer_index);
 
 /* file_magic.c */
-int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
-int file_is_pending(const int n,const int f)__attribute__((warn_unused_result));
+int file_status_get(const int n,const int f)__attribute__((warn_unused_result));
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);

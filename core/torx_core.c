@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 22 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 23 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -1723,19 +1723,12 @@ char *file_progress_string(const int n,const int f)
 	const time_t time_left = peer[n].file[f].time_left;
 	const uint64_t bytes_per_second = peer[n].file[f].bytes_per_second;
 	const uint64_t size = peer[n].file[f].size;
-	const uint8_t status = peer[n].file[f].status; // TODO DEPRECIATE FILE STATUS TODO
 	torx_unlock(n) // XXX
 	#define file_size_text_len 128 // TODO perhaps increase this size. its arbitary. By our math it shoud be more than enough though.
 	char *file_size_text = torx_insecure_malloc(file_size_text_len); // arbitrary allocation amount
 //	printf("Checkpoint string: %ld left, %lu b/s\n",time_left,bytes_per_second);
-	if(status == ENUM_FILE_OUTBOUND_REJECTED)
-		snprintf(file_size_text,file_size_text_len,"Peer rejected");
-	else if(status == ENUM_FILE_OUTBOUND_CANCELLED)
+	if(file_is_cancelled(n,f))
 		snprintf(file_size_text,file_size_text_len,"Cancelled");
-	else if(status == ENUM_FILE_INBOUND_REJECTED)
-		snprintf(file_size_text,file_size_text_len,"Rejected");
-	else if(status == ENUM_FILE_INBOUND_CANCELLED)
-		snprintf(file_size_text,file_size_text_len,"Peer cancelled");
 	else if(time_left > 7200)
 	{
 		const time_t hours = time_left/60/60;
@@ -1935,7 +1928,7 @@ void *itovp(const int i)
 	return (void*)(intptr_t)(i+SHIFT);
 }
 
-void random_string(char *destination,const unsigned int destination_size)
+void random_string(char *destination,const size_t destination_size)
 { // Puts length + '\0' in destination // NOTE: srand() must be properly seeded (not with time()) or rand() will produce non-unique results if called more than once a second
 	if(!destination || destination_size < 2)
 	{
@@ -1944,8 +1937,8 @@ void random_string(char *destination,const unsigned int destination_size)
 	}
 	const char alphanumeric[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 	destination[destination_size-1] = '\0';
-	for(unsigned int i = 0; i < destination_size - 1; i++)
-		destination[i] = *(alphanumeric + (randombytes_random() % 62));
+	for(size_t iter = 0; iter < destination_size - 1; iter++)
+		destination[iter] = *(alphanumeric + (randombytes_random() % 62));
 }
 
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion)
@@ -3152,7 +3145,6 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].filename = NULL;
 	peer[n].file[f].file_path = NULL;
 	peer[n].file[f].size = 0;
-	peer[n].file[f].status = 0; // TODO DEPRECIATE FILE STATUS TODO
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
 	peer[n].file[f].split_path = NULL;
@@ -3746,7 +3738,7 @@ int set_g(const int n,const void *arg)
 }
 
 int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
-{ // Set the f initially via checksum search or truncated checksum. XXX BE CAREFUL: this function process on potentially dangerous peer messages. XXX
+{ // Set the f initially via checksum search or truncated checksum. XXX BE CAREFUL: this function processes on potentially dangerous peer messages. XXX
   // XXX BE AWARE: This function WILL return >-1 as long as CHECKSUM_BIN_LEN is passed as checksum_len XXX
 	if(n < 0 || !checksum || checksum_len < 1)
 	{
@@ -3755,26 +3747,16 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 		return -1;
 	}
 	int f = 0;
-	uint64_t size;
-//	while((size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size))) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
-//		f++; // check if file already exists in our struct
-	int cmp = 1;
-	for( ; (size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size))) ; f++)
-	{ // check if file already exists in our struct
-		unsigned char checksum_local[CHECKSUM_BIN_LEN];
-		getter_array(&checksum_local,sizeof(checksum_local),n,INT_MIN,f,offsetof(struct file_list,checksum));
-		cmp = memcmp(checksum_local,checksum,checksum_len);
-		sodium_memzero(checksum_local,sizeof(checksum_local));
-		if(!cmp) // prevent f++
-			break;
-	}
-	if(checksum_len < CHECKSUM_BIN_LEN && size == 0)
+	int checksum_is_null;
+	torx_read(n) // XXX
+	while(!(checksum_is_null = is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN)) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
+		f++; // Not null, and not matching.
+	torx_unlock(n) // XXX
+	if(checksum_len < CHECKSUM_BIN_LEN && checksum_is_null)
 		return -1; // do not put error message, valid reasons why this could occur
 	expand_file_struc(n,f); // Expand struct if necessary
-	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
-	if(cmp) // does not exist yet at this n,f
+	if(checksum_is_null) // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 		setter(n,INT_MIN,f,offsetof(struct file_list,checksum),checksum,checksum_len); // source is pointer
-	//	memcpy(peer[n].file[f].checksum,checksum,checksum_len);
 	return f;
 }
 

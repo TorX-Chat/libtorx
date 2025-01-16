@@ -220,8 +220,6 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			else // if(!bytes) // No more to read (legacy complete or IO error)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
 				error_simple(0,PINK"File completed in a legacy manner. Coding error or IO error. Report this."RESET); // could be falsely triggered by file shrinkage
-				const uint8_t file_status = ENUM_FILE_OUTBOUND_COMPLETED; // TODO 2024/12/24 consider removing line
-				setter(file_n,INT_MIN,f,offsetof(struct file_list,status),&file_status,sizeof(file_status)); // TODO 2024/12/24 consider removing line // TODO DEPRECIATE FILE STATUS TODO
 				close_sockets(file_n,f)
 				transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
 				sodium_memzero(send_buffer,(size_t)packet_len);

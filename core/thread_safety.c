@@ -218,7 +218,6 @@ struct offsets offsets_file[] = {
 	offsize(file_list,filename,"filename"),
 	offsize(file_list,file_path,"file_path"),
 	offsize(file_list,size,"size"),
-	offsize(file_list,status,"status"),
 	offsize(file_list,modified,"modified"),
 	offsize(file_list,splits,"splits"),
 	offsize(file_list,split_path,"split_path"),
