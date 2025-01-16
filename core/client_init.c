@@ -141,10 +141,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 		torx_unlock(n) // XXX
 	}
 	if(!active_transfers_ongoing && f > -1)
-	{ // call transfer_progress with .last_transferred to trigger a stall
-		const uint64_t last_transferred = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,last_transferred));
-		transfer_progress(n,f,last_transferred);
-	}
+		transfer_progress(n,f); // XXX This intentionally triggers a stall because no transfer has occurred since last_transferred was last updated. XXX
 	return was_transferring;
 }
 
@@ -1049,6 +1046,34 @@ void file_cancel(const int n,const int f)
 	process_pause_cancel(n,f,n,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL);
 }
 
+unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)
+{ // Be sure to torx_free. This is for group files.
+	if(!file_path)
+		return NULL;
+	const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
+	unsigned char *split_hashes_and_size = torx_secure_malloc(split_hashes_len+sizeof(uint64_t));
+	size_t size_total = 0; // sum of sections
+	for(int16_t section = 0; section <= splits; section++)
+	{ // populate split_hashes
+		uint64_t end = 0;
+		const uint64_t start = calculate_section_start(&end,size,splits,section);
+		const uint64_t len = end - start + 1;
+		size_total += b3sum_bin(&split_hashes_and_size[CHECKSUM_BIN_LEN*section],file_path,NULL,start,len);
+	//	printf("Checkpoint section=%d start=%lu end=%lu len=%lu total=%lu\n",section,start,end,len,size_total);
+	}
+	if(size != size_total)
+	{
+		error_printf(0,"Coding or IO error. File size %zu != %zu sum of sections. Splits=%u",size,size_total,splits);
+		torx_free((void*)&split_hashes_and_size);
+		return NULL;
+	}
+	const uint64_t trash = htobe64(size);
+	memcpy(&split_hashes_and_size[split_hashes_len],&trash,sizeof(uint64_t));
+	if(hash_of_hashes)
+		b3sum_bin(hash_of_hashes,NULL,split_hashes_and_size,0,split_hashes_len+sizeof(uint64_t)); // hash of hashes and size
+	return split_hashes_and_size;
+}
+
 static inline void *file_init(void *arg)
 { // Send File Offer
 	struct file_strc *file_strc = (struct file_strc*) arg; // Casting passed struct
@@ -1066,25 +1091,9 @@ static inline void *file_init(void *arg)
 		size = file_strc->size;
 		while(splits && size / splits < MINIMUM_SECTION_SIZE)
 			splits--;
-		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
-		split_hashes_and_size = torx_secure_malloc(split_hashes_len+sizeof(uint64_t));
-		size_t size_total = 0; // sum of sections
-		for(int16_t section = 0; section <= splits; section++)
-		{ // populate split_hashes
-			uint64_t end = 0;
-			const uint64_t start = calculate_section_start(&end,size,splits,section);
-			const uint64_t len = end - start + 1;
-			size_total += b3sum_bin(&split_hashes_and_size[CHECKSUM_BIN_LEN*section],file_strc->path,NULL,start,len);
-			printf("Checkpoint section=%d start=%lu end=%lu len=%lu total=%lu\n",section,start,end,len,size_total);
-		}
-		if(size != size_total)
-		{
-			error_printf(0,"Coding or IO error. File size %zu != %zu sum of sections. Splits=%u",size,size_total,splits);
+		split_hashes_and_size = file_split_hashes(checksum,file_strc->path,splits,size);
+		if(split_hashes_and_size == NULL)
 			goto error;
-		}
-		const uint64_t trash = htobe64(size);
-		memcpy(&split_hashes_and_size[split_hashes_len],&trash,sizeof(uint64_t));
-		b3sum_bin(checksum,NULL,split_hashes_and_size,0,split_hashes_len+sizeof(uint64_t)); // hash of hashes and size
 	}
 	else // TODO running a checksum on a file to determine its f value. Might already have it but didn't bother checking from the path + time. (note: different checksum type on group files, cannot check GROUP_CTRL's files)
 		size = b3sum_bin(checksum,file_strc->path,NULL,0,0);

@@ -389,21 +389,17 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
 						const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
 						torx_unlock(packet_file_n) // XXX
-						const uint64_t transferred = calculate_transferred(packet_file_n,f);
 					//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 						const int file_status = file_status_get(packet_file_n,f);
 						if(current_pos == current_end)
 						{ // Completed section
 							error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
 							close_sockets(packet_file_n,f)
-							const uint64_t size = getter_uint64(packet_file_n,INT_MIN,f,offsetof(struct file_list,size));
-							if(transferred > size) // 2024/03/20 + 2024/05/26(+482 bytes) Occured after a bunch of restarts. Reason unknown. File not corrupted.
-								error_printf(0,"Notice: packet_removal exceeded size of file by %lu bytes",transferred - size);
-							transfer_progress(packet_file_n,f,transferred);
+							transfer_progress(packet_file_n,f);
 						}
 						else if(file_status == ENUM_FILE_ACTIVE_OUT || file_status == ENUM_FILE_ACTIVE_IN_OUT)
 						{
-							transfer_progress(packet_file_n,f,transferred); // probably best to have this *before* send_prep, but it might not matter
+							transfer_progress(packet_file_n,f); // probably best to have this *before* send_prep, but it might not matter
 							send_prep(event_strc->n,packet_file_n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
 						}
 						else // Ceasing send due to status change
@@ -821,7 +817,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else
 				{
 					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
-					transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
+					transfer_progress(file_n,f); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
 			}
 			else
@@ -1084,25 +1080,52 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							torx_free((void*)&file_path);
 							continue;
 						}
-						if(file_status == ENUM_FILE_INACTIVE_ACCEPTED || file_status == ENUM_FILE_INACTIVE_COMPLETE)
+						if(file_status == ENUM_FILE_INACTIVE_COMPLETE/* || file_status == ENUM_FILE_INACTIVE_ACCEPTED */)
 						{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
 							struct stat file_stat = {0};
 							time_t modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified));
 							const int stat_ret = stat(file_path, &file_stat);
-							if(stat_ret || file_stat.st_mtime != modified)
-							{ // File cannot be accessed or has an unexpected modification time
-								if(!stat_ret && !modified && event_strc->owner == ENUM_OWNER_GROUP_PEER)
-								{ // Necessary
-									modified = file_stat.st_mtime;
+							if(stat_ret)
+							{ // File does not exist
+								error_simple(0,"Requested file cannot be accessed. Try re-offering it.");
+								printf("Checkpoint path: %s %ld ?= %ld\n",file_path,file_stat.st_mtime,modified);
+								torx_free((void*)&file_path);
+								continue;
+							}
+							else if(file_stat.st_mtime != modified)
+							{ // File cannot be accessed or has an unexpected modification time XXX MUST BE THE SAME AS BELOW torx_fd_lock
+								torx_fd_lock(file_n,f) // XXX MUST BE BETWEEN REDUNDANT CHECKS. XXX To prevent two requests that come in at nearly the same time from causing the file to unnecessarily be checksum'd twice.
+								if(file_stat.st_mtime != modified)
+								{ // Checking again (redundantly) XXX MUST BE THE SAME AS ABOVE torx_fd_lock
+									unsigned char checksum[CHECKSUM_BIN_LEN];
+									unsigned char checksum_unverified[CHECKSUM_BIN_LEN];
+									getter_array(&checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
+									if(file_n == event_strc->group_n)
+									{ // File exists and is group transfer XXX NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
+										error_simple(0,"Re-checking group file because modification time has changed.");
+										const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
+										unsigned char *split_hashes_and_size = file_split_hashes(checksum_unverified,file_path,splits,size);
+										torx_free((void*)&split_hashes_and_size); // We don't need this, we just need the hash of hashes.
+									}
+									else
+									{ // File exists and is P2P or PM
+										error_simple(0,"Re-checking file because modification time has changed.");
+										b3sum_bin(checksum_unverified,file_path,NULL,0,0);
+									}
+									const int cmp = memcmp(checksum,checksum_unverified,CHECKSUM_BIN_LEN);
+									sodium_memzero(checksum,sizeof(checksum));
+									sodium_memzero(checksum_unverified,sizeof(checksum_unverified));
+									if(cmp)
+									{
+										torx_fd_unlock(file_n,f) // XXX
+										error_simple(0,"Requested file does not match modification time or hash. It has been modified or corrupted since receiving. You may re-offer the modified file.");
+										torx_free((void*)&file_path);
+										continue;
+									}
+									modified = file_stat.st_mtime; // Updating modification time in struct after verifying checksums, and carrying on.
 									setter(file_n,INT_MIN,f,offsetof(struct file_list,modified),&modified,sizeof(modified));
 								}
-								else
-								{
-									error_simple(0,"Requested file cannot be accessed or has been modified since offer. Try re-offering it.");
-									printf("Checkpoint path: %s %ld ?= %ld\n",file_path,file_stat.st_mtime,modified);
-									torx_free((void*)&file_path);
-									continue;
-								}
+								torx_fd_unlock(file_n,f) // XXX
 							}
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 

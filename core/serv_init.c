@@ -219,9 +219,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
-				error_simple(0,PINK"File completed in a legacy manner. Coding error or IO error. Report this."RESET); // could be falsely triggered by file shrinkage
+				error_simple(0,PINK"Read to end of file prematurely. IO error or coding error. Report this."RESET); // could be falsely triggered by file shrinkage
 				close_sockets(file_n,f)
-				transfer_progress(file_n,f,calculate_transferred(file_n,f)); // calling this because we set file status ( not necessary when calling message_send which calls print_message_cb )
+				transfer_progress(file_n,f); // XXX This presumably triggers a stall XXX
 				sodium_memzero(send_buffer,(size_t)packet_len);
 				goto error;
 			}

@@ -760,7 +760,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
 char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
-void transfer_progress(const int n,const int f,const uint64_t transferred);
+void transfer_progress(const int n,const int f);
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
 char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
 uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
@@ -883,6 +883,7 @@ void file_request_internal(const int n,const int f,const int8_t fd_type);
 void file_set_path(const int n,const int f,const char *path);
 void file_accept(const int n,const int f);
 void file_cancel(const int n,const int f);
+unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)__attribute__((warn_unused_result));
 int file_send(const int n,const char *path);
 
 /* serv_init.c */

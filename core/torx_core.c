@@ -111,10 +111,8 @@ int highest_ever_o = 0;
 int file_piece_p_iter = -1; // save some CPU cycles by setting this on startup.
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
 unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intialized as zero to permit passwordless login
-#ifndef LLTEST
 int max_group = 0; // Should not be used except to constrain expand_message_struc
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
-#endif
 time_t startup_time = 0;
 #ifdef WIN32
 HANDLE tor_fd_stdout = {0};
@@ -429,9 +427,6 @@ void error_printf(const int debug_level,const char *format,...)
 	#pragma GCC diagnostic pop
 }
 
-#ifdef LLTEST
-// TODO, see ll.c for notes
-#else
 void initialize_n_cb(const int n)
 {
 	if(initialize_n_registered)
@@ -472,21 +467,12 @@ void expand_group_struc_cb(const int g)
 	if(expand_group_struc_registered)
 		expand_group_struc_registered(g);
 }
-#endif
 
-#ifdef LLTEST // TODO should this really be torx_file or the unique identifier for the file?
-void transfer_progress_cb(struct torx_file,const uint64_t transferred)
-{
-	if(transfer_progress_registered)
-		transfer_progress_registered(n,f,transferred);
-}
-#else
 void transfer_progress_cb(const int n,const int f,const uint64_t transferred)
 {
 	if(transfer_progress_registered)
 		transfer_progress_registered(n,f,transferred);
 }
-#endif
 
 void change_password_cb(const int value)
 {
@@ -1751,9 +1737,8 @@ char *file_progress_string(const int n,const int f)
 	return file_size_text;
 }
 
-void transfer_progress(const int n,const int f,const uint64_t transferred)
+void transfer_progress(const int n,const int f)
 { // This is called every packet on a file transfer. Packets are PACKET_LEN-10 in size, so 488 (as of 2022/08/19, may be changed to accomodate sequencing)
-// XXX NOTE: To trigger or indicate stall, call twice with transferred equal on each call
 	time_t time_current = 0;
 	time_t nstime_current = 0;
 	set_time(&time_current,&nstime_current);
@@ -1763,7 +1748,8 @@ void transfer_progress(const int n,const int f,const uint64_t transferred)
 	const time_t last_progress_update_time = peer[n].file[f].last_progress_update_time;
 	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_nstime));
 	torx_unlock(n) // XXX
-	if(transferred == size)
+	const uint64_t transferred = calculate_transferred(n,f);
+	if(transferred == size) // NOT else if
 	{
 		torx_write(n) // XXX
 		peer[n].file[f].last_transferred = transferred;
@@ -1874,30 +1860,23 @@ uint64_t calculate_transferred(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
-	const int is_active = file_is_active(n,f);
-	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
-	{ // Inbound
-		torx_read(n) // XXX
-		const uint64_t *split_progress = peer[n].file[f].split_progress;
-		if(split_progress == NULL) // error_simple(0,"Cannot calculate transferred. Split_info is uninitialized. Should have been initialized by split_update or load_message_struc. Coding error. Report this.");
-		{
-			torx_unlock(n) // XXX
-			return 0; // Sanity check. It should be normally set by load_message_struc or split_update for inbound, or file_init for outbound.
-		}
+	const int is_active = file_is_active(n,f); // DO NOT REPLACE WITH file_status_get unless necessary.
+	torx_read(n) // XXX
+	const uint64_t *split_progress = peer[n].file[f].split_progress;
+	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT || (!is_active && split_progress))
+	{ // Inbound // XXX In theory, (!is_active && split_progress) == ENUM_FILE_INACTIVE_COMPLETE (inbound)
 		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
 			transferred += peer[n].file[f].split_progress[section];
-		torx_unlock(n) // XXX
 	}
 	else if(owner != ENUM_OWNER_GROUP_CTRL)
 	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
 		const int r = 0; // set_r(n,f,n); should be unnecessary because this isn't a group file transfer.
-		torx_read(n) // XXX
 		if(peer[n].file[f].request == NULL)
 			transferred = 0;
 		else
 			transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
-		torx_unlock(n) // XXX
 	}
+	torx_unlock(n) // XXX
 //	else
 //		error_simple(0,"We currently have no manner of tracking and calculating the total transferred amount of GROUP_CTRL outbound transfers. Coding error. Report this.");
 	return transferred; // BEWARE of baseline. See above.
