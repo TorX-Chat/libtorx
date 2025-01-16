@@ -698,7 +698,7 @@ void *protocol_access(const int p_iter,const size_t offset)__attribute__((warn_u
 size_t getter_size(const char *parent,const char *member)__attribute__((warn_unused_result));
 size_t getter_offset(const char *parent,const char *member)__attribute__((warn_unused_result));
 void setter(const int n,const int i,const int f,const size_t offset,const void *value,const size_t len);
-char getter_byte(const int n,const int i,const int f,const size_t offset);
+char getter_byte(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset);
 int8_t getter_int8(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
 int16_t getter_int16(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
@@ -754,9 +754,9 @@ void torx_free(void **p);
 int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
-time_t message_find_since(const int n);
-int *message_load_more(int *count,const int n);
-char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input);
+time_t message_find_since(const int n)__attribute__((warn_unused_result));
+int *message_load_more(int *count,const int n)__attribute__((warn_unused_result));
+char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)__attribute__((warn_unused_result));
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
 char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
@@ -789,10 +789,10 @@ void zero_i(const int n,const int i);
 void zero_g(const int g);
 void invitee_add(const int g,const int n);
 int invitee_remove(const int g,const int n);
-char *mit_strcasestr(char *dumpster,const char *diver);
+char *mit_strcasestr(char *dumpster,const char *diver)__attribute__((warn_unused_result));
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
 size_t stripbuffer(char *buffer);
-uint16_t randport(const uint16_t arg);
+uint16_t randport(const uint16_t arg)__attribute__((warn_unused_result));
 char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
 void start_tor(void);
 size_t b64_decoded_size(const char *in)__attribute__((warn_unused_result));
@@ -843,7 +843,7 @@ int sql_update_peer(const int n);
 int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since);
 void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
 int sql_populate_peer(void);
-unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query);
+unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query)__attribute__((warn_unused_result));
 void sql_populate_setting(const int force_plaintext);
 int sql_delete_message(const int peer_index,const time_t time,const time_t nstime);
 int sql_delete_history(const int peer_index);
@@ -867,7 +867,7 @@ int initialize_split_info(const int n,const int f);
 void split_update(const int n,const int f,const int16_t section);
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
 size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
-char *custom_input_file(const char *hs_ed25519_secret_key_file);
+char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
 void takedown_onion(const int peer_index,const int delete);
 void block_peer(const int n);
 
@@ -898,8 +898,8 @@ void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
 
 /* socks.c */
-evutil_socket_t remote_connect(const char *host, const char *port, struct addrinfo hints);
-evutil_socket_t socks_connect(const char *host, const char *port);
+evutil_socket_t remote_connect(const char *host, const char *port, struct addrinfo hints)__attribute__((warn_unused_result));
+evutil_socket_t socks_connect(const char *host, const char *port)__attribute__((warn_unused_result));
 
 /* cpucount.c */
 int cpucount(void)__attribute__((warn_unused_result));
