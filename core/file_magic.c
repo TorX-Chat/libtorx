@@ -132,6 +132,8 @@ int file_is_complete(const int n,const int f)
 	torx_unlock(n) // XXX
 	if(split_path || file_path_p == NULL)
 		return 0;
+	if(size == calculate_transferred_inbound(n,f))
+		return 1; // Saves checking on disk, if this file is already completed.
 	char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 	const uint64_t size_on_disk = get_file_size(file_path);
 	torx_free((void*)&file_path);
@@ -1065,7 +1067,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			}
 		}
 		section_unclaim(n,f,peer_n,fd_type); // must be before file_request_internal
-		if(section_complete && calculate_transferred(n,f) == size)
+		if(section_complete && file_is_complete(n,f))
 		{
 			if(CHECKSUM_ON_COMPLETION && owner != ENUM_OWNER_GROUP_CTRL) // Note: Group file generate section hashes and compare individually. Not necessary to check hash of hashes or size.
 			{ // TODO This blocks, so it should be used for debug purposes only

@@ -1023,7 +1023,7 @@ void file_accept(const int n,const int f)
 		}
 		initialize_split_info(n,f); // calls split_read(n,f);
 		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
-		if(calculate_transferred(n,f) < size)
+		if(calculate_transferred_inbound(n,f) < size)
 			file_request_internal(n,f,-1);
 		else // Complete. Not checking if oversized or wrong hash.
 			error_simple(0,"This code should never execute. If it executes, the split file hasn't been deleted but should have been. Report this.");

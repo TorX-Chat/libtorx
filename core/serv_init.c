@@ -172,7 +172,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			if(r < 0) // probably .request is NULL
 				goto error;
 			uint16_t data_size = PACKET_SIZE_MAX-16;
-			torx_fd_lock(file_n,f)
+			torx_fd_lock(file_n,f) // XXX
 			torx_read(file_n) // XXX
 			if(peer[file_n].file[f].request == NULL)
 			{ // Necessary sanity check to avoid race conditions
@@ -203,7 +203,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_write(file_n) // XXX
 			peer[file_n].file[f].fd = fd_active;
 			torx_unlock(file_n) // XXX
-			torx_fd_unlock(file_n,f)
+			torx_fd_unlock(file_n,f) // XXX
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -219,7 +219,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
-				error_simple(0,PINK"Read to end of file prematurely. IO error or coding error. Report this."RESET); // could be falsely triggered by file shrinkage
+				error_printf(0,PINK"Read to end of file prematurely at byte: %lu. IO error or coding error. Report this."RESET,start); // could be falsely triggered by file shrinkage
 				close_sockets(file_n,f)
 				transfer_progress(file_n,f); // XXX This presumably triggers a stall XXX
 				sodium_memzero(send_buffer,(size_t)packet_len);

@@ -1738,7 +1738,7 @@ char *file_progress_string(const int n,const int f)
 }
 
 void transfer_progress(const int n,const int f)
-{ // This is called every packet on a file transfer. Packets are PACKET_LEN-10 in size, so 488 (as of 2022/08/19, may be changed to accomodate sequencing)
+{ // This is called every packet on a file transfer (IN / OUT). Packets are PACKET_LEN-10 in size, so 488 (as of 2022/08/19, may be changed to accomodate sequencing)
 	time_t time_current = 0;
 	time_t nstime_current = 0;
 	set_time(&time_current,&nstime_current);
@@ -1756,6 +1756,7 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].bytes_per_second = 0;
 		peer[n].file[f].time_left = 0;
 		torx_unlock(n) // XXX
+		printf("Checkpoint transfer_progress COMPLETE\n");
 		transfer_progress_cb(n,f,transferred);
 	}
 	else if(diff > file_progress_delay || last_transferred == transferred /* stalled */)
@@ -1788,6 +1789,10 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].last_progress_update_nstime = nstime_current;
 		peer[n].file[f].last_transferred = transferred;
 		torx_unlock(n) // XXX
+		if(last_transferred == transferred)
+			printf("Checkpoint transfer_progress STALLED at %lu\n",transferred);
+		else
+			printf("Checkpoint transfer_progress %lu of %lu\n",transferred,size);
 		transfer_progress_cb(n,f,transferred);
 	}
 }
@@ -1856,30 +1861,35 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 	return NULL;
 }
 
-uint64_t calculate_transferred(const int n,const int f)
+uint64_t calculate_transferred_inbound(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	uint64_t transferred = 0;
-	const int is_active = file_is_active(n,f); // DO NOT REPLACE WITH file_status_get unless necessary.
 	torx_read(n) // XXX
-	const uint64_t *split_progress = peer[n].file[f].split_progress;
-	if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT || (!is_active && split_progress))
-	{ // Inbound // XXX In theory, (!is_active && split_progress) == ENUM_FILE_INACTIVE_COMPLETE (inbound)
+	if(peer[n].file[f].split_progress)
 		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
 			transferred += peer[n].file[f].split_progress[section];
-	}
-	else if(owner != ENUM_OWNER_GROUP_CTRL)
-	{ // Outbound // XXX Baseline accounts for what peer is NOT requesting (we assume they already have it) XXX this could cause problems depending how the return is used
-		const int r = 0; // set_r(n,f,n); should be unnecessary because this isn't a group file transfer.
-		if(peer[n].file[f].request == NULL)
-			transferred = 0;
-		else
-			transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
-	}
 	torx_unlock(n) // XXX
-//	else
-//		error_simple(0,"We currently have no manner of tracking and calculating the total transferred amount of GROUP_CTRL outbound transfers. Coding error. Report this.");
-	return transferred; // BEWARE of baseline. See above.
+	return transferred;
+}
+
+uint64_t calculate_transferred_outbound(const int n,const int f,const int r)
+{ // For non-group transfers, pass r=0
+	uint64_t transferred = 0;
+	torx_read(n) // XXX
+	if(peer[n].file[f].request)
+		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
+	torx_unlock(n) // XXX
+	return transferred;
+}
+
+uint64_t calculate_transferred(const int n,const int f)
+{ // We are considering depreciating this due to the lack of support for outgoing group transfers
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+	uint64_t transferred = 0;
+	const int is_active = file_is_active(n,f); // DO NOT REPLACE WITH file_status_get because it is more costly
+	if(owner != ENUM_OWNER_GROUP_CTRL && is_active != ENUM_FILE_ACTIVE_IN && is_active != ENUM_FILE_ACTIVE_IN_OUT && (transferred = calculate_transferred_outbound(n,f,0)))
+		return transferred; // Return outbound, if not active in, not GROUP_CTRL,
+	return calculate_transferred_inbound(n,f); // Otherwise return inbound
 }
 
 uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)

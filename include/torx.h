@@ -764,6 +764,8 @@ void transfer_progress(const int n,const int f);
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
 char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
 uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
+uint64_t calculate_transferred_inbound(const int n,const int f)__attribute__((warn_unused_result));
+uint64_t calculate_transferred_outbound(const int n,const int f,const int r)__attribute__((warn_unused_result));
 uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)__attribute__((warn_unused_result));
 int vptoi(const void* arg)__attribute__((warn_unused_result));
 void *itovp(const int i)__attribute__((warn_unused_result));
