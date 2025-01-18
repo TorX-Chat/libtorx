@@ -709,7 +709,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			}
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{ // Received Message type: Raw File data // TODO we do too much processing here. this might get CPU intensive.
-printf("Checkpoint FILE PIECE 0\n");
 				int file_n = event_strc->n;
 				int f = set_f(file_n,&read_buffer[cur],4);
 				if(f < 0 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
@@ -773,12 +772,10 @@ printf("Checkpoint FILE PIECE 0\n");
 					} */
 					continue;
 				}
-printf("Checkpoint FILE PIECE 1\n");
-/*TODO LOCKUP*/			torx_fd_lock(file_n,f) // XXX
+				torx_fd_lock(file_n,f) // XXX
 				torx_read(file_n) // XXX
 				FILE *fd_active = peer[file_n].file[f].fd;
 				torx_unlock(file_n) // XXX
-printf("Checkpoint FILE PIECE 2\n");
 				if(fd_active == NULL)
 				{
 					char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
@@ -809,11 +806,10 @@ printf("Checkpoint FILE PIECE 2\n");
 				}
 				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
-/*TODO LOCKUP*/			torx_write(file_n) // XXX
+				torx_write(file_n) // XXX
 				peer[file_n].file[f].fd = fd_active;
 				torx_unlock(file_n) // XXX
 				torx_fd_unlock(file_n,f) // XXX
-printf("Checkpoint FILE PIECE 3\n");
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
@@ -821,10 +817,8 @@ printf("Checkpoint FILE PIECE 3\n");
 				else
 				{
 					section_update(file_n,f,packet_start,wrote,event_strc->fd_type,section,section_end,event_strc->n);
-printf("Checkpoint FILE PIECE 4\n");
 					transfer_progress(file_n,f); // calling every packet is a bit extreme but necessary. It should handle or we could put an intermediary function.
 				}
-printf("Checkpoint FILE PIECE 5\n");
 			}
 			else
 			{ // Process messages
@@ -1108,14 +1102,14 @@ printf("Checkpoint FILE PIECE 5\n");
 									getter_array(&checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
 									if(file_n == event_strc->group_n)
 									{ // File exists and is group transfer XXX NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
-										error_simple(0,"Re-checking group file because modification time has changed.");
+										error_simple(0,"Re-checking group file because modification time has changed. This is undesirable. Report this.");
 										const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
 										unsigned char *split_hashes_and_size = file_split_hashes(checksum_unverified,file_path,splits,size);
 										torx_free((void*)&split_hashes_and_size); // We don't need this, we just need the hash of hashes.
 									}
 									else
 									{ // File exists and is P2P or PM
-										error_simple(0,"Re-checking file because modification time has changed.");
+										error_simple(0,"Re-checking file because modification time has changed. This is undesirable. Report this.");
 										b3sum_bin(checksum_unverified,file_path,NULL,0,0);
 									}
 									const int cmp = memcmp(checksum,checksum_unverified,CHECKSUM_BIN_LEN);

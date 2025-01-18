@@ -197,6 +197,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 					torx_free((void*)&file_path);
 					goto error;
 				}
+				torx_free((void*)&file_path);
 			}
 			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type] != start)
 			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);

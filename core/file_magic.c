@@ -452,8 +452,8 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 						peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
 					}
 			}
-			else
-				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.");
+		//	else
+		//		error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.");
 			torx_unlock(group_n) // XXX
 			const int file_status = file_status_get(group_n,f);
 			if(file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT || file_status == ENUM_FILE_INACTIVE_ACCEPTED) // TODO NOTE: ENUM_FILE_INACTIVE_ACCEPTED here will make pauses really pointless in group transfers, but we need it
@@ -999,10 +999,10 @@ void split_update(const int n,const int f,const int16_t section)
 			torx_unlock(n) // XXX
 			fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
 			fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
-			close_sockets_nolock(fp);
 		}
 		else
 			torx_unlock(n) // XXX
+		close_sockets_nolock(fp);
 	}
 }
 

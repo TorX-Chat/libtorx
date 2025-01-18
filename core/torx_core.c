@@ -179,6 +179,7 @@ pthread_rwlock_t mutex_expand = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_expand_group = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_packet = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_broadcast = PTHREAD_RWLOCK_INITIALIZER;
+
 //int8_t force_sign = 2; // permanently moved to UI
 sqlite3 *db_plaintext = {0};
 sqlite3 *db_encrypted = {0};
@@ -352,8 +353,7 @@ static inline void write_debug_file(const char *message)
 	FILE *file = fopen(debug_file, "a+");
 	if(file == NULL)
 		return;
-	if(fputs(message,file) == EOF)
-		return;
+	fputs(message,file); // No point to check return here
 	close_sockets_nolock(file);
 }
 
@@ -771,19 +771,18 @@ unsigned char *read_bytes(size_t *data_len,const char *path)
 	unsigned char *data = NULL;
 	size_t allocated = 0;
 	FILE *fp;
-	if(!path || (fp = fopen(path, "r")) == NULL)
+	if(path && (fp = fopen(path, "r")))
 	{
-		error_simple(0,"Could not open file. Check permissions. Bailing out.");
-		goto end;
+		fseek(fp, 0L, SEEK_END);
+		allocated = (size_t)ftell(fp);
+		data = torx_insecure_malloc(allocated);
+		fseek(fp, 0L, SEEK_SET);
+		if(fread(data,1,allocated,fp) != allocated)
+			error_simple(0,"Read less than expected amount of data. Uncaught bug.");
+		close_sockets_nolock(fp);
 	}
-	fseek(fp, 0L, SEEK_END);
-	allocated = (size_t)ftell(fp);
-	data = torx_insecure_malloc(allocated);
-	fseek(fp, 0L, SEEK_SET);
-	if(fread(data,1,allocated,fp) != allocated)
-		error_simple(0,"Read less than expected amount of data. Uncaught bug.");
-	close_sockets_nolock(fp);
-	end: {}
+	else
+		error_simple(0,"Could not open file. Check permissions. Bailing out.");
 	if(data_len)
 		*data_len = allocated;
 	return data;
@@ -2038,14 +2037,15 @@ static int pid_write(const int pid)
 
 static inline int pid_read(void)
 { // Read Tor's PID from file (used for killing an orphaned process after a crash or improper shutdown)
+	int pid = 0;
 	FILE *fp;
-	if((fp = fopen(file_tor_pid, "r")) == NULL)
-		return 0; // no PID
-	char pid_string[21] = {0};
-	if(fgets(pid_string,sizeof(pid_string)-1,fp) == NULL)
-		return 0;
-	const int pid = (int)strtoll(pid_string, NULL, 10);
-	close_sockets_nolock(fp); // close append mode
+	if((fp = fopen(file_tor_pid, "r")))
+	{
+		char pid_string[21] = {0};
+		if(fgets(pid_string,sizeof(pid_string)-1,fp))
+			pid = (int)strtoll(pid_string, NULL, 10);
+		close_sockets_nolock(fp); // close append mode
+	}
 	return pid;
 }
 
@@ -2218,9 +2218,7 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 	torx_free((void*)&peer[n].file[f].split_status_n);
 	torx_free((void*)&peer[n].file[f].split_status_fd);
 	torx_free((void*)&peer[n].file[f].split_status_req);
-//	pthread_mutex_lock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 	close_sockets_nolock(peer[n].file[f].fd) // Do not eliminate
-//	pthread_mutex_unlock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 }
 
 void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of the mutex
@@ -3150,7 +3148,9 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 	peer[n].file[f].time_left = 0;
 	peer[n].file[f].speed_iter = 0;
 	sodium_memzero(peer[n].file[f].last_speeds,sizeof(peer[n].file[f].last_speeds));
+//	pthread_mutex_lock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 	pthread_mutex_init(&peer[n].file[f].mutex_file, NULL);
+//	pthread_mutex_unlock(&peer[n].file[f].mutex_file); // Do not replace // TODO disabling because suspicion of lock-order-inversion (see comments on torx_fd_lock)
 
 	peer[n].file[f].offer = torx_insecure_malloc(sizeof(struct offer_list) *11);
 	peer[n].file[f].request = torx_insecure_malloc(sizeof(struct request_list) *11);

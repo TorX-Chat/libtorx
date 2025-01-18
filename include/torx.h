@@ -293,7 +293,7 @@ typedef u_short in_port_t;
 	peer[n].file[f].fd = fd_active_tmp; \
 	torx_unlock(n) \
 	torx_fd_unlock(n,f) \
-}
+} // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
 
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
@@ -345,7 +345,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
 		/* Exclusively Group related */
 		unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM)
-		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock / torx_fd_unlock
+		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock
 		struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
 			int offerer_n; // Do not reset to -1
 			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have. XXX ALWAYS DO NULL CHECK
