@@ -384,9 +384,9 @@ void *protocol_access(const int p_iter,const size_t offset)
 	while(iter < pages && strcmp(offsets_struc[iter].name,member)) \
 		iter++; \
 	if(iter == pages) \
-		error_simple(-1,"Illegal offset name. Coding error. Report this."); \
+		error_printf(-1,"Illegal offset name: %s. Coding error. Report this.",member); \
 	if(strcmp(offsets_struc[iter].name,member)) \
-		error_simple(-1,"Illegal getter return value. Coding error. Report this.1"); \
+		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this.",member); \
 }
 
 #define getter_offset_return_size(offsets_struc) \
@@ -483,7 +483,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset. Coding error. Report this. n: %d i: %d f: %d Offset: %lu",n,i,f,offset);\
 	if(offsets_struc[iter].size != sizeof(value))\
-		error_printf(-1,"Illegal getter return value. Coding error. Report this.2 %lu != %lu",offsets_struc[iter].size,sizeof(value));
+		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this.2 %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,sizeof(value));
 
 #define return_getter_value \
 	if(n < 0 || (i > INT_MIN && f > -1))\
@@ -521,7 +521,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	while(iter < pages && offset != offsets_struc[iter].offset)\
 		iter++;\
 	if(iter == pages)\
-		error_simple(-1,"Illegal offset. Coding error. Report this.2");\
+		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.2",offset);\
 	if(offsets_struc[iter].size < size)\
 		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size);
 
@@ -686,7 +686,7 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset. Coding error. Report this. g: %d Offset: %lu",g,offset);\
 	if(offsets_struc[iter].size != sizeof(value))\
-		error_printf(-1,"Illegal getter return value. Coding error. Report this.4 %lu != %lu",offsets_struc[iter].size,sizeof(value));
+		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.4 %lu != %lu",offset,offsets_struc[iter].size,sizeof(value));
 
 #define return_getter_group_value \
 	if(g < 0)\
