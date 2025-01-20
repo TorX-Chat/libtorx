@@ -113,18 +113,18 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		}
 		if((start = getter_uint32(n,i,-1,offsetof(struct message_list,pos))) == 0)
 		{ // Critically important to ensure we don't swap half-way through a message
-			torx_write(n) // XXX DO NOT REPLACE WITH torx_read or we could face race conditions
+			torx_write(n) // 🟥🟥🟥 DO NOT REPLACE WITH torx_read or we could face race conditions
 			const int utilized_recv = peer[n].socket_utilized[0];
 			const int utilized_send = peer[n].socket_utilized[1];
 			if(utilized_recv == i || utilized_send == i)
 			{ // Critical mitigation of race condition. DO NOT REMOVE.
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				error_printf(0,PINK"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket: %s"RESET,n,i,fd_type,stat,utilized_recv,utilized_send,name);
 				return -2; // MUST BE -2 not -1 or we will have big issues in packet_removal
 			}
 			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
 			{
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 			}
 			else if((utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1))
@@ -135,33 +135,33 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 					fd_type = 0;
 				else
 				{
-					torx_unlock(n) // XXX
+					torx_unlock(n) // 🟩🟩🟩
 					return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 				}
 			}
 			if(!socket_swappable) // This is NOT redundant with message_distribute because not every message goes through that stage.
 				peer[n].message[i].fd_type = fd_type;
 			peer[n].socket_utilized[fd_type] = i; // XXX TODO AFTER THIS POINT, MUST USE goto error
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d, %s"RESET,n,fd_type,i,name);
 		}
 		else
 		{ // Sanity check
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			const int socket_utilized = peer[n].socket_utilized[fd_type];
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			if(socket_utilized != i)
 				goto error; // XXX On where pos > 0, socket_utilized must already be set. This is a major coding error.
 		}
 	}
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(!(fd_type == 0 && peer[n].bev_recv && peer[n].recvfd_connected) && !(fd_type == 1 && peer[n].bev_send && peer[n].sendfd_connected))
 	{ // This occurs when message_send is called before torx_events. It sends later when the connection comes up, unless it is ENUM_STREAM_DISCARDABLE.
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_printf(2,"Send_prep too early owner=%u n=%d f_i=%d fd=%d: %s",owner,n,f_i,fd_type,name);
 		goto error;
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	char send_buffer[PACKET_SIZE_MAX]; // zero'd // NOTE: no need to {0} this, so don't.
 	if(getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status)) == ENUM_STATUS_FRIEND)
 	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage.
@@ -173,10 +173,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				goto error;
 			uint16_t data_size = PACKET_SIZE_MAX-16;
 			torx_fd_lock(file_n,f) // XXX
-			torx_read(file_n) // XXX
+			torx_read(file_n) // 🟧🟧🟧
 			if(peer[file_n].file[f].request == NULL)
 			{ // Necessary sanity check to avoid race conditions
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				torx_fd_unlock(file_n,f) // XXX
 				error_simple(0,"Send_prep sanity check failure. Something is NULL. File may be cancelled. Possible coding error. Report this.");
 				goto error;
@@ -186,7 +186,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		//	printf("Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu\n",file_n,f,fd_type,r,start); // TODO remove
 			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
-			torx_unlock(file_n) // XXX
+			torx_unlock(file_n) // 🟩🟩🟩
 			if(fd_active == NULL)
 			{
 				char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
@@ -201,9 +201,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type] != start)
 			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);
-			torx_write(file_n) // XXX
+			torx_write(file_n) // 🟥🟥🟥
 			peer[file_n].file[f].fd = fd_active;
-			torx_unlock(file_n) // XXX
+			torx_unlock(file_n) // 🟩🟩🟩
 			torx_fd_unlock(file_n,f) // XXX
 			if(bytes > 0)
 			{ // Handle bytes read from file
@@ -212,9 +212,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				memcpy(&send_buffer[0],&trash,sizeof(uint16_t));
 				trash = htobe16(protocol);
 				memcpy(&send_buffer[2],&trash,sizeof(uint16_t));
-				torx_read(file_n) // XXX
+				torx_read(file_n) // 🟧🟧🟧
 				memcpy(&send_buffer[4],peer[file_n].file[f].checksum,4);
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				const uint64_t endian_corrected_start = htobe64(start);
 				memcpy(&send_buffer[8],&endian_corrected_start,8);
 			}
@@ -266,25 +266,25 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			trash = htobe16(protocol);
 			memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
 			/* XXX sanity check start */
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			const size_t allocated = torx_allocation_len(peer[n].message[i].message);
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			const size_t reading = start + (size_t)packet_len - prefix_len;
 			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
 				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
 			/* sanity check end XXX */
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		struct evbuffer *output = NULL; // XXX If getting issues at bufferevent_get_output in valgrind, it means .bev_recv or .bev_send is not being NULL'd properly in libevent after closing
 		struct bufferevent *bev = NULL;
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		if(fd_type == 0)
 			bev = peer[n].bev_recv;
 		else if(fd_type == 1)
 			bev = peer[n].bev_send;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(bev && (output = bufferevent_get_output(bev)))
 		{
 			int o = 0;
@@ -327,24 +327,24 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	error: {}
 	if(protocol != ENUM_PROTOCOL_FILE_PIECE)
 	{
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		const int socket_utilized = peer[n].socket_utilized[fd_type];
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(socket_utilized == i)
 		{
 			error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			peer[n].socket_utilized[fd_type] = INT_MIN;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		else
 			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
 			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%lu to pos=0\n"RESET,n,i,fd_type,start);
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			peer[n].message[i].pos = 0;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 	}
 	return -1;
@@ -427,9 +427,9 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 static inline void *send_init(void *arg)
 { /* This should be called for every peer on startup and should set the peer [n]. sendfd. */
 	const int n = vptoi(arg);
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	pusher(zero_pthread,(void*)&peer[n].thrd_send)
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	char peeronion[56+1];
@@ -490,9 +490,9 @@ void load_onion_events(const int n)
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 	{
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		pthread_t *thrd_send = &peer[n].thrd_send;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(pthread_create(thrd_send,&ATTR_DETACHED,&send_init,itovp(n)))
 			error_simple(-1,"Failed to create thread1");
 	}
@@ -528,9 +528,9 @@ void load_onion_events(const int n)
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
 		struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 		initialize_event_strc(event_strc,n,owner,0,sock);
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		pthread_t *thrd_recv = &peer[n].thrd_recv;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(pthread_create(thrd_recv,&ATTR_DETACHED,&torx_events,(void*)event_strc))
 			error_simple(-1,"Failed to create thread from load_onion_events");
 	}

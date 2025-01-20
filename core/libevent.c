@@ -96,7 +96,7 @@ static inline int16_t section_determination(const uint64_t size,const uint8_t sp
 static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 { // Internal Function only. For handling or initializing a disconnection
 	struct bufferevent *bev;
-	torx_write(event_strc->n) // XXX
+	torx_write(event_strc->n) // 🟥🟥🟥
 	if(event_strc->fd_type == 0)
 	{
 	//	printf("Checkpoint recvfd DISCONNECTED n=%d\n",event_strc->n);
@@ -113,7 +113,7 @@ static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 		bev = peer[event_strc->n].bev_send;
 		peer[event_strc->n].bev_send = NULL;
 	}
-	torx_unlock(event_strc->n) // XXX
+	torx_unlock(event_strc->n) // 🟩🟩🟩
 	if(bev) // Just in case we got here after zero_n for some reason
 		bufferevent_free(bev); // Note: Don't call this by itself because it can be subject to double-free issues.
 	return bev;
@@ -148,16 +148,16 @@ static inline void peer_online(struct event_strc *event_strc)
 			if(cycle && event_strc->group_n < 0)
 				break;
 			int file_n = cycle == 0 ? event_strc->n : event_strc->group_n;
-			torx_read(file_n) // XXX
+			torx_read(file_n) // 🟧🟧🟧
 			for(int f = 0; !is_null(peer[file_n].file[f].checksum,CHECKSUM_BIN_LEN); f++)
 			{
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				const int file_status = file_status_get(file_n,f);
 				if(file_status == ENUM_FILE_INACTIVE_ACCEPTED || file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT)
 					file_request_internal(file_n,f,-1); // re-send request for previously accepted file
-				torx_read(file_n) // XXX
+				torx_read(file_n) // 🟧🟧🟧
 			}
-			torx_unlock(file_n) // XXX
+			torx_unlock(file_n) // 🟩🟩🟩
 		}
 }
 
@@ -217,9 +217,9 @@ static inline void peer_offline(struct event_strc *event_strc)
 				const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
 				if(((!socket_swappable && fd_type == event_strc->fd_type) || !online) && (stat == ENUM_MESSAGE_FAIL || (stat == ENUM_MESSAGE_SENT && !logged)))
 				{ // We don't need to delete them from disk because they aren't saved until sent. We shouldn't actually see any _SENT && !logged here.
-					torx_write(event_strc->n) // XXX
+					torx_write(event_strc->n) // 🟥🟥🟥
 					zero_i(event_strc->n,i);
-					torx_unlock(event_strc->n) // XXX
+					torx_unlock(event_strc->n) // 🟩🟩🟩
 				}
 			}
 		}
@@ -268,9 +268,9 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 
 static inline void begin_cascade(struct event_strc *event_strc)
 { // Triggers a single unsent message // Note: There is an trivially chance of a race condition (where both sendfd and recvfd connect at the same time), which would cause unsent messages to not send on either fd. However, the alternative is to not do this check and have a far greater risk of having unsent messages going out on either or alternating fd_types, which would be faster but result in messages likely being out of order.
-	torx_read(event_strc->n) // XXX
+	torx_read(event_strc->n) // 🟧🟧🟧
 	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
-	torx_unlock(event_strc->n) // XXX
+	torx_unlock(event_strc->n) // 🟩🟩🟩
 	if(event_strc->authenticated == 0 || socket_utilized > INT_MIN)
 	{ // If socket_utilized EVER triggers here, it indicates either that we call begin_cascade somewhere we shouldn't (where a message_send is already called), or otherwise a race condition (where begin_cascade is being called twice).
 		error_printf(0,"Sanity check failed in begin_cascade. Possible coding error. Report this. Owner=%u n=%d fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->n,event_strc->fd_type,socket_utilized,event_strc->authenticated);
@@ -280,14 +280,14 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i; i <= max_i; i++)
 	{
-		torx_read(event_strc->n) // XXX
+		torx_read(event_strc->n) // 🟧🟧🟧
 		const uint8_t stat = peer[event_strc->n].message[i].stat;
 		const int8_t fd_type = peer[event_strc->n].message[i].fd_type;
 		const int p_iter = peer[event_strc->n].message[i].p_iter;
 		const uint32_t pos = peer[event_strc->n].message[i].pos; // TODO This is a GOOD workaround: Socket_utilized is supposed to negate the necessity of this, but doesn't due to races conditions.
 		const int utilized_recv = peer[event_strc->n].socket_utilized[0]; // TODO This MIGHT BE a BAD workaround (may lead to stalling).
 		const int utilized_send = peer[event_strc->n].socket_utilized[1]; // TODO This MIGHT BE a BAD workaround (may lead to stalling).
-		torx_unlock(event_strc->n) // XXX
+		torx_unlock(event_strc->n) // 🟩🟩🟩
 		if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && pos == 0 && utilized_recv != i && utilized_send != i)
 		{ // important check, to snuff out deleted messages
 			pthread_rwlock_rdlock(&mutex_protocols);
@@ -311,9 +311,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 	pthread_rwlock_wrlock(&mutex_packet);
 	while(packets_to_remove)
 	{
-		torx_read(event_strc->n) // XXX
+		torx_read(event_strc->n) // 🟧🟧🟧
 		const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
-		torx_unlock(event_strc->n) // XXX
+		torx_unlock(event_strc->n) // 🟩🟩🟩
 		time_t time_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
 		time_t nstime_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
 		int o_oldest = -1;
@@ -345,12 +345,12 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		if(!drain_len && packet[o].p_iter != file_piece_p_iter && socket_utilized != packet_f_i)
 		{
 			int other_socket_utilized;
-			torx_read(event_strc->n) // XXX
+			torx_read(event_strc->n) // 🟧🟧🟧
 			if(event_strc->fd_type)
 				other_socket_utilized = peer[event_strc->n].socket_utilized[0];
 			else
 				other_socket_utilized = peer[event_strc->n].socket_utilized[1];
-			torx_unlock(event_strc->n) // XXX
+			torx_unlock(event_strc->n) // 🟩🟩🟩
 			error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%ld nstime=%ld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,packet[o].time,packet[o].nstime);
 			break;
 		}
@@ -382,13 +382,13 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				const int r = set_r(packet_file_n,f,event_strc->n);
 				if(r > -1)
 				{
-					torx_write(packet_file_n) // XXX
+					torx_write(packet_file_n) // 🟥🟥🟥
 					if(peer[packet_file_n].file[f].request)
 					{ // Necessary sanity check to prevent race conditions
 						peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16; // const uint64_t this_r =
 						const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
 						const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
-						torx_unlock(packet_file_n) // XXX
+						torx_unlock(packet_file_n) // 🟩🟩🟩
 					//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 						const int file_status = file_status_get(packet_file_n,f);
 						if(current_pos == current_end)
@@ -406,13 +406,13 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							error_printf(0,"Ceasing to send file file_n=%d f=%d status=%u",packet_file_n,f,file_status);
 					}
 					else
-						torx_unlock(packet_file_n) // XXX
+						torx_unlock(packet_file_n) // 🟩🟩🟩
 				}
 			}
 			else
 			{ // All protocols that contain a message size on the first packet of a message
 				const int i = packet_f_i;
-				torx_write(event_strc->n) // XXX Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
+				torx_write(event_strc->n) // 🟥🟥🟥 Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
 				if(peer[event_strc->n].message[i].pos == 0) // first packet of a message, has message_len prefix
 					peer[event_strc->n].message[i].pos = packet_len - (2+2+4);
 				else // subsequent packet (ie, second or later packet in a message > PACKET_SIZE_MAX)
@@ -420,7 +420,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				const uint32_t message_len = peer[event_strc->n].message[i].message_len;
 				const uint32_t pos = peer[event_strc->n].message[i].pos;
 				// printf("Checkpoint MESSAGE STAT: n=%d i=%d stat=%u\n",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
-				torx_unlock(event_strc->n) // XXX
+				torx_unlock(event_strc->n) // 🟩🟩🟩
 				if(pos == message_len)
 				{ // complete message, complete send
 					carry_on_regardless: {}
@@ -434,9 +434,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						}
 						else
 						{ // discard/delete message and attempt rollback
-							torx_write(event_strc->n) // XXX
+							torx_write(event_strc->n) // 🟥🟥🟥
 							zero_i(event_strc->n,i);
-							torx_unlock(event_strc->n) // XXX
+							torx_unlock(event_strc->n) // 🟩🟩🟩
 						/*	printf("Checkpoint actually deleted group_peer's i\n");
 							// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
 							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
@@ -451,9 +451,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							const time_t nstime = getter_time(event_strc->n,i,-1,offsetof(struct message_list,nstime));
 							sql_delete_message(peer_index,time,nstime);
 						}
-						torx_write(event_strc->n) // XXX
+						torx_write(event_strc->n) // 🟥🟥🟥
 						zero_i(event_strc->n,i);
-						torx_unlock(event_strc->n) // XXX
+						torx_unlock(event_strc->n) // 🟩🟩🟩
 					}
 					else
 					{
@@ -471,9 +471,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					}
 					error_printf(0,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 					error_printf(0,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
-					torx_write(event_strc->n) // XXX
+					torx_write(event_strc->n) // 🟥🟥🟥
 					peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
-					torx_unlock(event_strc->n) // XXX
+					torx_unlock(event_strc->n) // 🟩🟩🟩
 					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 						pipe_auth_and_request_peerlist(event_strc); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 					else // Send next message. Necessary.
@@ -613,15 +613,15 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
 	}
-	torx_read(event_strc->n) // XXX
+	torx_read(event_strc->n) // 🟧🟧🟧
 	const int socket_utilized = peer[event_strc->n].socket_utilized[event_strc->fd_type];
-	torx_unlock(event_strc->n) // XXX
+	torx_unlock(event_strc->n) // 🟩🟩🟩
 	if(socket_utilized > INT_MIN)
 	{
-		torx_write(event_strc->n) // XXX
+		torx_write(event_strc->n) // 🟥🟥🟥
 		peer[event_strc->n].message[socket_utilized].pos = 0;
 		peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
-		torx_unlock(event_strc->n) // XXX
+		torx_unlock(event_strc->n) // 🟩🟩🟩
 		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 	}
 	if(event_strc->fd_type == 0) // XXX added 2023/09 with authenticated_pipe_n
@@ -736,17 +736,17 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				uint64_t section_end = 0;
 				const uint64_t section_start = calculate_section_start(&section_end,size,splits_nn,section);
-				torx_read(file_n) // XXX
+				torx_read(file_n) // 🟧🟧🟧
 				if(peer[file_n].file[f].split_status_n == NULL || peer[file_n].file[f].split_status_fd == NULL || peer[file_n].file[f].split_progress == NULL)
 				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second.
-					torx_unlock(file_n) // XXX
+					torx_unlock(file_n) // 🟩🟩🟩
 					error_simple(0,"Peer asked us to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
 					continue;
 				}
 				const uint64_t section_info_current = peer[file_n].file[f].split_progress[section];
 				const int8_t relevant_split_status_fd = peer[file_n].file[f].split_status_fd[section];
 				const int relevant_split_status = peer[file_n].file[f].split_status_n[section];
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				if(packet_start + packet_len - cur > section_end + 1)
 				{
 					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
@@ -773,9 +773,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					continue;
 				}
 				torx_fd_lock(file_n,f) // XXX
-				torx_read(file_n) // XXX
+				torx_read(file_n) // 🟧🟧🟧
 				FILE *fd_active = peer[file_n].file[f].fd;
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				if(fd_active == NULL)
 				{
 					char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
@@ -806,9 +806,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
-				torx_write(file_n) // XXX
+				torx_write(file_n) // 🟥🟥🟥
 				peer[file_n].file[f].fd = fd_active;
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				torx_fd_unlock(file_n,f) // XXX
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
@@ -897,15 +897,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								// Success. Set recvfd in the appropriate GROUP_PEER to enable full duplex on that GROUP_PEER
 								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_wrlock(&mutex_expand); TODO */ 
-								torx_read(event_strc->n) // XXX Do not mess with this block. (below)
+								torx_read(event_strc->n) // 🟧🟧🟧 Do not mess with this block. (below)
 								struct bufferevent *bev_recv = peer[event_strc->n].bev_recv;
-								torx_unlock(event_strc->n) // XXX
-								torx_write(group_peer_n) // XXX
+								torx_unlock(event_strc->n) // 🟩🟩🟩
+								torx_write(group_peer_n) // 🟥🟥🟥
 								peer[group_peer_n].bev_recv = bev_recv; // 1st, order important
-								torx_unlock(group_peer_n) // XXX
-								torx_write(event_strc->n) // XXX
+								torx_unlock(group_peer_n) // 🟩🟩🟩
+								torx_write(event_strc->n) // 🟥🟥🟥
 								peer[event_strc->n].bev_recv = NULL; // 2nd, order important. do not free.
-								torx_unlock(event_strc->n) // XXX Do not mess with this block. (above.. also some below. This whole thing is important)
+								torx_unlock(event_strc->n) // 🟩🟩🟩 Do not mess with this block. (above.. also some below. This whole thing is important)
 								event_strc->n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
 								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
 								const uint8_t recvfd_connected = 1; // important
@@ -1132,14 +1132,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						const int r = set_r(file_n,f,event_strc->n);
 						if(r > -1)
 						{
-							torx_write(file_n) // XXX
+							torx_write(file_n) // 🟥🟥🟥
 							if(peer[file_n].file[f].request)
 							{ // Necessary sanity check to prevent race condition
 								peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
 								peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
 								peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
 							}
-							torx_unlock(file_n) // XXX
+							torx_unlock(file_n) // 🟩🟩🟩
 						}
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
@@ -1376,11 +1376,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							char peeronion[56+1];
 							generate_onion_simple(onion,privkey);
 							generate_onion_simple(peeronion,NULL);
-							torx_write(event_strc->n) // XXX
+							torx_write(event_strc->n) // 🟥🟥🟥
 							memcpy(peer[event_strc->n].onion,onion,sizeof(onion));
 							memcpy(peer[event_strc->n].privkey,privkey,sizeof(privkey));
 							memcpy(peer[event_strc->n].peeronion,peeronion,sizeof(peeronion));
-							torx_unlock(event_strc->n) // XXX
+							torx_unlock(event_strc->n) // 🟩🟩🟩
 							sodium_memzero(onion,sizeof(onion));
 							sodium_memzero(privkey,sizeof(privkey));
 							sodium_memzero(peeronion,sizeof(peeronion));
@@ -1413,9 +1413,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							repeated = message_insert(event_strc->g,nn,i);
 						if(repeated)
 						{
-							torx_write(nn) // XXX
+							torx_write(nn) // 🟥🟥🟥
 							zero_i(nn,i);
-							torx_unlock(nn) // XXX
+							torx_unlock(nn) // 🟩🟩🟩
 						}
 						else
 						{ // unique same time/nstime
@@ -1534,9 +1534,9 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	//	disconnect_forever(event_strc); // Run last, will exit event base
 		return;
 	}
-	torx_read(event_strc->n) // XXX
+	torx_read(event_strc->n) // 🟧🟧🟧
 	struct bufferevent *bev_recv_existing = peer[event_strc->n].bev_recv;
-	torx_unlock(event_strc->n) // XXX
+	torx_unlock(event_strc->n) // 🟩🟩🟩
 	if(bev_recv_existing != NULL)
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	struct event_base *base = evconnlistener_get_base(listener);
@@ -1549,9 +1549,9 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	evbuffer_enable_locking(bufferevent_get_output(bev_recv),NULL); // 2023/08/11 Necessary for full-duplex. Will lock and unlock automatically, no need to manually evbuffer_lock/evbuffer_unlock.
 	bufferevent_setcb(bev_recv, read_conn, write_finished, close_conn, event_strc_unique);
 	bufferevent_enable(bev_recv, EV_READ); // XXX DO NOT ADD EV_WRITE because it triggers write_finished() immediately on connect, which has invalid fresh_n, segfault.
-	torx_write(event_strc->n) // XXX
+	torx_write(event_strc->n) // 🟥🟥🟥
 	peer[event_strc->n].bev_recv = bev_recv; // 2024/07/13 TODO TODO TODO XXX Maybe this should have a null check before we replace bev_recv.
-	torx_unlock(event_strc->n) // XXX
+	torx_unlock(event_strc->n) // 🟩🟩🟩
 
 	if(event_strc->authenticated)
 	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
@@ -1584,9 +1584,9 @@ void *torx_events(void *arg)
 	struct event_strc *event_strc = (struct event_strc*) arg; // Casting passed struct
 	if(event_strc->fd_type == 0)
 	{
-		torx_write(event_strc->n) // XXX
+		torx_write(event_strc->n) // 🟥🟥🟥
 		pusher(zero_pthread,(void*)&peer[event_strc->n].thrd_recv)
-		torx_unlock(event_strc->n) // XXX
+		torx_unlock(event_strc->n) // 🟩🟩🟩
 	}
 	struct event_base *base = event_base_new();
 	if(!base)
@@ -1620,9 +1620,9 @@ void *torx_events(void *arg)
 			bufferevent_setcb(bev_send, read_conn, write_finished, close_conn,arg);
 	//		bufferevent_disable(bev_send,EV_WRITE); // ENABLED BY DEFAULT, TESTING DISABLED
 			bufferevent_enable(bev_send, EV_READ/*|EV_ET|EV_PERSIST*/);
-			torx_write(event_strc->n) // XXX
+			torx_write(event_strc->n) // 🟥🟥🟥
 			peer[event_strc->n].bev_send = bev_send;
-			torx_unlock(event_strc->n) // XXX
+			torx_unlock(event_strc->n) // 🟩🟩🟩
 			// TODO 0u92fj20f230fjw ... to here. TODO
 			const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 			/// Handle message types that should be in front of the queue

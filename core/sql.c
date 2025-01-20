@@ -90,12 +90,12 @@ Legal:
 // Further: How will we handle caching messages while offloaded? What if we don't? See todo.html for current ideas.
 	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	const int pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, sizeof(struct message_list) *21) + 10;
 	for(int j = -10; j < 11; j++)
 		initialize_i(n,j);
 	peer[n].min_i = 0;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 //TODO	shrink_message_struct_cb(n); // TODO remember to remove message_deleted_cb from delete_log
 } */
 
@@ -127,15 +127,15 @@ void delete_log(const int n)
 					const uint8_t stat = getter_uint8(peer_n,i,-1,offsetof(struct message_list,stat));
 					if((stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm)) // XXX VERY IMPORTANT / COMPLEX if statement, do not change
 						message_remove(g,peer_n,i); // do not remove (segfaults will happen). Conditions are to avoid sanity check errors.
-					torx_write(peer_n) // XXX
+					torx_write(peer_n) // 🟥🟥🟥
 					zero_i(peer_n,i);
-					torx_unlock(peer_n) // XXX
+					torx_unlock(peer_n) // 🟩🟩🟩
 					message_deleted_cb(peer_n,i); // optional
 				}
 			}
-			torx_write(peer_n) // XXX
+			torx_write(peer_n) // 🟥🟥🟥
 			peer[peer_n].max_i = -1;
-			torx_unlock(peer_n) // XXX
+			torx_unlock(peer_n) // 🟩🟩🟩
 		//TODO	shrink_message_struct(peer_n);
 		}
 	}
@@ -148,14 +148,14 @@ void delete_log(const int n)
 			const int g = set_g(n,NULL);
 			message_remove(g,n,i);
 		}
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		zero_i(n,i);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		message_deleted_cb(n,i); // optional
 	}
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	peer[n].max_i = -1;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 //TODO	shrink_message_struct(n);
 }
 
@@ -182,12 +182,12 @@ int message_edit(const int n,const int i,const char *message)
 		{ // this process is a bit complex but its all necessary to make sure the swap is as fast as possible, since there is a potential for race condition here.	
 			char *message_new = torx_secure_malloc(base_message_len+1);
 			snprintf(message_new,base_message_len+1,"%s",message);
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			char *message_old = peer[n].message[i].message; // need to free this *after* swap
 			peer[n].message[i].message_len = base_message_len+1;
 			peer[n].message[i].message = message_new;
 			torx_free((void*)&message_old);
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			sql_update_message(n,i);
 			message_modified_cb(n,i);
 		}
@@ -201,10 +201,10 @@ int message_edit(const int n,const int i,const char *message)
 			if(message_new)
 			{
 				setter(n,i,-1,offsetof(struct message_list,message_len),&signed_len,sizeof(signed_len));
-				torx_write(n) // XXX
+				torx_write(n) // 🟥🟥🟥
 				char *message_old = peer[n].message[i].message; // need to free this *after* swap
 				peer[n].message[i].message = message_new;
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				if(owner == ENUM_OWNER_GROUP_CTRL)
 				{ // private messages will NOT come here
 					const int g = set_g(n,NULL);
@@ -222,23 +222,23 @@ int message_edit(const int n,const int i,const char *message)
 							const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 							if(time_ii == time && nstime_ii == nstime)
 							{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
-								torx_read(n) // XXX
+								torx_read(n) // 🟧🟧🟧
 								const uint32_t local_message_len = peer[n].message[i].message_len;
 								char *local_message = peer[n].message[i].message;
-								torx_unlock(n) // XXX
+								torx_unlock(n) // 🟩🟩🟩
 
-								torx_write(peer_n) // XXX
+								torx_write(peer_n) // 🟥🟥🟥
 								peer[peer_n].message[ii].message_len = local_message_len;
 								peer[peer_n].message[ii].message = local_message;
-								torx_unlock(peer_n) // XXX
+								torx_unlock(peer_n) // 🟩🟩🟩
 								break;
 							}
 						}
 					}
 				}
-				torx_write(n) // XXX
+				torx_write(n) // 🟥🟥🟥
 				torx_free((void*)&message_old);
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				sql_update_message(n,i);
 				message_modified_cb(n,i);
 			}
@@ -270,18 +270,18 @@ int message_edit(const int n,const int i,const char *message)
 						const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 						if(time_ii == time && nstime_ii == nstime)
 						{ // DO NOT need to print_message_cb here. No private messages will come here.
-							torx_write(peer_n) // XXX
+							torx_write(peer_n) // 🟥🟥🟥
 							zero_i(peer_n,ii);
-							torx_unlock(peer_n) // XXX
+							torx_unlock(peer_n) // 🟩🟩🟩
 							break;
 						}
 					}
 				}
 			} //else // Inbound messages, PMs (in/out)
 		}
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		zero_i(n,i);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		message_deleted_cb(n,i);
 	}
 	return 0;
@@ -475,10 +475,10 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 				group_i++;
 			if(group_i <= max_i && getter_time(group_n,group_i,-1,offsetof(struct message_list,nstime)) == nstime)
 			{
-				torx_read(group_n) // XXX
+				torx_read(group_n) // 🟧🟧🟧
 				tmp_message = peer[group_n].message[group_i].message;
 				message_len = peer[group_n].message[group_i].message_len;
-				torx_unlock(group_n) // XXX
+				torx_unlock(group_n) // 🟩🟩🟩
 				break; // winner
 			}
 			else if(group_i > max_i)
@@ -587,7 +587,7 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 		}
 		torx_free((void*)&onion);
 	}
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	peer[n].owner = owner;
 	peer[n].status = status;
 	peer[n].peerversion = peerversion;
@@ -613,12 +613,12 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 	if(torxid)
 	{
 		snprintf(peer[n].torxid,sizeof(peer[n].torxid),"%s",torxid); // note: using peer[n].onion instead of onion because onion might be empty for ENUM_OWNER_PEER, whereas .onion is not
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		torx_free((void*)&torxid);
 	}
 	else
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Failed to convert onion to torxid.");
 		return -1;
 	}
@@ -1050,7 +1050,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	}
 	const int n = set_n(peer_index,NULL);
 	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const uint8_t owner = peer[n].owner;
 	const int min_i = peer[n].min_i;
 	int tmp_i = peer[n].min_i;
@@ -1058,7 +1058,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		tmp_i++;// Loading a message with zero time must be avoided, or no further messages can be loaded. Note: On startup zero is OK, because we don't use earliest_time.
 	time_t earliest_time = peer[n].message[tmp_i].time;
 	time_t earliest_nstime = peer[n].message[tmp_i].nstime;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(!earliest_time)
 		earliest_time = time(NULL); // 2024/09/27 experimental solution to a hypothetical problem
 	if(since > earliest_time || ((messages || days) && owner != ENUM_OWNER_CTRL))
@@ -1108,14 +1108,14 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			i--;
 			offset--;
 			uint8_t expanded = 0;
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			if(peer[n].message[i].p_iter == -1 && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
 			{ // NOTE: same as joafdoiwfoefjioasdf
 				expand_message_struc(n,i); // before adjusting min_i
 				expanded = 1;
 			}
 			peer[n].min_i--;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			if(expanded)
 				expand_message_struc_followup(n,i);
 		}
@@ -1208,27 +1208,27 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			{ // Retrieve file_path /* goat */
 				extraneous = NULL;
 				const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
-				torx_write(file_n) // XXX
+				torx_write(file_n) // 🟥🟥🟥
 				peer[file_n].file[f].file_path = torx_secure_malloc(extraneous_len+1);
 				memcpy(peer[file_n].file[f].file_path,file_path,extraneous_len);
 				peer[file_n].file[f].file_path[extraneous_len] = '\0';
 				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
-				torx_unlock(file_n) // XXX
+				torx_unlock(file_n) // 🟩🟩🟩
 				extraneous_len = 0; // MUST because related to callback
 				const int file_status = file_status_get(file_n,f);
 				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && file_status != ENUM_FILE_INACTIVE_CANCELLED && (file_status != ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || split_progress == NULL))
 				{
 					initialize_split_info(file_n,f);
-					torx_read(file_n) // XXX
+					torx_read(file_n) // 🟧🟧🟧
 					if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
 					{ // 2024/05/12 Setting transferred amount according to file size. This might be depreciated (2025/01/13).
-						torx_unlock(file_n) // XXX
+						torx_unlock(file_n) // 🟩🟩🟩
 						const uint64_t size_on_disk = get_file_size(file_path);
-						torx_write(file_n) // XXX
+						torx_write(file_n) // 🟥🟥🟥
 						if(peer[file_n].file[f].split_progress) // sanity check
 							peer[file_n].file[f].split_progress[0] = size_on_disk;
 					}
-					torx_unlock(file_n) // XXX
+					torx_unlock(file_n) // 🟩🟩🟩
 				}
 			}
 			else
@@ -1293,17 +1293,17 @@ int sql_populate_peer(void)
 		pthread_mutex_unlock(&mutex_message_loading);
 		error_simple(0,"NOTICE: sql_populate_peer is being called despite messages already being loaded.");
 		int n = 0;
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		while(peer[n].onion[0] != '\0' || peer[n].peer_index > -1)
 		{ // we do need to load_onion(n) any ENUM_STATUS_FRIEND except EMUM_OWNER_PEER and ENUM_OWNER_GROUP_PEER. If we load those two, we will have problems.
 			const uint8_t status = peer[n].status;
 			const uint8_t owner = peer[n].owner;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			if(status == ENUM_STATUS_FRIEND && (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL))
 				load_onion(n); // logically, ENUM_OWNER_CTRL, we may need to prevent load_onion->tor_call->load_onion_events->send_init, however in practice it seems no.
-			torx_read(++n) // XXX
+			torx_read(++n) // 🟧🟧🟧
 		}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		return 0;
 	}
 	sqlite3_stmt *stmt;
@@ -1371,13 +1371,13 @@ int sql_populate_peer(void)
 						sodium_memzero(ciphertext,sizeof(ciphertext));
 					}
 					unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
-					torx_read(n) // XXX
+					torx_read(n) // 🟧🟧🟧
 					crypto_sign_ed25519_sk_to_pk(ed25519_pk,peer[n].sign_sk);
 				//	if(g_invite_required)
 				//		printf("Checkpoint PRIVATE group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
 				//	else
 				//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-					torx_unlock(n) // XXX
+					torx_unlock(n) // 🟩🟩🟩
 					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 
 				}
@@ -1392,9 +1392,9 @@ int sql_populate_peer(void)
 		{ // handle pending outgoing	PEER		load struct + peer_init()
 			if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 				continue;
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			pthread_t *thrd_send = &peer[n].thrd_send;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			if(pthread_create(thrd_send,&ATTR_DETACHED,&peer_init,itovp(n))) // TODO 2023/01/17 issue: this must not be run on re-loads (when start_tor() restarts tor)
 				error_simple(-1,"Failed to create thread1");
 		}

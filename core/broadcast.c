@@ -103,15 +103,15 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 					int iter_peer = 0;
 					for(int n = 0; iter_peer < BROADCAST_MAX_PEERS && n <= max_peer; n++)
 					{ // Queue suitable peers
-						torx_read(n) // XXX
+						torx_read(n) // 🟧🟧🟧
 						if(peer[n].peer_index > -1 && n != origin_or_group_n && peer[n].status == ENUM_STATUS_FRIEND && (peer[n].owner == ENUM_OWNER_CTRL || peer[n].owner == ENUM_OWNER_GROUP_CTRL))
 							broadcasts_queued[iter_queue].peers[iter_peer++] = n;
-						torx_unlock(n++) // XXX
+						torx_unlock(n++) // 🟩🟩🟩
 					}
 					error_printf(0,"Broadcast added and slotted %d times",iter_peer);
-					torx_write(origin_n) // XXX
+					torx_write(origin_n) // 🟥🟥🟥
 					peer[origin_n].broadcasts_inbound++;
-					torx_unlock(origin_n) // XXX
+					torx_unlock(origin_n) // 🟩🟩🟩
 					break;
 				}
 				else if(iter_queue == BROADCAST_QUEUE_SIZE - 1)

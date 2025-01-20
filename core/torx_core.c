@@ -331,19 +331,19 @@ void torx_fn_read(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
 	if(n < 0)
 		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
-	torx_read(n)
+	torx_read(n) // 🟧🟧🟧
 }
 void torx_fn_write(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
 	if(n < 0)
 		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read prevented. Coding error. Report this.");
-	torx_write(n)
+	torx_write(n) // 🟥🟥🟥
 }
 void torx_fn_unlock(const int n)
 { // Consider using this broadly. Note: Sanity check has to be in function, not in macro. We tried in macro and had issues.
 	if(n < 0)
 		error_simple(-1,"Sanity check failed in torx_fn_read. Illegal read occurred. Coding error. Report this.");
-	torx_unlock(n)
+	torx_unlock(n) // 🟩🟩🟩
 }
 
 static inline void write_debug_file(const char *message)
@@ -1028,10 +1028,10 @@ int message_insert(const int g,const int n,const int i)
 		breakpoint();
 		return -1;
 	}
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const time_t time = peer[n].message[i].time;
 	const time_t nstime = peer[n].message[i].nstime;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
 	page->n = n;
 	page->i = i;
@@ -1172,12 +1172,12 @@ void message_sort(const int g)
 	const int group_n_min_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = group_n_min_i; i < group_n_max_i + 1; i++)
 	{ // Do outbound messages on group_n. NOTE: For speed of insertion, we assume they are sequential. If that assumption is wrong, *MUST USE* message_insert instead.
-		torx_read(group_n) // XXX
+		torx_read(group_n) // 🟧🟧🟧
 		const uint8_t stat = peer[group_n].message[i].stat;
 		const time_t time = peer[group_n].message[i].time;
 		const time_t nstime = peer[group_n].message[i].nstime;
 		const int p_iter = peer[group_n].message[i].p_iter;
-		torx_unlock(group_n) // XXX
+		torx_unlock(group_n) // 🟩🟩🟩
 		if(p_iter > -1)
 		{
 			pthread_rwlock_rdlock(&mutex_protocols);
@@ -1234,19 +1234,19 @@ void message_sort(const int g)
 			pthread_rwlock_rdlock(&mutex_expand_group);
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
-			torx_read(peer_n) // XXX
+			torx_read(peer_n) // 🟧🟧🟧
 			const uint8_t status = peer[peer_n].status;
 			const int max_i = peer[peer_n].max_i;
 			const int min_i = peer[peer_n].min_i;
-			torx_unlock(peer_n) // XXX
+			torx_unlock(peer_n) // 🟩🟩🟩
 			if(hide_blocked_group_peer_messages_local && status == ENUM_STATUS_BLOCKED)
 				continue; // skip if appropriate
 			for(int i = min_i; i <= max_i; i++)
 			{ // Do inbound messages && outbound private messages on peers
-				torx_read(peer_n) // XXX
+				torx_read(peer_n) // 🟧🟧🟧
 				const int p_iter = peer[peer_n].message[i].p_iter;
 				const uint8_t stat =  peer[peer_n].message[i].stat;
-				torx_unlock(peer_n) // XXX
+				torx_unlock(peer_n) // 🟩🟩🟩
 				if(p_iter > -1)
 				{
 					pthread_rwlock_rdlock(&mutex_protocols);
@@ -1269,7 +1269,7 @@ time_t message_find_since(const int n)
 	time_t earliest_nstime = 0;
 	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
 	{
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		for(int tmp_i = peer[n].min_i ; tmp_i < peer[n].max_i ; tmp_i++)
 		{
 			const int p_iter = peer[n].message[tmp_i].p_iter;
@@ -1286,7 +1286,7 @@ time_t message_find_since(const int n)
 				break;
 			}
 		}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		size_t pos = 0;
 		int group_pm_count = 0,group_msg_count = 0;
 		for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
@@ -1665,17 +1665,17 @@ static inline uint64_t calculate_average(const int n,const int f,const uint64_t 
 	uint64_t sum = 0;
 	uint8_t included = 0;
 	uint64_t average_speed = 0;
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	peer[n].file[f].last_speeds[peer[n].file[f].speed_iter++] = bytes_per_second;
-	torx_unlock(n) // XXX
-	torx_read(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
+	torx_read(n) // 🟧🟧🟧
 	for(uint8_t iter = 0; iter < 255; iter++)
 		if(peer[n].file[f].last_speeds[iter])
 		{
 			sum += peer[n].file[f].last_speeds[iter];
 			included++;
 		}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(included)
 		average_speed = sum/included;
 	else
@@ -1704,11 +1704,11 @@ char *file_progress_string(const int n,const int f)
 { // Helper function available to UI devs (but no requirement to use)
 	if(n < 0 || f < 0)
 		return NULL;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const time_t time_left = peer[n].file[f].time_left;
 	const uint64_t bytes_per_second = peer[n].file[f].bytes_per_second;
 	const uint64_t size = peer[n].file[f].size;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	#define file_size_text_len 128 // TODO perhaps increase this size. its arbitary. By our math it shoud be more than enough though.
 	char *file_size_text = torx_insecure_malloc(file_size_text_len); // arbitrary allocation amount
 //	printf("Checkpoint string: %ld left, %lu b/s\n",time_left,bytes_per_second);
@@ -1741,20 +1741,20 @@ void transfer_progress(const int n,const int f)
 	time_t time_current = 0;
 	time_t nstime_current = 0;
 	set_time(&time_current,&nstime_current);
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const uint64_t size = peer[n].file[f].size; // getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 	const uint64_t last_transferred = peer[n].file[f].last_transferred; // getter_uint64(n,INT_MIN,f,offsetof(struct file_list,last_transferred));
 	const time_t last_progress_update_time = peer[n].file[f].last_progress_update_time;
 	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_nstime));
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	const uint64_t transferred = calculate_transferred(n,f);
 	if(transferred == size) // NOT else if
 	{
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		peer[n].file[f].last_transferred = transferred;
 		peer[n].file[f].bytes_per_second = 0;
 		peer[n].file[f].time_left = 0;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		printf("Checkpoint transfer_progress COMPLETE\n");
 		transfer_progress_cb(n,f,transferred);
 	}
@@ -1762,11 +1762,11 @@ void transfer_progress(const int n,const int f)
 	{ // For more accuracy and less variation, do an average over time
 		if(last_transferred > transferred) // Necessary to prevent readtime errors when calculating bytes_per_second.
 		{ // XXX Frequently occurs when starting transfer (on sender side) when peer requests only one section of file, then another, making it initially look like more is transferred than actually is; could theoretically also occur on receiving side when cancelling a file's progress after a bad checksum. XXX
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			peer[n].file[f].last_progress_update_time = time_current;
 			peer[n].file[f].last_progress_update_nstime = nstime_current;
 			peer[n].file[f].last_transferred = transferred;
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			return; // No callback necessary because we have no change in bytes_per_second. Wait until we have more/better data.
 		}
 		uint64_t bytes_per_second = 0;
@@ -1781,13 +1781,13 @@ void transfer_progress(const int n,const int f)
 			time_left = (time_t)((size - transferred) / average_speed); // alt: bytes_per_second
 	//	if(last_transferred == transferred) // XXX Do not delete
 	//		error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu\n",time_left,bytes_per_second);
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		peer[n].file[f].time_left = time_left; // will be 0 if bytes_per_second is 0
 		peer[n].file[f].bytes_per_second = bytes_per_second;
 		peer[n].file[f].last_progress_update_time = time_current;
 		peer[n].file[f].last_progress_update_nstime = nstime_current;
 		peer[n].file[f].last_transferred = transferred;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(last_transferred == transferred)
 			printf("Checkpoint transfer_progress STALLED at %lu\n",transferred);
 		else
@@ -1863,21 +1863,21 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 uint64_t calculate_transferred_inbound(const int n,const int f)
 { /* DO NOT make this complicated. It has to be quick and simple because it is called for every packet in/out */
 	uint64_t transferred = 0;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].split_progress)
 		for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
 			transferred += peer[n].file[f].split_progress[section];
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	return transferred;
 }
 
 uint64_t calculate_transferred_outbound(const int n,const int f,const int r)
 { // For non-group transfers, pass r=0
 	uint64_t transferred = 0;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request)
 		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	return transferred;
 }
 
@@ -3305,13 +3305,13 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 		return;
 	}
 	int offerer_n = -2; // must not initialize as -1
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].offer)
 		offerer_n = peer[n].file[f].offer[o].offerer_n;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(offerer_n == -1 && o % 10 == 0)
 	{
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
 		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,current_allocation_size + sizeof(struct offer_list) *10);
 		current_allocation_size = torx_allocation_len(peer[n].file[f].request);
@@ -3322,7 +3322,7 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 			initialize_offer(n,f,j);
 			initialize_request(n,f,j);
 		}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 }
 
@@ -3333,24 +3333,24 @@ static inline void expand_request_struc(const int n,const int f,const int r)
 		error_simple(0,"expand_request_struc failed sanity check1. Coding error. Report this.");
 		return;
 	}
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request == NULL)
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"expand_request_struc failed sanity check2. Coding error. Report this.");
 		return;
 	}
 	const int requester_n = peer[n].file[f].request[r].requester_n;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(requester_n == -1 && r % 10 == 0)
 	{
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].request);
 		peer[n].file[f].request = torx_realloc(peer[n].file[f].request,current_allocation_size + sizeof(struct request_list) *10);
 		// callback unnecessary, not doing
 		for(int j = r+10; j > r; j--)
 			initialize_request(n,f,j);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 }
 
@@ -3365,12 +3365,12 @@ static inline void expand_file_struc(const int n,const int f)
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 	if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
 	{
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
 		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
 		for(int j = f+10; j > f; j--)
 			initialize_f(n,j);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		expand_file_struc_cb(n,f);
 		for(int j = f+10; j > f; j--)
 			initialize_f_cb(n,j);
@@ -3469,14 +3469,14 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 void expand_message_struc_followup(const int n,const int i)
 { // must be called after expand_message_struc, after unlock
 	expand_message_struc_cb(n,i);
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	if(i < 0) // Expanding down
 		for(int j = i-10; j < i; j++)
 			initialize_i(n,j);
 	else // Expanding up
 		for(int j = i+10; j > i; j--)
 			initialize_i(n,j);
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(i < 0) // Expanding down
 		for(int j = i-10; j < i; j++)
 			initialize_i_cb(n,j);
@@ -3491,7 +3491,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 		error_simple(-1,"increment_i sanity check failed");
 	uint8_t expanded = 0;
 	int i;
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	if(offset < 0)
 		i = peer[n].max_i - offset - 1;
 	else
@@ -3512,7 +3512,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 	peer[n].message[i].p_iter = p_iter;
 	peer[n].message[i].message = message;
 	peer[n].message[i].message_len = message_len;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(expanded)
 		expand_message_struc_followup(n,i);
 	return i;
@@ -3588,37 +3588,37 @@ int set_n(const int peer_index,const char *onion)
 	{ // not real while loop, just to avoid goto
 		if(onion_check || peer_index == -1)
 		{ // Traditional set_n
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			if(onion) // search by onion
 				while((peer[n].onion[0] != '\0' || peer[n].peer_index > -1) && strncmp(peer[n].onion,onion,56))
 				{
-					torx_unlock(n++) // XXX
-					torx_read(n) // XXX
+					torx_unlock(n++) // 🟩🟩🟩
+					torx_read(n) // 🟧🟧🟧
 				}
 			else // find next blank
 				while(peer[n].onion[0] != '\0' || peer[n].peer_index > -1)
 				{
-					torx_unlock(n++) // XXX
-					torx_read(n) // XXX
+					torx_unlock(n++) // 🟩🟩🟩
+					torx_read(n) // 🟧🟧🟧
 				}
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		else if(peer_index > -1)
 		{ // set n from peer_index (sql related)
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			while(peer[n].peer_index != peer_index && (peer[n].onion[0] != '\0' || peer[n].peer_index > -1))
 			{
-				torx_unlock(n++) // XXX
-				torx_read(n) // XXX
+				torx_unlock(n++) // 🟩🟩🟩
+				torx_read(n) // 🟧🟧🟧
 			}
 			if(peer[n].peer_index != peer_index && onion != NULL)
 			{// Blank, go to onion check. IMPORTANT for NAA1AmTDLE: instead of exclusively prioritizing peer_index if both are passed, peer_index is checked first and then .onion is checked, before settling on blank.
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				n = 0;
 				onion_check = 1;
 				continue;
 			}
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 	//		if(peer[n].peer_index == peer_index)
 	//			printf("Checkpoint BINGO %d == %d\n",peer[n].peer_index,peer_index);
 	//		else
@@ -3737,10 +3737,10 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 	}
 	int f = 0;
 	int checksum_is_null;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	while(!(checksum_is_null = is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN)) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
 		f++; // Not null, and not matching.
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(checksum_len < CHECKSUM_BIN_LEN && checksum_is_null)
 		return -1; // do not put error message, valid reasons why this could occur
 	expand_file_struc(n,f); // Expand struct if necessary
@@ -3765,9 +3765,9 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	if((protocol == ENUM_PROTOCOL_GROUP_OFFER && message_len < GROUP_OFFER_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST && message_len < GROUP_OFFER_FIRST_LEN))
 		return -1;
 	char tmp_message[GROUP_ID_SIZE + sizeof(uint32_t)];
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	memcpy(tmp_message,peer[n].message[i].message,sizeof(tmp_message));
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	const int g = set_g(-1,tmp_message);
 	if(untrusted_peercount)
 		*untrusted_peercount = be32toh(align_uint32((void*)&tmp_message[GROUP_ID_SIZE]));
@@ -3816,21 +3816,21 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 	if(n < 0 || f < 0 || passed_offerer_n < 0)
 		return -1;
 	int o = -1;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].offer)
 	{ // necessary sanity check to prevent race conditions
 		o = 0;
 		while(peer[n].file[f].offer[o].offerer_n > -1 && peer[n].file[f].offer[o].offerer_n != passed_offerer_n)
 			o++; // check if offerer already exists in our struct
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(o > -1)
 	{
 		expand_offer_struc(n,f,o); // Expand struct if necessary
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		if(peer[n].file[f].offer) // necessary sanity check to prevent race conditions
 			peer[n].file[f].offer[o].offerer_n = passed_offerer_n; // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	return o;
 }
@@ -3840,22 +3840,22 @@ int set_r(const int n,const int f,const int passed_requester_n)
 	if(n < 0 || f < 0 || passed_requester_n < 0)
 		return -1;
 	int r = 0;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request == NULL)
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failure in set_r. Coding error. Report this.");
 		return -1;
 	}
 	for(int requester_n ; (requester_n = peer[n].file[f].request[r].requester_n) > -1 && requester_n != passed_requester_n ; )
 		r++; // check if offerer already exists in our struct
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	expand_request_struc(n,f,r); // Expand struct if necessary
 	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	if(peer[n].file[f].request) // Necessary sanity check to avoid race conditions
 		peer[n].file[f].request[r].requester_n = passed_requester_n;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	return r;
 }
 
@@ -4171,17 +4171,17 @@ int group_join_from_i(const int n,const int i)
 		return -1;
 	int g;
 	unsigned char id[GROUP_ID_SIZE];
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	memcpy(id,peer[n].message[i].message,sizeof(id));
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 	{
 		char creator_onion[56+1];
 		unsigned char creator_ed25519_pk[crypto_sign_PUBLICKEYBYTES];
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		memcpy(creator_onion,&peer[n].message[i].message[GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)],56);
 		memcpy(creator_ed25519_pk,&peer[n].message[i].message[GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)+56],sizeof(creator_ed25519_pk));
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		creator_onion[56] = '\0';
 		g = group_join(n,id,NULL,creator_onion,creator_ed25519_pk);
 		sodium_memzero(creator_onion,sizeof(creator_onion));

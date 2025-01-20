@@ -78,7 +78,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 	}
 	uint32_t len = 0;
 	char *string = NULL;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(i > INT_MIN)
 	{
 		if(offset == offsetof(struct message_list,message))
@@ -159,7 +159,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 			memcpy(string,(char*)&peer[n] + offset,len);
 		}
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(size)
 		*size = len;
 	return string;
@@ -464,14 +464,14 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	}
 	else if(!peer)
 		return 0;
-	torx_read(n)
+	torx_read(n) // 🟧🟧🟧
 	if(i > INT_MIN)
 		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));
 	else if(f > -1)
 		memcpy(&value,(char*)&peer[n].file[f] + offset,sizeof(value));
 	else
 		memcpy(&value,(char*)&peer[n] + offset,sizeof(value));
-	torx_unlock(n)
+	torx_unlock(n) // 🟩🟩🟩
 	return value;
 }
 
@@ -545,7 +545,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	if(i > INT_MIN)
 	{
 		getter_array_sanity_check(offsets_message)
-		torx_read(n)
+		torx_read(n) // 🟧🟧🟧
 		if(peer[n].message[i].message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function.
 			memcpy(array,peer[n].message[i].message,peer[n].message[i].message_len);
 		else if(offset == offsetof(struct message_list,message))
@@ -556,7 +556,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	else if(f > -1)
 	{
 		getter_array_sanity_check(offsets_file)
-		torx_read(n)
+		torx_read(n) // 🟧🟧🟧
 		if(offset == offsetof(struct file_list,filename))
 			memcpy(array,peer[n].file[f].filename,size);
 		else if(offset == offsetof(struct file_list,file_path))
@@ -567,10 +567,10 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	else
 	{
 		getter_array_sanity_check(offsets_peer)
-		torx_read(n)
+		torx_read(n) // 🟧🟧🟧
 		memcpy(array,(char*)&peer[n] + offset,size);
 	}
-	torx_unlock(n)
+	torx_unlock(n) // 🟩🟩🟩
 }
 
 int8_t getter_int8(const int n,const int i,const int f,const size_t offset)
@@ -658,22 +658,22 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 	if(i > INT_MIN)
 	{
 		getter_array_sanity_check(offsets_message)
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		memcpy((char*)&peer[n].message[i] + offset,value,size);
 	}
 	else if(f > -1)
 	{
 		getter_array_sanity_check(offsets_file)
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		memcpy((char*)&peer[n].file[f] + offset,value,size);
 	}
 	else
 	{
 		getter_array_sanity_check(offsets_peer)
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		memcpy((char*)&peer[n] + offset,value,size);
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 }
 
 /* XXX The following is for group struct only XXX */ // Totally unused

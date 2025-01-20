@@ -93,10 +93,10 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 		return 0;
 	}
 	int was_transferring = 0;
-	torx_write(n) // XXX YES, must be write, because we can't unlock or we could have races
+	torx_write(n) // 🟥🟥🟥 YES, must be write, because we can't unlock or we could have races
 	if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		return was_transferring;
 	}
 	for(int16_t section = 0; section <= peer[n].file[f].splits; section++)
@@ -112,7 +112,7 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 		else if(peer[n].file[f].split_status_n[section] > -1)
 			*active_transfers_ongoing = *active_transfers_ongoing + 1; // cannot use ++ here. Would be invalid pointer math.
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	return was_transferring;
 }
 
@@ -129,16 +129,16 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 		was_transferring += unclaim(&active_transfers_ongoing,n,f,peer_n,fd_type);
 	else
 	{ // Unclaim sections of all files (typical when a socket closes during inbound transfer)
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		for(int ff = 0 ; !is_null(peer[n].file[ff].checksum,CHECKSUM_BIN_LEN) ; ff++)
 		{
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			uint16_t ongoing = 0;
 			was_transferring += unclaim(&ongoing,n,ff,peer_n,fd_type);
 			active_transfers_ongoing += ongoing;
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 		}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	if(!active_transfers_ongoing && f > -1)
 		transfer_progress(n,f); // XXX This intentionally triggers a stall because no transfer has occurred since last_transferred was last updated. XXX
@@ -176,9 +176,9 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		const time_t modified = getter_time(n,INT_MIN,f,offsetof(struct file_list,modified));
 		uint32_t trash32 = htobe32((uint32_t)modified);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
 	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] (+ MODIFIED[4] + FILENAME (no null termination)) or, if partial (+ split_progress[section] *(splits + 1))
@@ -186,26 +186,26 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
 		const size_t split_hashes_len = (size_t)(CHECKSUM_BIN_LEN *(splits + 1));
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].split_hashes) // Necessary sanity check to prevent race conditions
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[n].file[f].split_hashes,split_hashes_len);
 		else
 		{
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			error_simple(0,"split_hashes is NULL. This is unacceptable at this point.");
 			breakpoint();
 			goto error;
 		}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash64,sizeof(uint64_t));
 		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
 		{
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			if(peer[n].file[f].split_progress == NULL)
 			{ // Necessary sanity check to prevent race conditions
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				error_simple(0,"split_progress is NULL. This is unacceptable at this point.");
 				breakpoint();
 				goto error;
@@ -215,17 +215,17 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 				trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
 			}
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		else /* if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) */
 		{ // Add modification date and filename
 			const time_t modified = getter_time(n,INT_MIN,f,offsetof(struct file_list,modified));
 			const uint32_t trash32 = htobe32((uint32_t)modified);
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
 		//	error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[n].file[f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 
 	}
@@ -403,10 +403,10 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		set_time(&time,&nstime);
 	const uint8_t recvfd_connected = getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 	const uint8_t sendfd_connected = getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-	torx_read(n) // XXX
+	torx_read(target_n) // 🟧🟧🟧
 	const int utilized_recv = peer[target_n].socket_utilized[0];
 	const int utilized_send = peer[target_n].socket_utilized[1];
-	torx_unlock(n) // XXX
+	torx_unlock(target_n) // 🟩🟩🟩
 	if(fd_type < 0)
 	{
 		if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
@@ -487,9 +487,9 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		if(send_prep(nnnn,-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
 		{ // delete unsuccessful discardable stream message
 			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",nnnn,iiii,fd_type,protocol);
-			torx_write(nnnn) // XXX
+			torx_write(nnnn) // 🟥🟥🟥
 			zero_i(nnnn,iiii);
-			torx_unlock(nnnn) // XXX
+			torx_unlock(nnnn) // 🟩🟩🟩
 			if(target_g < 0)
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
@@ -534,10 +534,10 @@ int message_resend(const int n,const int i)
 	time_t nstime = 0;
 	if(target_g > -1 && date_len && signature_len)
 	{ // Keep the existing times (ie, resend only) only if its a group using signed && dated messages (ie private groups)
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		time = peer[n].message[i].time;
 		nstime = peer[n].message[i].nstime;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	uint32_t message_len;
 	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
@@ -663,26 +663,26 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 	}
 	const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].split_progress == NULL)
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failed in calculate_file_request_start_end2. Coding error. Report this.");
 		return -1;
 	}
 	const uint64_t our_progress = peer[n].file[f].split_progress[section];
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	const uint64_t section_start = calculate_section_start(end,file_size,splits,section);
 	*start = section_start + our_progress;
 	if(o > -1)
 	{ // Group transfer
 		uint64_t peer_progress;
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].offer && peer[n].file[f].offer[o].offer_progress)
 			peer_progress = peer[n].file[f].offer[o].offer_progress[section];
 		else
 			peer_progress = 0;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(!peer_progress)
 			return -1; // XXX DO NOT ELIMINATE THIS CHECK, otherwise we can get a negative int overflow on the next line
 		*end = section_start + peer_progress - 1;
@@ -699,14 +699,14 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		error_simple(0,"Sanity check failed in select_peer. Coding error. Report this.");
 		return -1;
 	}
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
 	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failure. Something is unexpectantly NULL in select_peer. Should call split_read or section_update first, either of which will initialize. Coding error. Report this.");
 		return -1; // TODO split_read(n,f); We did this prior to 2025/01/15
 	}
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	struct file_request_strc file_request_strc;
@@ -717,7 +717,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		int target_o = -1;
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].offer && peer[n].file[f].split_status_n && peer[n].file[f].split_progress && peer[n].file[f].split_status_fd)
 			for(int o = 0 ; peer[n].file[f].offer[o].offerer_n != -1 ; o++)
 			{
@@ -770,7 +770,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 					}
 				}
 			}
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(target_n > -1)
 		{
 			if(getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
@@ -796,16 +796,16 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		file_request_strc.fd_type = fd_type; // must be set by caller
 		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
 		{ // There should only be 1 or 2 sections, 0 or 1 splits.
-			torx_read(n) // XXX
+			torx_read(n) // 🟧🟧🟧
 			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
 			{ // Sanity check to prevent race condition
-				torx_unlock(n) // XXX
+				torx_unlock(n) // 🟩🟩🟩
 				error_simple(0,"select_peer file is probably cancelled1. Possible coding error. Report this.");
 				return -1;
 			}
 			const int relevant_split_status_n = peer[n].file[f].split_status_n[file_request_strc.section];
 			const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[file_request_strc.section];
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			if(relevant_split_status_n != -1 && tmp_fd_type == fd_type)
 			{ // Cannot concurrently request more than one section of the same file on the same file descriptor or we'll have errors about non-consecutive writes.
 				error_simple(0,"We already have a request for a section of this file on this fd_type. Coding error. Report this.");
@@ -822,17 +822,17 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	}
 	if(target_n > -1)
 	{
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
 		{ // Sanity check to prevent race condition
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 			error_simple(0,"select_peer file is probably cancelled2. Possible coding error. Report this.");
 			return -1;
 		}
 		peer[n].file[f].split_status_n[file_request_strc.section] = target_n; // XXX claim it. NOTE: do NOT have any 'goto error' after this. MUST NOT ERROR AFTER CLAIMING XXX
 		peer[n].file[f].split_status_fd[file_request_strc.section] = file_request_strc.fd_type;
 		peer[n].file[f].split_status_req[file_request_strc.section] = target_progress;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_printf(0,RED"Checkpoint split_status setting peer[%d].file[%d].split_status_n[%d] = %d, fd_type = %d"RESET,n,f,file_request_strc.section,target_n,file_request_strc.fd_type);
 		message_send(target_n,ENUM_PROTOCOL_FILE_REQUEST,&file_request_strc,FILE_REQUEST_LEN);
 		return target_n;
@@ -864,10 +864,10 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 	}
 	else if(file_path == NULL)
 	{ // n,f was necessarily passed
-		torx_write(n) // XXX
+		torx_write(n) // 🟥🟥🟥
 		torx_free((void*)&peer[n].file[f].file_path);
 		torx_free((void*)&peer[n].file[f].split_path);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path if n,f was passed so that it can be reset.");
 	return 1;
@@ -878,9 +878,9 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 	if(n < 0 || f < 0)
 		return;
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const char *file_path = peer[n].file[f].file_path;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	if(file_path)
 	{
 		if(file_unwritable(n,f,NULL))
@@ -917,16 +917,16 @@ void file_set_path(const int n,const int f,const char *path)
 		error_simple(0,"Zero length or null path passed to file_set_path");
 		return;
 	}
-	torx_write(n) // XXX
+	torx_write(n) // 🟥🟥🟥
 	if(peer[n].file[f].file_path == NULL)
 	{
 		peer[n].file[f].file_path = torx_secure_malloc(len+1);
 		memcpy(peer[n].file[f].file_path,path,len+1);
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	else
 	{
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Currently, changing file_path is not facilitated. (we would have to change file name too and make sure its not active, maybe move the actual file...");
 	}
 }
@@ -935,10 +935,10 @@ void file_accept(const int n,const int f)
 { // Toggle to accept or pause file transfer
 	if(n < 0 || f < 0)
 		return;
-	torx_read(n) // XXX
+	torx_read(n) // 🟧🟧🟧
 	const uint8_t owner = peer[n].owner;
 	const char *filename = peer[n].file[f].filename;
-	torx_unlock(n) // XXX
+	torx_unlock(n) // 🟩🟩🟩
 	const int file_status = file_status_get(n,f);
 	if(filename == NULL)
 	{ // probably ENUM_OWNER_GROUP_PEER, non-PM message, or where the file path is not yet set by UI
@@ -977,18 +977,18 @@ void file_accept(const int n,const int f)
 		pthread_rwlock_rdlock(&mutex_global_variable);
 		const char *local_download_dir = download_dir;
 		pthread_rwlock_unlock(&mutex_global_variable);
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		const char *file_path = peer[n].file[f].file_path;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(local_download_dir != NULL && file_path == NULL)
 		{ // Setting file_path to inside download_dir if existing. Client may have already set .file_path, preventing this from occuring.
-			torx_write(n) // XXX
+			torx_write(n) // 🟥🟥🟥
 			pthread_rwlock_rdlock(&mutex_global_variable);
 			const size_t allocated_size = strlen(download_dir)+1+strlen(peer[n].file[f].filename)+1;
 			peer[n].file[f].file_path = torx_secure_malloc(allocated_size);
 			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,platform_slash,peer[n].file[f].filename);
 			pthread_rwlock_unlock(&mutex_global_variable);
-			torx_unlock(n) // XXX
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		else if(local_download_dir == NULL && file_path == NULL)
 		{
@@ -996,9 +996,9 @@ void file_accept(const int n,const int f)
 			return;
 		}
 		uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-		torx_read(n) // XXX
+		torx_read(n) // 🟧🟧🟧
 		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
-		torx_unlock(n) // XXX
+		torx_unlock(n) // 🟩🟩🟩
 		if(splits == 0 && split_hashes == NULL)
 		{ // set splits to 1 if not already, but not on group files (which will have split_hashes)
 			splits = 1; // set default before split_read, which might overwrite it.
