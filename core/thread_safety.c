@@ -522,7 +522,12 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 		iter++;\
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.2",offset);\
-	if(offsets_struc[iter].size < size)\
+	if(offset == offsetof(struct message_list,message))\
+	{\
+		if(peer[n].message[i].message_len < size)\
+			error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.2 %lu < %lu",offset,offsets_struc[iter].size,size);\
+	}\
+	else if(offsets_struc[iter].size < size)\
 		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size);
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset)
@@ -546,10 +551,13 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	{
 		getter_array_sanity_check(offsets_message)
 		torx_read(n) // 🟧🟧🟧
-		if(peer[n].message[i].message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function.
-			memcpy(array,peer[n].message[i].message,peer[n].message[i].message_len);
-		else if(offset == offsetof(struct message_list,message))
-			memcpy(array,peer[n].message[i].message,size);
+		if(offset == offsetof(struct message_list,message))
+		{
+			if(peer[n].message[i].message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function, when accessing pointers.
+				memcpy(array,peer[n].message[i].message,peer[n].message[i].message_len);
+			else
+				memcpy(array,peer[n].message[i].message,size);
+		}
 		else
 			memcpy(array,(char*)&peer[n].message[i] + offset,size);
 	}
@@ -557,9 +565,9 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	{
 		getter_array_sanity_check(offsets_file)
 		torx_read(n) // 🟧🟧🟧
-		if(offset == offsetof(struct file_list,filename))
+		if(offset == offsetof(struct file_list,filename)) // TODO This WILL NOT WORK because getter_array_sanity_check will return a maximum size of 8. Need to implement proper length checks.
 			memcpy(array,peer[n].file[f].filename,size);
-		else if(offset == offsetof(struct file_list,file_path))
+		else if(offset == offsetof(struct file_list,file_path)) // TODO This WILL NOT WORK because getter_array_sanity_check will return a maximum size of 8. Need to implement proper length checks.
 			memcpy(array,peer[n].file[f].file_path,size);
 		else
 			memcpy(array,(char*)&peer[n].file[f] + offset,size);
@@ -757,6 +765,16 @@ int getter_group_int(const int g,const size_t offset)
 	return_getter_group_value // macro
 }
 
+#define getter_group_array_sanity_check(offsets_struc) \
+	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
+	size_t iter = 0;\
+	while(iter < pages && offset != offsets_struc[iter].offset)\
+		iter++;\
+	if(iter == pages)\
+		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.6",offset);\
+	if(offsets_struc[iter].size < size)\
+		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.7 %lu < %lu",offset,offsets_struc[iter].size,size);
+
 void setter_group(const int g,const size_t offset,const void *value,const size_t size)
 { /* Suitable for ALL datatypes (string, int, void*, NULL, etc). Note: The (char*) is necessary because otherwise the offset is treated as an addition to the iterator: &group[g+offset]. https://www.iso-9899.info/n1570.html#6.5.2.1p2
      Integer Usage:
@@ -771,7 +789,7 @@ void setter_group(const int g,const size_t offset,const void *value,const size_t
 	}
 	else if(!group) // can occur during shutdown
 		return;
-	getter_array_sanity_check(offsets_group)
+	getter_group_array_sanity_check(offsets_group)
 	pthread_rwlock_wrlock(&mutex_expand_group);
 	memcpy((char*)&group[g] + offset,value,size);
 	pthread_rwlock_unlock(&mutex_expand_group);
