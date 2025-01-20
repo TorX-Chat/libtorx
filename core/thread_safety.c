@@ -523,7 +523,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	if(iter == pages)\
 		error_simple(-1,"Illegal offset. Coding error. Report this.2");\
 	if(offsets_struc[iter].size < size)\
-		error_printf(-1,"Illegal getter return value. Coding error. Report this.3 %lu < %lu",offsets_struc[iter].size,size);
+		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size);
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset)
 { // Be careful on size. Could actually use this on integers, not just arrays. It needs re-writing and better sanity checks. See getter_string as an example.
