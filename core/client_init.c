@@ -808,7 +808,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			torx_unlock(n) // 🟩🟩🟩
 			if(relevant_split_status_n != -1 && tmp_fd_type == fd_type)
 			{ // Cannot concurrently request more than one section of the same file on the same file descriptor or we'll have errors about non-consecutive writes.
-				error_simple(0,"We already have a request for a section of this file on this fd_type. Coding error. Report this.");
+				error_simple(0,"Request already exists for a section of this file on this fd_type. Coding error. Report this.");
 				return -1;
 			}
 			if(relevant_split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,file_request_strc.section) == 0)

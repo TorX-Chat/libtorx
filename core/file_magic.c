@@ -846,8 +846,10 @@ static inline int split_read(const int n,const int f)
 { // File is in binary format. Checksum,nos,split_progress
 	char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(!split_path)
+	{
 		set_split_path(n,f);
-	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+	}
 	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
 	torx_free((void*)&split_path);
 	uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
@@ -918,10 +920,6 @@ int initialize_split_info(const int n,const int f)
 		return -1;
 	}
 	char *split_path = peer[n].file[f].split_path;
-	torx_unlock(n) // 🟩🟩🟩
-	if(split_path == NULL)
-		set_split_path(n,f);
-	torx_read(n) // 🟧🟧🟧
 	const uint64_t *split_progress = peer[n].file[f].split_progress;
 	torx_unlock(n) // 🟩🟩🟩
 	if(split_progress == NULL)

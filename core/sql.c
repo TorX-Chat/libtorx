@@ -1120,6 +1120,9 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				expand_message_struc_followup(n,i);
 		}
 		sqlite3_reset(stmt);
+	//	error_simple(0,"Checkpoint load more IS BROKEN (memory issue). Bailing out until we can fix it. 2025/01/21. Be sure to reduce show_log_messages. Problem may be related to increment_i, or "); // TODO TODO TODO FOR TESTING ONLY, REMOVE
+	//	pthread_mutex_unlock(&mutex_sql_messages); // TODO TODO TODO FOR TESTING ONLY, REMOVE
+	//	return 0; // TODO TODO TODO FOR TESTING ONLY, REMOVE
 	}
 	uint32_t loaded = 0; // start at 0
 	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
@@ -1227,6 +1230,9 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 						torx_write(file_n) // 🟥🟥🟥
 						if(peer[file_n].file[f].split_progress) // sanity check
 							peer[file_n].file[f].split_progress[0] = size_on_disk;
+					//	printf("Checkpoint file_status=%d splits=%u size=%lu size_on_disk=%lu\n",file_status,peer[file_n].file[f].splits,peer[file_n].file[f].size,size_on_disk); // should only initialize if not complete
+						if(size_on_disk == peer[file_n].file[f].size)
+							torx_free((void*)&peer[file_n].file[f].split_path);
 					}
 					torx_unlock(file_n) // 🟩🟩🟩
 				}
