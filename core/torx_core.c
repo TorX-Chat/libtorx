@@ -133,7 +133,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 50; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen.
+uint32_t show_log_messages = 500; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen. Needs also to consider that file related messages are included yet invisible.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -3493,7 +3493,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 	int i;
 	torx_write(n) // 🟥🟥🟥
 	if(offset < 0)
-		i = peer[n].max_i - offset - 1;
+		i = peer[n].min_i - offset -1;
 	else
 		i = peer[n].max_i + 1;
 	if(!offset)
@@ -3505,6 +3505,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 		}
 		peer[n].max_i++;
 	}
+	//printf("Checkpoint increment_i n=%d i=%d max_i=%d min_i=%d\n",n,i,peer[n].max_i,peer[n].min_i);
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
 	peer[n].message[i].fd_type = fd_type;
