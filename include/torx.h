@@ -204,7 +204,7 @@ typedef u_short in_port_t;
 #define BROADCAST_MAX_INBOUND_PER_PEER BROADCAST_QUEUE_SIZE/16 // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
 
 /* The following DO NOT CONTAIN + '\0' + [Time] + [NSTime] + Protocol + Signature */
-#define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + strlen(peer[n].file[f].filename))
+#define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
 #define FILE_REQUEST_LEN		CHECKSUM_BIN_LEN+sizeof(uint64_t)*2
 #define GROUP_OFFER_LEN			GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)
 #define GROUP_OFFER_FIRST_LEN		GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t) + 56 + crypto_sign_PUBLICKEYBYTES
@@ -216,8 +216,8 @@ typedef u_short in_port_t;
 #define GROUP_PRIVATE_ENTRY_REQUEST_LEN	56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES
 #define GROUP_BROADCAST_DECRYPTED_LEN	crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES
 #define GROUP_BROADCAST_LEN		crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN
-#define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + strlen(peer[n].file[f].filename))
-#define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint64_t) *(splits + 1))
+#define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
+#define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) *(splits + 1))
 #define PIPE_AUTH_LEN			56
 #define DATE_SIGN_LEN			sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES // time + nstime + sig
 
@@ -451,19 +451,17 @@ enum stream_types { // Stream > 0 is not stored in struct longer than necessary.
 
 enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed upon each message):
 		XXX New Method:	echo $(($RANDOM*2-$RANDOM%2)) */
-/*	ENUM_PROTOCOL_AUDIO_WAV = 14433,			// TODO TODO TODO small size audio message, wav format. runtime(seconds) + data
-	ENUM_PROTOCOL_AUDIO_WAV_DATE_SIGNED = 5392,		// TODO TODO TODO small size audio message, wav format. runtime(seconds) + data
-	ENUM_PROTOCOL_FILE_PREVIEW_PNG = 32343,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
+/*	ENUM_PROTOCOL_FILE_PREVIEW_PNG = 32343,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_PNG_DATE_SIGNED = 17878,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_GIF = 54526,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
-	ENUM_PROTOCOL_FILE_PREVIEW_GIF_DATE_SIGNED = 47334,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
-*/
+	ENUM_PROTOCOL_FILE_PREVIEW_GIF_DATE_SIGNED = 47334,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data	*/
 	ENUM_PROTOCOL_UTF8_TEXT = 32896,
 	ENUM_PROTOCOL_FILE_OFFER = 44443,
 	ENUM_PROTOCOL_FILE_OFFER_PRIVATE = 62747,
 	ENUM_PROTOCOL_FILE_OFFER_GROUP = 32918,			// Uses hash of section hashes, not whole file hash, unlike normal file_offer
 	ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED = 2125,	// Uses hash of section hashes, not whole file hash, unlike normal file_offer
-	ENUM_PROTOCOL_FILE_OFFER_PARTIAL = 56237,		// Uses hash of section hashes, not whole file hash, unlike normal file_offer. Includes all section hashes because otherwise we can't verify splits/size with hash of hashes, in case we haven't received a full offer yet.
+	ENUM_PROTOCOL_FILE_OFFER_PARTIAL = 64736,		// Uses hash of section hashes, not whole file hash, unlike normal file_offer.
+	ENUM_PROTOCOL_FILE_INFO_REQUEST = 63599,		// Uses hash of section hashes. Requests a FILE_OFFER_GROUP or FILE_OFFER_GROUP_DATE_SIGNED.
 	ENUM_PROTOCOL_FILE_PIECE = 7795,			// XXX DOES NOT CARE ABOUT .socket_utilized
 	ENUM_PROTOCOL_FILE_REQUEST = 27493,
 	ENUM_PROTOCOL_FILE_PAUSE = 38490,
@@ -882,6 +880,7 @@ int message_resend(const int n,const int i);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 void kill_code(const int n,const char *explanation); // must accept -1
 void file_request_internal(const int n,const int f,const int8_t fd_type);
+void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial);
 void file_set_path(const int n,const int f,const char *path);
 void file_accept(const int n,const int f);
 void file_cancel(const int n,const int f);

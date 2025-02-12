@@ -1148,12 +1148,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
 						continue; // because this is now stream
 					}
-					else if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
+					else if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST || protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 					{
 					//	printf("Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d\n",owner);
 						if(event_strc->buffer_len != CHECKSUM_BIN_LEN)
 						{
-							error_simple(0,"File pause or cancel of bad size received.");
+							error_simple(0,"File pause, cancel, or info request of bad size received.");
 							continue;
 						}
 						int file_n = event_strc->n;
@@ -1165,10 +1165,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						if(f < 0) // NOT else if, we set f again above
 						{
-							error_simple(0,"Received a pause or cancel for an unknown file. Bailing out.");
+							error_simple(0,"Received a pause, cancel, or info request for an unknown file. Bailing out.");
 							continue;
 						}
-						process_pause_cancel(file_n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
+						if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST)
+							file_offer_internal(event_strc->n,file_n,f,0); // Respond with an offer so that the peer can get the info they need
+						else // if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
+							process_pause_cancel(event_strc->n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
 					}
 					else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
 					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
@@ -1357,7 +1360,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					if(stream)
 					{ // certain protocols discarded after processing, others stream_cb to UI
-						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE)
+						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST)
 							stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len - (/*null_terminated_len + */date_len + signature_len));
 					}
 					else if(protocol == ENUM_PROTOCOL_KILL_CODE)

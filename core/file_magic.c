@@ -372,8 +372,53 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		// not setting .transferred, will default to 0 if the destination file is empty // TODO open file/split?
 		// file_path is also set elsewhere
 	}
-	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
-	{ // HashOfHashes + sizeof(uint8_t) + CHECKSUM_BIN_LEN *(splits + 1)) + sizeof(uint64_t) + (protocol specitic other)
+	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+	{ // HashOfHashes + sizeof(uint8_t) + sizeof(uint64_t)*(splits+1)
+		if(message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t))
+			goto error;
+		const uint8_t splits = *(const uint8_t*)(const void*)&message[CHECKSUM_BIN_LEN];
+		if(message_len < FILE_OFFER_PARTIAL_LEN)
+			goto error;
+		const int g = set_g(n,NULL);
+		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+		if(group_n < 0)
+			goto error; // received protocol on normal CTRL?
+		f = set_f(group_n,(const unsigned char*)message,CHECKSUM_BIN_LEN); // Note: passing full length will register checksum, if not existing
+		const int o = set_o(group_n,f,n);
+		if(o > -1)
+		{
+			torx_read(group_n) // 🟧🟧🟧
+			struct offer_list *offer = peer[group_n].file[f].offer;
+			const unsigned char *split_hashes = peer[group_n].file[f].split_hashes;
+			const char *filename = peer[group_n].file[f].filename;
+			torx_unlock(group_n) // 🟩🟩🟩
+			if(offer)
+			{ // Sanity check
+				torx_write(group_n) // 🟥🟥🟥
+				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
+				{
+					peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
+					if(o == 0) // Certainly the first time we saw this HashOfHashes
+						peer[group_n].file[f].splits = splits;
+				}
+				for(int16_t section = 0; section <= splits; section++)
+					peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + (size_t)section*sizeof(uint64_t)]));
+				torx_unlock(group_n) // 🟩🟩🟩
+			}
+			else
+				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.1");
+			if(!split_hashes && !filename) // Whether this is the first time seeing the file or not, we need additional info
+				message_send(n,ENUM_PROTOCOL_FILE_INFO_REQUEST,message,CHECKSUM_BIN_LEN);
+			else
+			{
+				const int file_status = file_status_get(group_n,f);
+				if(file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT || file_status == ENUM_FILE_INACTIVE_ACCEPTED) // TODO NOTE: ENUM_FILE_INACTIVE_ACCEPTED here will make pauses really pointless in group transfers, but we need it
+					file_request_internal(group_n,f,-1);
+			}
+		}
+	}
+	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
+	{ // HashOfHashes + sizeof(uint8_t) + CHECKSUM_BIN_LEN *(splits + 1)) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len
 		if(message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t))
 			goto error;
 		const uint8_t splits = *(const uint8_t*)(const void*)&message[CHECKSUM_BIN_LEN];
@@ -381,9 +426,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		const uint64_t size = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len]));
 		if((uint64_t)splits + 1 > size)
 			goto error; // cannot have more sections than bytes
-		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL && message_len < FILE_OFFER_PARTIAL_LEN) // CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint64_t) * (splits + 1) + date_len + signature_len)
-			goto error;
-		else if((protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) && message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) + (size_t)(CHECKSUM_BIN_LEN *(splits + 1)) + sizeof(uint64_t) + sizeof(uint32_t) + 1 + date_len + signature_len)
+		if(message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) + (size_t)(CHECKSUM_BIN_LEN *(splits + 1)) + sizeof(uint64_t) + sizeof(uint32_t) + 1 + date_len + signature_len)
 			goto error;
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
@@ -391,18 +434,14 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			goto error; // received protocol on normal CTRL?
 		f = set_f(group_n,(const unsigned char*)message,CHECKSUM_BIN_LEN); // Note: passing full length will register checksum, if not existing
 		size_t filename_len = 0;
-		if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
-		{
-			const size_t prefix = CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t);
-			filename_len = message_len - (prefix + date_len + signature_len);
-			if(utf8 && !utf8_valid(&message[prefix],filename_len))
-			{ // sanity check filename
-				for(size_t zzz = 0; zzz < filename_len ; zzz++)
-					printf("Checkpoint: (%c)\n",message[prefix + zzz]);
-			//	error_simple(0,"Peer offered a file with a non-UTF8 filename. Discarding offer.");
-			//	printf("Checkpoint filename: %s\n",&message[prefix]);
-				return -1;
-			}
+		const size_t prefix = CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t);
+		filename_len = message_len - (prefix + date_len + signature_len);
+		if(utf8 && !utf8_valid(&message[prefix],filename_len))
+		{ // sanity check filename
+			error_simple(0,"Peer offered a file with a non-UTF8 filename. Discarding offer.");
+			for(size_t zzz = 0; zzz < filename_len ; zzz++)
+				printf("Checkpoint: (%c)\n",message[prefix + zzz]);
+			return -1;
 		}
 		unsigned char hash_of_hashes[CHECKSUM_BIN_LEN];
 		if(b3sum_bin(hash_of_hashes,NULL,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],0,split_hashes_len+sizeof(uint64_t)) != split_hashes_len+sizeof(uint64_t) || memcmp(hash_of_hashes,message,CHECKSUM_BIN_LEN))
@@ -423,41 +462,12 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			peer[group_n].file[f].split_hashes = torx_secure_malloc(split_hashes_len+sizeof(uint64_t)); // verified via hash of hashes
 			memcpy(peer[group_n].file[f].split_hashes,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],split_hashes_len+sizeof(uint64_t));
 			peer[group_n].file[f].size = size; // verified via hash of hashes
-			if(protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-			{ // handle filename
-				peer[group_n].file[f].modified = be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)]));
-				peer[group_n].file[f].filename = torx_secure_malloc(filename_len+1);
-				memcpy(peer[group_n].file[f].filename,&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],filename_len);
-				peer[group_n].file[f].filename[filename_len] = '\0';
-				printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
-			}
+			peer[group_n].file[f].modified = be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)]));
+			peer[group_n].file[f].filename = torx_secure_malloc(filename_len+1);
+			memcpy(peer[group_n].file[f].filename,&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],filename_len);
+			peer[group_n].file[f].filename[filename_len] = '\0';
+			printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
 			torx_unlock(group_n) // 🟩🟩🟩
-		}
-		const int o = set_o(group_n,f,n);
-		if(o > -1)
-		{
-			torx_write(group_n) // 🟥🟥🟥
-			if(peer[group_n].file[f].offer)
-			{ // Sanity check
-				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
-					peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
-				if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-					for(int16_t section = 0; section <= splits; section++)
-						peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + (size_t)section*sizeof(uint64_t)]));
-				else
-					for(int16_t section = 0; section <= splits; section++)
-					{ // setting every section to 100% because this offer type is of a complete file
-						uint64_t end = 0;
-						const uint64_t start = calculate_section_start(&end,size,splits,section);
-						peer[group_n].file[f].offer[o].offer_progress[section] = end - start + 1;
-					}
-			}
-		//	else
-		//		error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.");
-			torx_unlock(group_n) // 🟩🟩🟩
-			const int file_status = file_status_get(group_n,f);
-			if(file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT || file_status == ENUM_FILE_INACTIVE_ACCEPTED) // TODO NOTE: ENUM_FILE_INACTIVE_ACCEPTED here will make pauses really pointless in group transfers, but we need it
-				file_request_internal(group_n,f,-1);
 		}
 	}
 	return 0;
@@ -1060,7 +1070,10 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				else
 				{
 					printf("Checkpoint VERIFIED checksum n=%d f=%d peer_n=%d sec=%d\n",n,f,peer_n,section);
-					message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,itovp(f),FILE_OFFER_PARTIAL_LEN);
+					struct file_request_strc file_request_strc;
+					file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
+					file_request_strc.f = f;
+					message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,&file_request_strc,FILE_OFFER_PARTIAL_LEN);
 				}
 			}
 		}

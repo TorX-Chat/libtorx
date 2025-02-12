@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 23 , 6 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 24 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -4266,6 +4266,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_FILE_INFO_REQUEST,"File Info Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_NON_DISCARDABLE);
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO

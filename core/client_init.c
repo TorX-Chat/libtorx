@@ -180,8 +180,28 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
 		torx_unlock(n) // 🟩🟩🟩
 	}
-	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
-	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] (+ MODIFIED[4] + FILENAME (no null termination)) or, if partial (+ split_progress[section] *(splits + 1))
+	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+	{ // HashOfHashes + Splits[1] + split_progress[section] *(splits + 1)
+		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,offsetof(struct file_list,checksum)); // hash of hashes
+		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
+		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
+		torx_read(n) // 🟧🟧🟧
+		if(peer[n].file[f].split_progress == NULL) // Necessary sanity check
+		{
+			torx_unlock(n) // 🟩🟩🟩
+			error_simple(0,"split_progress is NULL. This is unacceptable at this point.");
+			breakpoint();
+			goto error;
+		}
+		for(int16_t section_local = 0; section_local <= splits; section_local++)
+		{ // Add how much is completed on each section
+			const uint64_t trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
+			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
+		}
+		torx_unlock(n) // 🟩🟩🟩
+	}
+	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
+	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] + MODIFIED[4] + FILENAME (no null termination)
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,offsetof(struct file_list,checksum)); // hash of hashes + size, not hash of file
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
@@ -198,36 +218,15 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		}
 		torx_unlock(n) // 🟩🟩🟩
 		const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
-		uint64_t trash64 = htobe64(file_size);
+		const uint64_t trash64 = htobe64(file_size);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len],&trash64,sizeof(uint64_t));
-		if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-		{
-			torx_read(n) // 🟧🟧🟧
-			if(peer[n].file[f].split_progress == NULL)
-			{ // Necessary sanity check to prevent race conditions
-				torx_unlock(n) // 🟩🟩🟩
-				error_simple(0,"split_progress is NULL. This is unacceptable at this point.");
-				breakpoint();
-				goto error;
-			}
-			for(int16_t section_local = 0; section_local <= splits; section_local++)
-			{ // Add how much is completed on each section
-				trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
-				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
-			}
-			torx_unlock(n) // 🟩🟩🟩
-		}
-		else /* if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) */
-		{ // Add modification date and filename
-			const time_t modified = getter_time(n,INT_MIN,f,offsetof(struct file_list,modified));
-			const uint32_t trash32 = htobe32((uint32_t)modified);
-			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
-			torx_read(n) // 🟧🟧🟧
-			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
-		//	error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[n].file[f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
-			torx_unlock(n) // 🟩🟩🟩
-		}
-
+		const time_t modified = getter_time(n,INT_MIN,f,offsetof(struct file_list,modified));
+		const uint32_t trash32 = htobe32((uint32_t)modified);
+		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
+		torx_read(n) // 🟧🟧🟧
+		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],peer[n].file[f].filename,strlen(peer[n].file[f].filename)); // second time calling strlen
+	//	error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[n].file[f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
+		torx_unlock(n) // 🟩🟩🟩
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 	{ // CHECKSUM[64] + START[8] + END[8]
@@ -604,7 +603,16 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	}
 	else if(file_offer)
-		f = vptoi(arg);
+	{
+		const struct file_request_strc *file_request_strc = (const struct file_request_strc*) arg; // Casting passed struct
+		n = file_request_strc->n;
+		f = file_request_strc->f;
+		if((protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE) && n != target_n)
+		{ // Could also check that target_n is within the same group as file_n, if target_n != file_n
+			error_simple(0,"file_n != target_n when it should be. Coding error. Report this.");
+			goto end;
+		}
+	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
 		g = vptoi(arg);
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
@@ -909,6 +917,38 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 	}
 }
 
+void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial)
+{ // Internal function only, do not call from UI. Use file_send
+	const uint8_t owner = getter_uint8(file_n,INT_MIN,-1,offsetof(struct peer_list,owner)); // yes, MUST be file_n owner
+	if(owner != ENUM_OWNER_GROUP_CTRL && target_n != file_n)
+	{ // Could also check that target_n is in the same group as file_n, but should be unnecessary.
+		error_simple(0,"Sanity check failure in file_offer_internal. Coding error. Report this.");
+		return;
+	}
+	struct file_request_strc file_request_strc;
+	file_request_strc.n = file_n;
+	file_request_strc.f = f;
+	torx_read(file_n) // 🟧🟧🟧
+	const size_t filename_len = strlen(peer[file_n].file[f].filename);
+	const uint8_t splits = peer[file_n].file[f].splits;
+	torx_unlock(file_n) // 🟩🟩🟩
+	if(owner == ENUM_OWNER_GROUP_CTRL)
+	{
+		const int g = set_g(file_n,NULL);
+		const uint8_t invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
+		if(invite_required)
+			message_send(target_n,ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,&file_request_strc,FILE_OFFER_GROUP_LEN);
+		else
+			message_send(target_n,ENUM_PROTOCOL_FILE_OFFER_GROUP,&file_request_strc,FILE_OFFER_GROUP_LEN);
+		if(send_partial) // NOT else if
+			message_send(target_n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,&file_request_strc,FILE_OFFER_PARTIAL_LEN); // tell them that we have 100%
+	}
+	else if(owner == ENUM_OWNER_GROUP_PEER)
+		message_send(target_n,ENUM_PROTOCOL_FILE_OFFER_PRIVATE,&file_request_strc,FILE_OFFER_LEN);
+	else
+		message_send(target_n,ENUM_PROTOCOL_FILE_OFFER,&file_request_strc,FILE_OFFER_LEN);
+}
+
 void file_set_path(const int n,const int f,const char *path)
 { // To be called before file_accept. This is a helper function for FFI/Flutter. TODO Have this function utilize torx_fd_lock and other things to move/rename an existing file, mid transfer or otherwise.
 	size_t len;
@@ -954,24 +994,8 @@ void file_accept(const int n,const int f)
 		sodium_memzero(checksum,sizeof(checksum));
 		process_pause_cancel(n,f,n,ENUM_PROTOCOL_FILE_PAUSE,ENUM_MESSAGE_FAIL);
 	}
-	else if(file_status == ENUM_FILE_INACTIVE_COMPLETE)
-	{ // User unpause by re-offering file (safer than setting _ACCEPTED and directly start re-pushing (Section 6RMA8obfs296tlea), even though it could mean some packets / data is sent twice.)
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-		{
-			const int g = set_g(n,NULL);
-			const uint8_t invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-			const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-			if(invite_required)
-				message_send(n,ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,itovp(f),FILE_OFFER_GROUP_LEN);
-			else
-				message_send(n,ENUM_PROTOCOL_FILE_OFFER_GROUP,itovp(f),FILE_OFFER_GROUP_LEN);
-		}
-		else if(owner == ENUM_OWNER_GROUP_PEER)
-			message_send(n,ENUM_PROTOCOL_FILE_OFFER_PRIVATE,itovp(f),FILE_OFFER_LEN);
-		else
-			message_send(n,ENUM_PROTOCOL_FILE_OFFER,itovp(f),FILE_OFFER_LEN);
-		// DO NOT CALL process_pause_cancel here, do not set _ACCEPTED ; we wait for peer to accept
-	}
+	else if(file_status == ENUM_FILE_INACTIVE_COMPLETE) // User unpause by re-offering file (safer than setting _ACCEPTED and directly start re-pushing (Section 6RMA8obfs296tlea), even though it could mean some packets / data is sent twice.)
+		file_offer_internal(n,n,f,1); // DO NOT CALL process_pause_cancel here, do not set _ACCEPTED ; we wait for peer to accept
 	else if(file_status == ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || file_status == ENUM_FILE_INACTIVE_ACCEPTED)
 	{ // Accept, re-accept, or unpause a file
 		pthread_rwlock_rdlock(&mutex_global_variable);
@@ -1088,19 +1112,7 @@ static inline void *file_init(void *arg)
 	const int f = process_file_offer_outbound(n,checksum,splits,split_hashes_and_size,size,file_strc->modified,file_strc->path);
 //	printf("Checkpoint file_init n==%d f==%d size==%lu checksum==%s\n",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	sodium_memzero(checksum,sizeof(checksum));
-	if(owner == ENUM_OWNER_GROUP_CTRL)
-	{
-		const int g = set_g(n,NULL);
-		const uint8_t invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-		if(invite_required)
-			message_send(n,ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,itovp(f),FILE_OFFER_GROUP_LEN);
-		else
-			message_send(n,ENUM_PROTOCOL_FILE_OFFER_GROUP,itovp(f),FILE_OFFER_GROUP_LEN);
-	}
-	else if(owner == ENUM_OWNER_GROUP_PEER)
-		message_send(n,ENUM_PROTOCOL_FILE_OFFER_PRIVATE,itovp(f),FILE_OFFER_LEN);
-	else
-		message_send(n,ENUM_PROTOCOL_FILE_OFFER,itovp(f),FILE_OFFER_LEN);
+	file_offer_internal(n,n,f,1);
 	error: {}
 	torx_free((void*)&split_hashes_and_size);
 	torx_free((void*)&file_strc->path);
