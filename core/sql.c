@@ -1231,7 +1231,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 						if(peer[file_n].file[f].split_progress) // sanity check
 							peer[file_n].file[f].split_progress[0] = size_on_disk;
 					//	printf("Checkpoint file_status=%d splits=%u size=%lu size_on_disk=%lu\n",file_status,peer[file_n].file[f].splits,peer[file_n].file[f].size,size_on_disk); // should only initialize if not complete
-						if(size_on_disk == peer[file_n].file[f].size)
+						if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
 							torx_free((void*)&peer[file_n].file[f].split_path);
 					}
 					torx_unlock(file_n) // 🟩🟩🟩

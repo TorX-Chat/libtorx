@@ -134,6 +134,8 @@ int file_is_complete(const int n,const int f)
 		return 0;
 	if(size == calculate_transferred_inbound(n,f))
 		return 1; // Saves checking on disk, if this file is already completed.
+//	if(file_is_active(n,f) == ENUM_FILE_ACTIVE_IN) // TODO Still considering. Do not delete. This might be useful because checking size on disk should really be last-ditch because it indicates only that the last section is completed.
+//		return 0;
 	char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
 	const uint64_t size_on_disk = get_file_size(file_path);
 	torx_free((void*)&file_path);
@@ -244,6 +246,56 @@ int file_remove_request(const int file_n,const int f,const int peer_n,const int8
 	return removed_requests;
 }
 
+static inline void split_update(const int n,const int f,const int16_t section,const uint64_t transferred)
+{ // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
+	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
+	torx_read(n) // 🟧🟧🟧
+	const char *split_path = peer[n].file[f].split_path;
+	const uint64_t *split_progress = peer[n].file[f].split_progress;
+	const uint64_t size = peer[n].file[f].size;
+	torx_unlock(n) // 🟩🟩🟩
+	if(splits == 0 || split_path == NULL)
+		return;
+	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
+	{
+		printf(PINK"Checkpoint DELETING SPLIT PATH\n"RESET);
+		destroy_file(split_path);
+		torx_free((void*)&split_path);
+		torx_write(n) // 🟥🟥🟥
+		torx_free((void*)&peer[n].file[f].split_path);
+	//	torx_free((void*)&peer[n].file[f].split_progress); // No need to free this. Leave it. Likewise, don't change number of splits
+		torx_free((void*)&peer[n].file[f].split_status_n);
+		torx_free((void*)&peer[n].file[f].split_status_fd);
+		torx_free((void*)&peer[n].file[f].split_status_req);
+		torx_unlock(n) // 🟩🟩🟩
+		return;
+	}
+	if(section > -1 && split_progress) // sanity check, should be unnecessary
+	{
+		FILE *fp;
+		if((fp = fopen(split_path,"r+")) == NULL)
+			if((fp=fopen(split_path,"w+")) == NULL)
+			{
+				error_printf(0,"Check permissions. Cannot open split file2: %s",split_path);
+				torx_free((void*)&split_path);
+				return;
+			}
+		torx_free((void*)&split_path);
+		torx_read(n) // 🟧🟧🟧
+		if(peer[n].file[f].split_progress)
+		{ // Sanity check to prevent race condition
+			const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
+			torx_unlock(n) // 🟩🟩🟩
+			fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
+			fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
+		}
+		else
+			torx_unlock(n) // 🟩🟩🟩
+		close_sockets_nolock(fp);
+	}
+}
+
 void process_pause_cancel(const int file_n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat)
 { // see similarities in zero_f
 	if(file_n < 0 || f < 0 || peer_n < 0 || (protocol != ENUM_PROTOCOL_FILE_PAUSE && protocol != ENUM_PROTOCOL_FILE_CANCEL))
@@ -282,9 +334,12 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		if(protocol == ENUM_PROTOCOL_FILE_CANCEL && (is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)) // must go after close_sockets
 		{ // MUST only trigger on files that are actively inbound. DO NOT REMOVE THE CHECK for ACTIVE_IN/ACTIVE_IN_OUT
 			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			torx_write(file_n) // 🟥🟥🟥
+			torx_free((void*)&peer[file_n].file[f].file_path); // Free this to be sure no one will write to it after we delete it
+			torx_unlock(file_n) // 🟩🟩🟩
 			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
 			torx_free((void*)&file_path);
-			split_update(file_n,f,-1); // destroys split file and frees/nulls resources
+			split_update(file_n,f,-1,0); // destroys split file and frees/nulls resources
 		}
 	}
 }
@@ -965,55 +1020,6 @@ int initialize_split_info(const int n,const int f)
 	return 0;
 }
 
-void split_update(const int n,const int f,const int16_t section)
-{ // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
-	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-	torx_read(n) // 🟧🟧🟧
-	const char *split_path = peer[n].file[f].split_path;
-	const uint64_t *split_progress = peer[n].file[f].split_progress;
-	torx_unlock(n) // 🟩🟩🟩
-	if(splits == 0 || split_path == NULL)
-		return;
-	const int file_status = file_status_get(n,f);
-	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
-	if(split_path && (file_status == ENUM_FILE_INACTIVE_COMPLETE || file_status == ENUM_FILE_INACTIVE_CANCELLED)) // || section == -1
-	{
-		destroy_file(split_path);
-		torx_free((void*)&split_path);
-		torx_write(n) // 🟥🟥🟥
-		torx_free((void*)&peer[n].file[f].split_path);
-	//	torx_free((void*)&peer[n].file[f].split_progress); // No need to free this. Leave it. Likewise, don't change number of
-		torx_free((void*)&peer[n].file[f].split_status_n);
-		torx_free((void*)&peer[n].file[f].split_status_fd);
-		torx_free((void*)&peer[n].file[f].split_status_req);
-		torx_unlock(n) // 🟩🟩🟩
-		return;
-	}
-	if(section > -1 && split_progress) // sanity check, should be unnecessary
-	{
-		FILE *fp;
-		if((fp = fopen(split_path,"r+")) == NULL)
-			if((fp=fopen(split_path,"w+")) == NULL)
-			{
-				error_printf(0,"Check permissions. Cannot open split file2: %s",split_path);
-				torx_free((void*)&split_path);
-				return;
-			}
-		torx_free((void*)&split_path);
-		torx_read(n) // 🟧🟧🟧
-		if(peer[n].file[f].split_progress)
-		{ // Sanity check to prevent race condition
-			const uint64_t relevant_split_progress = peer[n].file[f].split_progress[section];
-			torx_unlock(n) // 🟩🟩🟩
-			fseek(fp,(long int)(CHECKSUM_BIN_LEN+sizeof(splits)+sizeof(uint64_t)*(size_t)section), SEEK_SET); // jump to correct location based upon number of splits
-			fwrite(&relevant_split_progress,1,sizeof(relevant_split_progress),fp); // write contents
-		}
-		else
-			torx_unlock(n) // 🟩🟩🟩
-		close_sockets_nolock(fp);
-	}
-}
-
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n)
 { // INBOUND FILE TRANSFER ONLY To be called after write during file transfer. Updates .split_progress, determines whether to call split_update. peer_n is only used for blacklisting.
 	if(wrote < 1)
@@ -1037,6 +1043,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 	const uint64_t section_req_current = peer[n].file[f].split_status_req[section];
 	torx_unlock(n) // 🟩🟩🟩
 	const uint8_t section_complete = (packet_start + wrote == section_end + 1);
+	const uint64_t transferred = calculate_transferred_inbound(n,f); // DO NOT USE file_is_complete, use calculate_transferred_inbound
 	if(section_complete || section_info_current == section_req_current)
 	{ // Section complete. Close file descriptors (flushing data to disk)
 		close_sockets(n,f)
@@ -1078,7 +1085,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			}
 		}
 		section_unclaim(n,f,peer_n,fd_type); // must be before file_request_internal
-		if(section_complete && file_is_complete(n,f))
+		if(section_complete && transferred == size)
 		{
 			if(CHECKSUM_ON_COMPLETION && owner != ENUM_OWNER_GROUP_CTRL) // Note: Group file generate section hashes and compare individually. Not necessary to check hash of hashes or size.
 			{ // TODO This blocks, so it should be used for debug purposes only
@@ -1086,10 +1093,10 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				unsigned char checksum[CHECKSUM_BIN_LEN];
 				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 				if(b3sum_bin(checksum_complete,file_path,NULL,0,0) && !memcmp(checksum_complete,checksum,CHECKSUM_BIN_LEN))
-					error_printf(0,"Successfully VERIFIED checksum n=%d f=%d",n,f);
+					error_printf(0,PINK"Successfully VERIFIED checksum n=%d f=%d"RESET,n,f);
 				else
 				{
-					error_simple(0,"Checkpoint Failed checksum verification."); // non-group
+					error_simple(0,PINK"Checkpoint Failed checksum verification."RESET); // non-group
 					breakpoint();
 				}
 				sodium_memzero(checksum,sizeof(checksum));
@@ -1116,10 +1123,10 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		else
 			file_request_internal(n,f,fd_type);
 		torx_free((void*)&file_path);
-		split_update(n,f,section);
+		split_update(n,f,section,transferred);
 	}
 	else if(splits && section_info_current && (section_info_current - wrote) / (120*SPLIT_DELAY*1024) != section_info_current / (120*SPLIT_DELAY*1024)) // Checking whether to call split_update
-		split_update(n,f,section); // ~8 times per 1mb with SPLIT_DELAY = 1
+		split_update(n,f,section,transferred); // ~8 times per 1mb with SPLIT_DELAY = 1
 }
 
 size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len)

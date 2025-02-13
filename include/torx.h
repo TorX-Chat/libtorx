@@ -864,7 +864,6 @@ void change_nick(const int n,const char *freshpeernick);
 uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
 void destroy_file(const char *file_path); // do not use directly for deleting history
 int initialize_split_info(const int n,const int f);
-void split_update(const int n,const int f,const int16_t section);
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
 size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
 char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
