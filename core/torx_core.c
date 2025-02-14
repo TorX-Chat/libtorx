@@ -1872,11 +1872,11 @@ uint64_t calculate_transferred_inbound(const int n,const int f)
 }
 
 uint64_t calculate_transferred_outbound(const int n,const int f,const int r)
-{ // For non-group transfers, pass r=0
+{ // For non-group transfers, pass r=0. Note: Due to the inclusion of previously_sent, this function should only be used in the UI (and UI related functions) and not internally.
 	uint64_t transferred = 0;
 	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request)
-		transferred = peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
+		transferred = peer[n].file[f].request[r].previously_sent + peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1];
 	torx_unlock(n) // 🟩🟩🟩
 	return transferred;
 }
@@ -2193,9 +2193,10 @@ static inline void zero_o(const int n,const int f,const int o) // XXX do not put
 
 static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].request) before calling! XXX
 { // Note: We don't `.requester_n = -1` because it will interfere with expand_request_struc
-//	peer[n].file[f].request[r].requester_n = -1;
+//	peer[n].file[f].request[r].requester_n = -1; // Must not reset
 	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
 	sodium_memzero(peer[n].file[f].request[r].end,sizeof(peer[n].file[f].request[r].end));
+	peer[n].file[f].request[r].previously_sent += peer[n].file[f].request[r].transferred[0] + peer[n].file[f].request[r].transferred[1]; // Need to store the progress before clearing it
 	sodium_memzero(peer[n].file[f].request[r].transferred,sizeof(peer[n].file[f].request[r].transferred));
 }
 
@@ -3124,6 +3125,7 @@ static inline void initialize_request(const int n,const int f,const int r) // XX
 	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
 	sodium_memzero(peer[n].file[f].request[r].end,sizeof(peer[n].file[f].request[r].end));
 	sodium_memzero(peer[n].file[f].request[r].transferred,sizeof(peer[n].file[f].request[r].transferred));
+	peer[n].file[f].request[r].previously_sent = 0;
 }
 
 static void initialize_f(const int n,const int f) // XXX do not put locks in here

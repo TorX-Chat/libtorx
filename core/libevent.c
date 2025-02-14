@@ -740,8 +740,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				if(peer[file_n].file[f].split_status_n == NULL || peer[file_n].file[f].split_status_fd == NULL || peer[file_n].file[f].split_progress == NULL)
 				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second.
 					torx_unlock(file_n) // 🟩🟩🟩
-					error_simple(0,"Peer asked us to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
-					continue;
+					error_simple(0,"Peer asked us to write to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
+					continue; // This could occur if a peer mistakenly sent us a FILE_PIECE of a file we initially offered
 				}
 				const uint64_t section_info_current = peer[file_n].file[f].split_progress[section];
 				const int8_t relevant_split_status_fd = peer[file_n].file[f].split_status_fd[section];
@@ -1137,6 +1137,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							{ // Necessary sanity check to prevent race condition
 								peer[file_n].file[f].request[r].start[event_strc->fd_type] = requested_start;
 								peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
+								peer[file_n].file[f].request[r].previously_sent += peer[file_n].file[f].request[r].transferred[event_strc->fd_type]; // Need to store the progress before clearing it
 								peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
 							}
 							torx_unlock(file_n) // 🟩🟩🟩

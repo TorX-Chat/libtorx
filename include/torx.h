@@ -353,7 +353,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		time_t last_progress_update_time; // last time we updated progress bar
 		time_t last_progress_update_nstime; // last time we updated progress bar
 		uint64_t bytes_per_second; // larger than necessary but avoids casting when doing calcs
-		uint64_t last_transferred;
+		uint64_t last_transferred; // This is set at the same time as last_progress_update
 		time_t time_left; // seconds TODO change integer type to ssize_t,time_t, or uint64_t
 		uint8_t speed_iter;
 		uint64_t last_speeds[256];
@@ -364,6 +364,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 			uint64_t start[2];
 			uint64_t end[2];
 			uint64_t transferred[2];
+			uint64_t previously_sent; // Do not reset to 0. From exhausted requests. This ONLY updated when a request's transferred is reset to 0 (such as when a new request overtakes it on the same socket)
 		} *request;
 	} *file;
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
@@ -764,7 +765,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_transferred_inbound(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_transferred_outbound(const int n,const int f,const int r)__attribute__((warn_unused_result));
-uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)__attribute__((warn_unused_result));
+uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
 int vptoi(const void* arg)__attribute__((warn_unused_result));
 void *itovp(const int i)__attribute__((warn_unused_result));
 int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_result));

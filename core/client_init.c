@@ -187,18 +187,26 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].split_progress == NULL) // Necessary sanity check
-		{
+		{ // Assuming this is because we are offering the file, otherwise this is a serious error.
 			torx_unlock(n) // 🟩🟩🟩
-			error_simple(0,"split_progress is NULL. This is unacceptable at this point.");
-			breakpoint();
-			goto error;
+			const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
+			for(int16_t section_local = 0; section_local <= splits; section_local++)
+			{ // Simulate that each section is fully complete, since we are assuming that we offered this file and have it fully.
+				uint64_t section_end;
+				calculate_section_start(&section_end,size,splits,section_local);
+				const uint64_t trash64 = htobe64(section_end);
+				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
+			}
 		}
-		for(int16_t section_local = 0; section_local <= splits; section_local++)
-		{ // Add how much is completed on each section
-			const uint64_t trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
-			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
+		else
+		{
+			for(int16_t section_local = 0; section_local <= splits; section_local++)
+			{ // Add how much is completed on each section
+				const uint64_t trash64 = htobe64(peer[n].file[f].split_progress[section_local]);
+				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
+			}
+			torx_unlock(n) // 🟩🟩🟩
 		}
-		torx_unlock(n) // 🟩🟩🟩
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
 	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] + MODIFIED[4] + FILENAME (no null termination)

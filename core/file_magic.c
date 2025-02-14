@@ -187,6 +187,7 @@ static inline int remove_request(const int file_n,const int f,const int peer_n,c
 			{
 				peer[file_n].file[f].request[r].start[fd_type] = 0;
 				peer[file_n].file[f].request[r].end[fd_type] = 0;
+				peer[file_n].file[f].request[r].previously_sent += peer[file_n].file[f].request[r].transferred[fd_type]; // Need to store the progress before clearing it
 				peer[file_n].file[f].request[r].transferred[fd_type] = 0;
 			}
 			else // if(fd_type == -1)
