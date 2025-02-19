@@ -191,10 +191,19 @@ int message_edit(const int n,const int i,const char *message)
 			sql_update_message(n,i);
 			message_modified_cb(n,i);
 		}
-		else if(signature_len)
+		else if(signature_len && getter_uint8(n,i,-1,offsetof(struct message_list,stat)) != ENUM_MESSAGE_RECV)
 		{
 			unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-			getter_array(&sign_sk,sizeof(sign_sk),n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
+			int signing_n;
+			if(owner == ENUM_OWNER_GROUP_PEER)
+			{
+				const int g = set_g(n,NULL);
+				const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+				signing_n = group_n;
+			}
+			else
+				signing_n = n;
+			getter_array(&sign_sk,sizeof(sign_sk),signing_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 			uint32_t signed_len = 0;
 			char *message_new = message_sign(&signed_len,sign_sk,time,nstime,p_iter,message,base_message_len);
 			sodium_memzero(sign_sk,sizeof(sign_sk));
@@ -244,7 +253,10 @@ int message_edit(const int n,const int i,const char *message)
 			}
 		}
 		else
+		{ // Example: inbound signed messages cannot be modified, only deleted.
 			error_simple(0,"Editing for this message type is unsupported");
+			return -1;
+		}
 	}
 	else
 	{ // Delete individual message

@@ -535,7 +535,7 @@ enum file_statuses
 	ENUM_FILE_ACTIVE_OUT = 1, // Do not modify
 	ENUM_FILE_ACTIVE_IN = 2, // Do not modify
 	ENUM_FILE_ACTIVE_IN_OUT = 3, // Do not modify // XXX ENUM value MUST equal ENUM_FILE_ACTIVE_OUT + ENUM_FILE_ACTIVE_IN XXX
-	ENUM_FILE_INACTIVE_ACCEPTED = 4, // This may be in or outbound originally
+	ENUM_FILE_INACTIVE_ACCEPTED = 4, // This must be inbound. For idle outbound, must be ENUM_FILE_INACTIVE_COMPLETE
 	ENUM_FILE_INACTIVE_CANCELLED = 5,
 	ENUM_FILE_INACTIVE_COMPLETE = 6
 };

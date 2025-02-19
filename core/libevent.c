@@ -725,13 +725,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				uint64_t trash_start; // network order
 				memcpy(&trash_start,&read_buffer[cur],8);
 				cur += 8; // 8 --> 16
-				uint64_t packet_start = be64toh(trash_start);
+				const uint64_t packet_start = be64toh(trash_start);
 				const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
 				const int16_t section = section_determination(size,splits_nn,packet_start);
 				if(section < 0)
 				{ // Very necessary to check
-					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
+					error_printf(0,"Peer asked us to write beyond file size: %lu. Buggy peer. Bailing.",packet_start);
 					continue;
 				}
 				uint64_t section_end = 0;
@@ -749,7 +749,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_unlock(file_n) // 🟩🟩🟩
 				if(packet_start + packet_len - cur > section_end + 1)
 				{
-					error_simple(0,"Peer asked us to write beyond file size. Buggy peer. Bailing.");
+					error_printf(0,"Peer asked us to write beyond section end: %lu + %lu - %lu > %lu + 1. Buggy peer. Bailing.",packet_start,packet_len,cur,section_end);
 					continue;
 				}
 				else if(packet_start != section_start + section_info_current)
@@ -1080,7 +1080,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							torx_free((void*)&file_path);
 							continue;
 						}
-						if(file_status == ENUM_FILE_INACTIVE_COMPLETE/* || file_status == ENUM_FILE_INACTIVE_ACCEPTED */)
+						if(file_status == ENUM_FILE_INACTIVE_COMPLETE)
 						{ // Verifying that file has not been modified since initially offering it to a peer (or since completing transfer, if a group file)
 							struct stat file_stat = {0};
 							time_t modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified));

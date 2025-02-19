@@ -1748,7 +1748,7 @@ void transfer_progress(const int n,const int f)
 	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_nstime));
 	torx_unlock(n) // 🟩🟩🟩
 	const uint64_t transferred = calculate_transferred(n,f);
-	if(transferred == size) // NOT else if
+	if(transferred == size && transferred != last_transferred)
 	{
 		torx_write(n) // 🟥🟥🟥
 		peer[n].file[f].last_transferred = transferred;
@@ -1758,6 +1758,8 @@ void transfer_progress(const int n,const int f)
 		printf("Checkpoint transfer_progress COMPLETE\n");
 		transfer_progress_cb(n,f,transferred);
 	}
+	else if(transferred == size || transferred == 0)
+		return;
 	else if(diff > file_progress_delay || last_transferred == transferred /* stalled */)
 	{ // For more accuracy and less variation, do an average over time
 		if(last_transferred > transferred) // Necessary to prevent readtime errors when calculating bytes_per_second.

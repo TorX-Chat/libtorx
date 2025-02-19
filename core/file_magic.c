@@ -158,7 +158,7 @@ int file_status_get(const int n,const int f)
 		return active; // ENUM_FILE_ACTIVE_OUT / ENUM_FILE_ACTIVE_IN / ENUM_FILE_ACTIVE_IN_OUT
 	if(file_is_complete(n,f))
 		return ENUM_FILE_INACTIVE_COMPLETE;
-	return ENUM_FILE_INACTIVE_ACCEPTED;
+	return ENUM_FILE_INACTIVE_ACCEPTED; // Inbound
 }
 
 static inline int remove_offer(const int file_n,const int f,const int peer_n)

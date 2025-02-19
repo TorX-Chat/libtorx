@@ -160,7 +160,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 	char onion_group_n[56+1];
 	unsigned char sign_sk_group_n[crypto_sign_SECRETKEYBYTES];
 	if(g > -1)
-	{ // Note: relevant group, not target group
+	{ // Note: relevant group, not necessarily target group
 		group_n = getter_group_int(g,offsetof(struct group_list,n));
 		invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 		peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
@@ -474,15 +474,8 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(cycle == 0)
 			{
 				if(target_g > -1 || (owner == ENUM_OWNER_GROUP_PEER && group_pm))
-				{ // Complicated logic, be careful here. Group messages or PM.
-					int local_g = g; // NOTE: maybe we can just use g but we can't use target_g because its used for conditions elsewhere
-					if(local_g < 0 && target_g < 0) // PM of some type
-						local_g = set_g(target_n,NULL);
-					else if(local_g < 0)
-						local_g = target_g;
-					repeated = message_insert(local_g,target_n,i); // repeated likely means resent message. No print, no insert.
-				}
-				if(!repeated)
+					repeated = message_insert(target_g > -1 ? target_g : g,target_n,i); // repeated likely means resent message. No print, no insert.
+				if(!repeated) // NOT else if, do not eliminate check
 				{ // unique same time/nstime, so print and save
 					message_new_cb(target_n,i);
 					sql_insert_message(target_n,i); // This should go before setting .all_sent = 0, to ensure that it happens before send (which will trigger :sent: write)
@@ -628,9 +621,9 @@ int message_send(const int target_n,const uint16_t protocol,const void *arg,cons
 		const struct int_char *int_char = (const struct int_char*) arg; // Casting passed struct
 		g = int_char->i;
 	}
-	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
-		g = set_g(n,NULL);
 	// XXX Step 3:
+	if(g < 0 && (owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)) // NOT else if
+		g = set_g(n,NULL);
 	return message_distribute(0,n,owner,target_n,f,g,target_g,target_g_peercount,p_iter,arg,base_message_len,0,0,fd_type,section,start,end); // i or INT_MIN upon error
 	end: {}
 	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
