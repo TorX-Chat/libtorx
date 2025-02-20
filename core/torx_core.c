@@ -3440,6 +3440,7 @@ static inline void expand_peer_struc(const int n)
 		for(int j = n+10; j > n; j--)
 			initialize_n(j);
 		pthread_rwlock_unlock(&mutex_expand);
+		expand_peer_struc_cb(n);
 		for(int j = n+10; j > n; j--)
 		{
 			initialize_n_cb(j);
@@ -3448,7 +3449,6 @@ static inline void expand_peer_struc(const int n)
 			for(int jj = 0; jj < 11; jj++)
 				initialize_f_cb(j,jj);
 		}
-		expand_peer_struc_cb(n);
 	}
 }
 
