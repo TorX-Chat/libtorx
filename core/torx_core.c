@@ -1738,6 +1738,9 @@ char *file_progress_string(const int n,const int f)
 
 void transfer_progress(const int n,const int f)
 { // This is called every packet on a file transfer (IN / OUT). Packets are PACKET_LEN-10 in size, so 488 (as of 2022/08/19, may be changed to accomodate sequencing)
+	const uint64_t transferred = calculate_transferred(n,f);
+	if(transferred == 0)
+		return; // This occurs when sending a file in a group
 	time_t time_current = 0;
 	time_t nstime_current = 0;
 	set_time(&time_current,&nstime_current);
@@ -1747,7 +1750,6 @@ void transfer_progress(const int n,const int f)
 	const time_t last_progress_update_time = peer[n].file[f].last_progress_update_time;
 	const double diff = (double)(time_current - peer[n].file[f].last_progress_update_time) * 1e9 + (double)(nstime_current - peer[n].file[f].last_progress_update_nstime); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_time)); // getter_time(n,INT_MIN,f,offsetof(struct file_list,last_progress_update_nstime));
 	torx_unlock(n) // 🟩🟩🟩
-	const uint64_t transferred = calculate_transferred(n,f);
 	if(transferred == size && transferred != last_transferred)
 	{
 		torx_write(n) // 🟥🟥🟥
@@ -1755,10 +1757,10 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].bytes_per_second = 0;
 		peer[n].file[f].time_left = 0;
 		torx_unlock(n) // 🟩🟩🟩
-		printf("Checkpoint transfer_progress COMPLETE\n");
+		printf(BRIGHT_TEAL"Checkpoint transfer_progress COMPLETE\n"RESET);
 		transfer_progress_cb(n,f,transferred);
 	}
-	else if(transferred == size || transferred == 0)
+	else if(transferred == size)
 		return;
 	else if(diff > file_progress_delay || last_transferred == transferred /* stalled */)
 	{ // For more accuracy and less variation, do an average over time
@@ -1792,8 +1794,8 @@ void transfer_progress(const int n,const int f)
 		torx_unlock(n) // 🟩🟩🟩
 		if(last_transferred == transferred)
 			printf("Checkpoint transfer_progress STALLED at %lu\n",transferred);
-		else
-			printf("Checkpoint transfer_progress %lu of %lu\n",transferred,size);
+	//	else
+	//		printf("Checkpoint transfer_progress %lu of %lu\n",transferred,size);
 		transfer_progress_cb(n,f,transferred);
 	}
 }

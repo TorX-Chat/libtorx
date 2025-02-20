@@ -193,8 +193,9 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 			for(int16_t section_local = 0; section_local <= splits; section_local++)
 			{ // Simulate that each section is fully complete, since we are assuming that we offered this file and have it fully.
 				uint64_t section_end;
-				calculate_section_start(&section_end,size,splits,section_local);
-				const uint64_t trash64 = htobe64(section_end);
+				const uint64_t section_start = calculate_section_start(&section_end,size,splits,section_local);
+				const uint64_t our_progress = section_end - section_start + 1;
+				const uint64_t trash64 = htobe64(our_progress);
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
 			}
 		}
@@ -241,7 +242,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		if(section < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,offsetof(struct file_list,checksum));
-		error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu peer_n=%d fd=%d",n,f,section,start,end,target_n,fd_type);
+	//	error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu peer_n=%d fd=%d",n,f,section,start,end,target_n,fd_type);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -677,7 +678,7 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 	{
 		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failed in calculate_file_request_start_end2. Coding error. Report this.");
-		return -1;
+		goto error;
 	}
 	const uint64_t our_progress = peer[n].file[f].split_progress[section];
 	torx_unlock(n) // 🟩🟩🟩
@@ -693,12 +694,16 @@ static inline int calculate_file_request_start_end(uint64_t *start,uint64_t *end
 			peer_progress = 0;
 		torx_unlock(n) // 🟩🟩🟩
 		if(!peer_progress)
-			return -1; // XXX DO NOT ELIMINATE THIS CHECK, otherwise we can get a negative int overflow on the next line
-		*end = section_start + peer_progress - 1;
+			goto error; // XXX DO NOT ELIMINATE THIS CHECK, otherwise we can get a negative int overflow on the next line
+		*end = section_start + peer_progress - 1; // XXX previously was followed by -1
+	//	printf("Checkpoint calculate_file_request_start_end %lu = %lu + %lu\n",*end,section_start,peer_progress);
 	}
 	if(*start > *end)
-		return -1; // Section appears finished. Cannot request any data.
+		goto error; // Section appears finished. Cannot request any data.
 	return 0;
+	error: {}
+	*start = *end = 0;
+	return -1;
 }
 
 static inline int select_peer(const int n,const int f,const int8_t fd_type)
@@ -718,13 +723,14 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	torx_unlock(n) // 🟩🟩🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-	struct file_request_strc file_request_strc;
+	const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
+	struct file_request_strc file_request_strc = {0};
 	file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
 	file_request_strc.f = f;
 	int target_n = -1;
 	uint64_t target_progress = 0;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
-	{
+	{ // Group transfers, non-PM
 		int target_o = -1;
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].offer && peer[n].file[f].split_status_n && peer[n].file[f].split_progress && peer[n].file[f].split_status_fd)
@@ -792,10 +798,12 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				error_simple(0,"calculate_file_request_start_end failed with a group_ctrl. Coding error. Report this."); // possible race if this occurs?
 				return -1;
 			}
+			printf(BRIGHT_GREEN"Checkpoint select_peer n=%d f=%d target_o=%d splits=%u section=%d start=%lu end=%lu\n"RESET,n,f,target_o,splits,file_request_strc.section,file_request_strc.start,file_request_strc.end);
 		}
 	}
 	else
-	{ // _CTRL or _GROUP_PEER
+	{ // _CTRL or _GROUP_PEER, ie: PM/p2p, not group transfers. This section is NOT suitable for group transfers because we pass -1 as offer_o to calculate_file_request_start_end, which means we are assuming our peer has 100% of the file.
+		printf(BRIGHT_GREEN"Checkpoint select_peer _CTRL or _GROUP_PEER owner=%u n=%d f=%d splits=%u\n"RESET,owner,n,f,splits);
 		if(fd_type == -1)
 		{ // Sanity check
 			error_simple(0,"Wrong fd_type passed to select_peer. Coding error. Report this.");
@@ -825,12 +833,16 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		}
 		if(file_request_strc.section > splits)
 			return -1; // No unfinished sections available to request.
-		const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		const uint64_t section_start = calculate_section_start(NULL,file_size,splits,file_request_strc.section);
 		target_progress = file_request_strc.end - section_start + 1; // MUST utilize section_start, not file_request_strc.start // NOTE: This is unnecessary/unutilized in non-group transfers.
 	}
 	if(target_n > -1)
 	{
+		if(file_request_strc.end >= file_size)
+		{
+			error_printf(0,"Sanity check failure in select_peer: end=%lu >= size=%lu",file_request_strc.end,file_size);
+			return -1;
+		}
 		torx_write(n) // 🟥🟥🟥
 		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
 		{ // Sanity check to prevent race condition
@@ -926,7 +938,7 @@ void file_offer_internal(const int target_n,const int file_n,const int f,const u
 		error_simple(0,"Sanity check failure in file_offer_internal. Coding error. Report this.");
 		return;
 	}
-	struct file_request_strc file_request_strc;
+	struct file_request_strc file_request_strc = {0};
 	file_request_strc.n = file_n;
 	file_request_strc.f = f;
 	torx_read(file_n) // 🟧🟧🟧

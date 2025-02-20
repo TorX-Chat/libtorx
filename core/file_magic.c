@@ -447,6 +447,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			struct offer_list *offer = peer[group_n].file[f].offer;
 			const unsigned char *split_hashes = peer[group_n].file[f].split_hashes;
 			const char *filename = peer[group_n].file[f].filename;
+			const uint64_t *offer_progress = peer[group_n].file[f].offer[o].offer_progress; // only exists if we have received a partial before
 			torx_unlock(group_n) // 🟩🟩🟩
 			if(offer)
 			{ // Sanity check
@@ -464,7 +465,10 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			else
 				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.1");
 			if(!split_hashes && !filename) // Whether this is the first time seeing the file or not, we need additional info
-				message_send(n,ENUM_PROTOCOL_FILE_INFO_REQUEST,message,CHECKSUM_BIN_LEN);
+			{ // Do not modify logic here.
+				if(offer_progress) // Only requesting if this is the second time or greater that we got a _PARTIAL, because otherwise we could be requesting an offer that is already on its way (due to _PARTIAL being sent on a different socket and arriving first)
+					message_send(n,ENUM_PROTOCOL_FILE_INFO_REQUEST,message,CHECKSUM_BIN_LEN);
+			}
 			else
 			{
 				const int file_status = file_status_get(group_n,f);
@@ -1078,7 +1082,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				else
 				{
 					printf("Checkpoint VERIFIED checksum n=%d f=%d peer_n=%d sec=%d\n",n,f,peer_n,section);
-					struct file_request_strc file_request_strc;
+					struct file_request_strc file_request_strc = {0};
 					file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
 					file_request_strc.f = f;
 					message_send(n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,&file_request_strc,FILE_OFFER_PARTIAL_LEN);
