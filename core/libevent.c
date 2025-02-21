@@ -890,7 +890,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							}
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
 							{ // After receiving this, we should be able to process unsigned messages as having known receiver, on this connection.
-								if(event_strc->owner != ENUM_OWNER_GROUP_CTRL || pipe_auth_inbound(event_strc) < 0)
+								if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
+								{ // This connection is already authenticated, no need to re-authenticate it. Not verifying authenticity.
+									error_simple(0,"Repeated authentication received on a GROUP_PEER. No issue. Carry on.");
+									break;
+								}
+								else if(pipe_auth_inbound(event_strc) < 0)
 								{
 									error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on GROUP_CTRL: fd_type=%d owner=%u len=%u",event_strc->fd_type,event_strc->owner,event_strc->buffer_len);
 									break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
