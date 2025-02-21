@@ -3867,7 +3867,7 @@ int set_r(const int n,const int f,const int passed_requester_n)
 }
 
 int group_online(const int g)
-{ // Returns number of online peers (Only measures those we are connected to, 
+{ // Returns number of online peers
 	int online = 0;
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	const int *peerlist = group[g].peerlist;
@@ -3881,7 +3881,8 @@ int group_online(const int g)
 			const int peer_n = group[g].peerlist[nn];
 			pthread_rwlock_unlock(&mutex_expand_group);
 			const uint8_t sendfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-			if(sendfd_connected == 1)
+			const uint8_t recvfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
+			if(sendfd_connected > 0 || recvfd_connected > 0)
 				online++;
 		}
 	}

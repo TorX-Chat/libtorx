@@ -914,6 +914,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
 								event_strc->authenticated = 1;
 								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_unlock(&mutex_expand); TODO */ 
+								begin_cascade(event_strc);
+								peer_online(event_strc);
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 							{
@@ -1011,7 +1013,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 							torx_free((void*)&prefixed_message);
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
-							{
+							{ // Authenticating a _CTRL, not _GROUP_CTRL
 								if(pipe_auth_inbound(event_strc) < 0)
 								{
 									error_printf(0,"Received a INVALID ENUM_PROTOCOL_PIPE_AUTH on CTRL: fd_type=%d owner=%u len=%u",event_strc->fd_type,event_strc->owner,event_strc->buffer_len);
@@ -1557,20 +1559,16 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	peer[event_strc->n].bev_recv = bev_recv; // 2024/07/13 TODO TODO TODO XXX Maybe this should have a null check before we replace bev_recv.
 	torx_unlock(event_strc->n) // 🟩🟩🟩
 
-	if(event_strc->authenticated)
+	if(event_strc->authenticated) // This will only trigger on _CTRL, not _GROUP_CTRL or _SING/_MULT
 	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
-		if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL)
-			error_simple(1,"Existing Peer has connected to us.");
-		else if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
-			error_simple(1,"New potential peer has connected.");
+		error_simple(1,"Existing Peer has connected to us.");
 		const uint8_t recvfd_connected = 1;
-	//	printf("Checkpoint recvfd connected 3 n=%d\n",event_strc->n);
 		setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
-		if(event_strc->owner == ENUM_OWNER_CTRL)
-			begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
-		if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL)
-			peer_online(event_strc); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
+		begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
+		peer_online(event_strc); // internal callback, keep after peer[n].bev_recv = bev_recv; AND AFTER send_prep
 	}
+	else if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
+		error_simple(1,"New potential peer has connected.");
 }
 
 static void error_conn(struct evconnlistener *listener,void *arg)
