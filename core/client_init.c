@@ -145,7 +145,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	return was_transferring;
 }
 
-static inline char *message_prep(uint32_t *message_len_p,const int target_n,const int8_t fd_type,const int16_t section,const uint64_t start,const uint64_t end,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
+static inline char *message_prep(uint32_t *message_len_p,const int target_n,const int16_t section,const uint64_t start,const uint64_t end,const int n,const int f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
 { // Prepare messages // WARNING: There are no sanity checks. This function can easily de-reference a null pointer if bad/insufficient args are passed.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
@@ -242,7 +242,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		if(section < 0)
 			goto error;
 		getter_array(base_message,CHECKSUM_BIN_LEN,n,INT_MIN,f,offsetof(struct file_list,checksum));
-	//	error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu peer_n=%d fd=%d",n,f,section,start,end,target_n,fd_type);
+	//	error_printf(0,"Checkpoint request n=%d f=%d sec=%d %lu to %lu peer_n=%d",n,f,section,start,end,target_n);
 		uint64_t trash = htobe64(start);
 		memcpy(&base_message[CHECKSUM_BIN_LEN],&trash,sizeof(uint64_t));
 		trash = htobe64(end);
@@ -383,8 +383,6 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		torx_free((void*)&base_message);
 	return message_new;
 	error: {}
-	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-		section_unclaim(n,f,target_n,fd_type);
 	if(g > -1)
 	{
 		sodium_memzero(sign_sk_group_n,sizeof(sign_sk_group_n));
@@ -395,41 +393,22 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 	return NULL;
 }
 
-static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime,int8_t fd_type,const int16_t section,const uint64_t start,const uint64_t end)
+static inline int message_distribute(const uint8_t skip_prep,const int n,const uint8_t owner,const int target_n,const int f,const int g,const int target_g,const uint32_t target_g_peercount,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime,const int8_t fd_type,const int16_t section,const uint64_t start,const uint64_t end)
 { // TODO WARNING: Sanity checks will interfere with message_resend. Message_send + message_distribute + message_prep are highly functional spagetti.
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t stream = protocols[p_iter].stream;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
-	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
+	if((protocol == ENUM_PROTOCOL_FILE_REQUEST && fd_type < 0) || ((protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST) && fd_type == 0))
+	{ // The reason is because select_peer MUST have already been called and claimed a specific fd_type. If we err out with fd_type==-1, we'll unclaim all sections (bad).
+		error_printf(0,"Sanity check failure in message_distribute: owner=%u protocol=%u fd_type=%d. Coding error. Report this.",owner,protocol,fd_type);
+		goto error;
+	}
 	//if(protocol == ENUM_PROTOCOL_FILE_REQUEST) printf("Checkpoint send_both owner%u: %u = (%d < 0 && (%d || %d && %d && %u && %d))\n",owner,send_both,target_g,protocol == ENUM_PROTOCOL_KILL_CODE,owner != ENUM_OWNER_GROUP_CTRL,protocol == ENUM_PROTOCOL_FILE_REQUEST,getter_uint8(n,INT_MIN,f,offsetof(struct file_list,full_duplex)),getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits)) > 0);
-	uint32_t cycle = 0;
-	int repeated = 0; // MUST BE BEFORE other_fd:{}
 	// XXX Step 4: Set date if unset, and set fd
 	if(!time && !nstime)
 		set_time(&time,&nstime);
-	const uint8_t recvfd_connected = getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
-	const uint8_t sendfd_connected = getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-	torx_read(target_n) // 🟧🟧🟧
-	const int utilized_recv = peer[target_n].socket_utilized[0];
-	const int utilized_send = peer[target_n].socket_utilized[1];
-	torx_unlock(target_n) // 🟩🟩🟩
-	if(fd_type < 0)
-	{
-		if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-			fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
-		else if(recvfd_connected && utilized_recv == INT_MIN)
-			fd_type = 0; // prefer recvfd for reliability & speed
-		else if(sendfd_connected && utilized_send == INT_MIN)
-			fd_type = 1;
-		else if(recvfd_connected && !sendfd_connected)
-			fd_type = 0;
-		else if(!recvfd_connected && sendfd_connected)
-			fd_type = 1;
-		else // Neither or both are connected
-			fd_type = 0; // prefer recvfd for reliability & speed
-	}
 	// XXX Step 5: Build base message
 	char *message;
 	uint32_t message_len;
@@ -440,18 +419,22 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		memcpy(message,arg,message_len);
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-		message = message_prep(&message_len,target_n,fd_type,section,start,end,n,f,g,p_iter,time,nstime,arg,base_message_len);
+		message = message_prep(&message_len,target_n,section,start,end,n,f,g,p_iter,time,nstime,arg,base_message_len);
 	else
-		message = message_prep(&message_len,target_n,fd_type,-1,0,0,n,f,g,p_iter,time,nstime,arg,base_message_len);
-	if(message_len < 1)
-	{ // (could just be cycle 2 of a file resumption of a file thats half-done)
-		if(protocol != ENUM_PROTOCOL_FILE_REQUEST)
+		message = message_prep(&message_len,target_n,-1,0,0,n,f,g,p_iter,time,nstime,arg,base_message_len);
+	if(message_len < 1/* || message == NULL*/)
+	{ // Not necessary to check both
+		if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
+			section_unclaim(n,f,target_n,fd_type);
+		else
 			error_printf(0,"Checkpoint message_send 0 length. Bailing. fd=%d protocol=%u",fd_type,protocol);
 		goto error;
 	}
 	// XXX Step 6: Iterate message
-	const int i = increment_i(target_n,0,time,nstime,ENUM_MESSAGE_FAIL,socket_swappable ? -1 : fd_type,p_iter,message,message_len);
+	const int i = increment_i(target_n,0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message,message_len);
 	// XXX Step 7: Send_prep as appropriate
+	uint32_t cycle = 0;
+	int repeated = 0;
 	while(1)
 	{
 		int nnnn = target_n;
@@ -468,7 +451,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 				breakpoint();
 				goto error;
 			}
-			iiii = increment_i(nnnn,0,time,nstime,ENUM_MESSAGE_FAIL,socket_swappable ? -1 : fd_type,p_iter,message,message_len);
+			iiii = increment_i(nnnn,0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message,message_len);
 		}
 		if(!stream)
 		{ // Stream messages, if logged, are logged in packet_removal after they send
@@ -485,7 +468,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(!repeated && target_g > -1) // MUST go after the first sql_insert_message call (which saves the message initially to GROUP_CTRL)
 				sql_insert_message(nnnn,iiii); // trigger save in each GROUP_PEER
 		}
-		if(send_prep(nnnn,-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE)
+		if(send_prep(nnnn,-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE) // NOT else if
 		{ // delete unsuccessful discardable stream message
 			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",nnnn,iiii,fd_type,protocol);
 			torx_write(nnnn) // 🟥🟥🟥
@@ -494,7 +477,7 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 			if(target_g < 0)
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
-		if(owner_nnnn != ENUM_OWNER_GROUP_PEER || target_g < 0 || ++cycle >= target_g_peercount)
+		if(owner_nnnn != ENUM_OWNER_GROUP_PEER || target_g < 0 || ++cycle >= target_g_peercount) // NOT else if
 			break; // be careful of the logic here and after. note the ++
 	}
 	return i;
@@ -516,10 +499,17 @@ int message_resend(const int n,const int i)
 		return -1;
 	}
 	pthread_rwlock_rdlock(&mutex_protocols);
+	const char *name = protocols[p_iter].name;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
+	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 	pthread_rwlock_unlock(&mutex_protocols);
+	if(!socket_swappable)
+	{ // We shouldn't (and should have no purpose to) re-send non-swappable messages. Seeing this message likely indicates a UI coding error.
+		error_printf(0,"message_resend cannot process the following message type because it is non-swappable: %s",name);
+		return -1;
+	}
 	int target_g = -1;
 	uint32_t target_g_peercount = 0;
 	if(owner == ENUM_OWNER_GROUP_CTRL && group_msg)

@@ -260,7 +260,7 @@ static inline int pipe_auth_inbound(struct event_strc *event_strc)
 	int ret = -1;
 	char onion_group_n[56+1];
 	getter_array(&onion_group_n,sizeof(onion_group_n),event_strc->n,INT_MIN,-1,offsetof(struct peer_list,onion));
-	if(event_strc->fd_type == 0 && event_strc->buffer_len == PIPE_AUTH_LEN + crypto_sign_BYTES && !memcmp(onion_group_n,event_strc->buffer,56))
+	if(event_strc->fd_type == 0 && event_strc->buffer_len >= PIPE_AUTH_LEN + crypto_sign_BYTES && !memcmp(onion_group_n,event_strc->buffer,56)) // 2025/02/21 Using >= because we were getting a few INVALID ENUM_PROTOCOL_PIPE_AUTH for unknown reasons
 		ret = event_strc->n;
 	sodium_memzero(onion_group_n,sizeof(onion_group_n));
 	return ret;
@@ -293,11 +293,11 @@ static inline void begin_cascade(struct event_strc *event_strc)
 			pthread_rwlock_rdlock(&mutex_protocols);
 			const uint8_t stream = protocols[p_iter].stream;
 			pthread_rwlock_unlock(&mutex_protocols);
-			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type) != -1) // Will do nothing if there are no messages to send
+			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type) != -1) // Must use event_strc->fd_type, NOT fd_type (which might be -1). Will do nothing if there are no messages to send
 				break; // allow cascading effect in packet_removal
 		}
-		else if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && (pos != 0 || utilized_recv == i || utilized_send == i)) // TODO debugging here
-			error_printf(0,BRIGHT_YELLOW"Checkpoint NO cascade: n=%d fd=%d pos=%u recv=%d send=%d"RESET,event_strc->n,event_strc->fd_type,pos,utilized_recv,utilized_send);
+	//	else if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && (pos != 0 || utilized_recv == i || utilized_send == i)) // TODO debugging here
+	//		printf(BRIGHT_YELLOW"Checkpoint NO cascade: n=%d fd=%d pos=%u recv=%d send=%d\n"RESET,event_strc->n,event_strc->fd_type,pos,utilized_recv,utilized_send);
 	}
 }
 
@@ -343,7 +343,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		const time_t packet_time = packet[o].time;
 		const time_t packet_nstime = packet[o].nstime;
 		if(!drain_len && packet[o].p_iter != file_piece_p_iter && socket_utilized != packet_f_i)
-		{
+		{ // Supposed to remove a non-file packet, but the socket_utilized doesn't match
 			int other_socket_utilized;
 			torx_read(event_strc->n) // 🟧🟧🟧
 			if(event_strc->fd_type)

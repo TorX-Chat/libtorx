@@ -62,7 +62,7 @@ severable if found in contradiction with the License or applicable law.
 
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send. Returns -1 on error or peer offline, 0 on success, and -2 on socket utilized (cannot send immediately). We could return 0 instead of -2, but we might use this.
-	if(n < 0 || p_iter < 0 || (fd_type != 0 && fd_type != 1))
+	if(n < 0 || p_iter < 0)
 	{
 		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d %d. Coding error. Report this.",n,file_n,f_i,p_iter,fd_type);
 		return -1;
@@ -83,7 +83,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 	{
 		f = f_i;
-		if(f < 0 || file_n < 0)
+		if(f < 0 || file_n < 0 || fd_type < 0)
 		{
 			error_printf(0,"Sanity check failure 2 in send_prep: %d %d %d %d %d. Coding error. Report this.",n,file_n,f,p_iter,fd_type);
 			goto error;
@@ -122,19 +122,30 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				error_printf(0,PINK"Send_prep failure due to message n=%d i=%d fd_type=%d stat=%u recv=%d send=%d being send_prep'd on this or another socket: %s"RESET,n,i,fd_type,stat,utilized_recv,utilized_send,name);
 				return -2; // MUST BE -2 not -1 or we will have big issues in packet_removal
 			}
-			if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
+			else if(utilized_recv > INT_MIN && utilized_send > INT_MIN)
 			{
 				torx_unlock(n) // 🟩🟩🟩
 				return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 			}
-			else if((utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1))
+			const int recvfd_connected = peer[n].recvfd_connected;
+			const int sendfd_connected = peer[n].sendfd_connected;
+			if(fd_type < 0)
+			{ // There is SOME redundancy here with send_prep's use of socket_swappable, but send_prep's usage is more advanced. This is primitive.
+				if(protocol == ENUM_PROTOCOL_PIPE_AUTH || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+					fd_type = 1; // PIPE_AUTH and ENTRY_REQUEST are exclusively sent out on sendfd
+				else if(recvfd_connected && utilized_recv == INT_MIN)
+					fd_type = 0; // prefer recvfd for reliability & speed
+				else if(sendfd_connected && utilized_send == INT_MIN)
+					fd_type = 1;
+			}
+			if(fd_type < 0 || (utilized_recv > INT_MIN && fd_type == 0) || (utilized_send > INT_MIN && fd_type == 1)) // NOT else if
 			{ // Switch sockets
 				if(socket_swappable && fd_type == 0)
 					fd_type = 1;
 				else if(socket_swappable && fd_type == 1)
 					fd_type = 0;
 				else
-				{
+				{ // Not swappable, or nothing is on
 					torx_unlock(n) // 🟩🟩🟩
 					return -2; // Message will be sent after the current message, even if ENUM_STREAM_DISCARDABLE
 				}
@@ -146,7 +157,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d, %s"RESET,n,fd_type,i,name);
 		}
 		else
-		{ // Sanity check
+		{ // Sanity check for continuing a partially sent message
 			torx_read(n) // 🟧🟧🟧
 			const int socket_utilized = peer[n].socket_utilized[fd_type];
 			torx_unlock(n) // 🟩🟩🟩
