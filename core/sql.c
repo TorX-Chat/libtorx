@@ -890,7 +890,13 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	{ /* save file_path as extraneous */ /* goat */ \
 		int file_n = n; \
 		int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1); \
-		if(f > -1) \
+		if(f < 0) \
+		{ /* not pm/p2p, must be group transfer */ \
+			const int g = set_g(n,NULL); \
+			file_n = getter_group_int(g,offsetof(struct group_list,n)); \
+			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
+		} \
+		if(f > -1) /* NOT else if */ \
 		{ \
 			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path)); \
 			if(file_path) /* not always true */ \
@@ -898,12 +904,6 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path)); \
 				torx_free((void*)&file_path); \
 			} \
-		} \
-		else \
-		{ /* not pm/p2p, must be group transfer */ \
-			const int g = set_g(n,NULL); \
-			file_n = getter_group_int(g,offsetof(struct group_list,n)); \
-			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
 		} \
 	}
 

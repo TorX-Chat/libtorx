@@ -463,6 +463,7 @@ enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed up
 	ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED = 2125,	// Uses hash of section hashes, not whole file hash, unlike normal file_offer
 	ENUM_PROTOCOL_FILE_OFFER_PARTIAL = 64736,		// Uses hash of section hashes, not whole file hash, unlike normal file_offer.
 	ENUM_PROTOCOL_FILE_INFO_REQUEST = 63599,		// Uses hash of section hashes. Requests a FILE_OFFER_GROUP or FILE_OFFER_GROUP_DATE_SIGNED.
+	ENUM_PROTOCOL_FILE_PARTIAL_REQUEST = 52469,		// Uses hash of section hashes. Requests a ENUM_PROTOCOL_FILE_OFFER_PARTIAL.
 	ENUM_PROTOCOL_FILE_PIECE = 7795,			// XXX DOES NOT CARE ABOUT .socket_utilized
 	ENUM_PROTOCOL_FILE_REQUEST = 27493,
 	ENUM_PROTOCOL_FILE_PAUSE = 38490,

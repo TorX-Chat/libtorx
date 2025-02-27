@@ -1106,7 +1106,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								{ // Checking again (redundantly) XXX MUST BE THE SAME AS ABOVE torx_fd_lock
 									unsigned char checksum[CHECKSUM_BIN_LEN];
 									unsigned char checksum_unverified[CHECKSUM_BIN_LEN];
-									getter_array(&checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
+									getter_array(checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
 									if(file_n == event_strc->group_n)
 									{ // File exists and is group transfer XXX NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
 										error_simple(0,"Re-checking group file because modification time has changed. This is undesirable. Report this.");
@@ -1156,7 +1156,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
 						continue; // because this is now stream
 					}
-					else if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST || protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
+					else if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST || protocol == ENUM_PROTOCOL_FILE_PARTIAL_REQUEST || protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 					{
 					//	printf("Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d\n",owner);
 						if(event_strc->buffer_len != CHECKSUM_BIN_LEN)
@@ -1173,11 +1173,25 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						if(f < 0) // NOT else if, we set f again above
 						{
-							error_simple(0,"Received a pause, cancel, or info request for an unknown file. Bailing out.");
+							error_printf(0,"Received %s for an unknown file. Bailing out.",name);
 							continue;
 						}
 						if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST)
 							file_offer_internal(event_strc->n,file_n,f,0); // Respond with an offer so that the peer can get the info they need
+						else if(protocol == ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
+						{ // Respond with a _PARTIAL if we have the file
+							torx_read(file_n) // 🟧🟧🟧
+							const uint8_t file_path_exists = peer[file_n].file[f].file_path ? 1 : 0;
+							torx_unlock(file_n) // 🟩🟩🟩
+							if(file_path_exists)
+							{ // We have this file, so respond
+								const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
+								struct file_request_strc file_request_strc = {0};
+								file_request_strc.n = file_n;
+								file_request_strc.f = f;
+								message_send(event_strc->n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,&file_request_strc,FILE_OFFER_PARTIAL_LEN);
+							}
+						}
 						else // if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 							process_pause_cancel(event_strc->n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
 					}
@@ -1368,7 +1382,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					if(stream)
 					{ // certain protocols discarded after processing, others stream_cb to UI
-						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST)
+						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST && protocol != ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
 							stream_cb(nn,p_iter,event_strc->buffer,event_strc->buffer_len - (/*null_terminated_len + */date_len + signature_len));
 					}
 					else if(protocol == ENUM_PROTOCOL_KILL_CODE)

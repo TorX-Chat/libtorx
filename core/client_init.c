@@ -187,14 +187,15 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].split_progress == NULL) // Necessary sanity check
-		{ // Assuming this is because we are offering the file, otherwise this is a serious error.
+		{ // If a file path exists, we are the offerer here.
+			const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 			torx_unlock(n) // 🟩🟩🟩
 			const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 			for(int16_t section_local = 0; section_local <= splits; section_local++)
 			{ // Simulate that each section is fully complete, since we are assuming that we offered this file and have it fully.
 				uint64_t section_end;
 				const uint64_t section_start = calculate_section_start(&section_end,size,splits,section_local);
-				const uint64_t our_progress = section_end - section_start + 1;
+				const uint64_t our_progress = file_path_exists ? section_end - section_start + 1 : 0;
 				const uint64_t trash64 = htobe64(our_progress);
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
 			}
@@ -724,58 +725,71 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		int target_o = -1;
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].offer && peer[n].file[f].split_status_n && peer[n].file[f].split_progress && peer[n].file[f].split_status_fd)
-			for(int o = 0 ; peer[n].file[f].offer[o].offerer_n != -1 ; o++)
-			{
-				const uint8_t sendfd_connected = peer[peer[n].file[f].offer[o].offerer_n].sendfd_connected;
-				const uint8_t recvfd_connected = peer[peer[n].file[f].offer[o].offerer_n].recvfd_connected;
-				const uint8_t online = recvfd_connected + sendfd_connected;
-				const uint8_t blacklisted = peer[peer[n].file[f].offer[o].offerer_n].blacklisted;
-				if(!online || blacklisted) // check blacklist and online status
-					continue;
-				uint8_t utilized = 0;
-				int8_t utilized_fd_type = -1;
-				for(int16_t section = 0; section <= splits; section++)
-				{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
-					const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
-					const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
-					if(relevant_split_status_n == peer[n].file[f].offer[o].offerer_n)
-					{
-						utilized++;
-						utilized_fd_type = tmp_fd_type;
-					}
-				}
-				if(utilized >= online)
-					continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
-				for(int16_t section = 0; section <= splits; section++)
-				{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
-					const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
-					const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
-					const uint64_t relevant_progress = peer[n].file[f].split_progress[section];
-					const int8_t relevant_split_status_fd = peer[n].file[f].split_status_fd[section];
-					if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
-					{
-						if(relevant_split_status_fd > -1)
-							printf("Checkpoint select_peer existing: n=%d fd=%d sec=%d %lu of %lu\n",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
-						continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
-					}
-					if(offerer_progress >= target_progress)
-					{ // >= should result in the largest most recent offer being selected
-						target_n = peer[n].file[f].offer[o].offerer_n;
-						target_progress = offerer_progress;
-						file_request_strc.section = section;
-						target_o = o;
-						if(utilized && utilized_fd_type == 0) // XXX must prevent requesting two different sections of the same file concurrently on the same socket!!!
-							file_request_strc.fd_type = 1;
-						else if(utilized && utilized_fd_type == 1)
-							file_request_strc.fd_type = 0;
-						else if(sendfd_connected)
-							file_request_strc.fd_type = 1; // we'll prefer sendfd for transfers because we prefer recvfd for messages
-						else
-							file_request_strc.fd_type = 0;
-					}
-				}
+		{
+			if(peer[n].file[f].offer[0].offerer_n == -1)
+			{ // Request _PARTIAl from everyone because we don't have any offers (we probably just retarted our client)
+				torx_unlock(n) // 🟩🟩🟩
+				unsigned char checksum[CHECKSUM_BIN_LEN];
+				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
+				message_send(n,ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,checksum,CHECKSUM_BIN_LEN);
+				sodium_memzero(checksum,sizeof(checksum));
 			}
-		torx_unlock(n) // 🟩🟩🟩
+			else
+			{
+				for(int o = 0 ; peer[n].file[f].offer[o].offerer_n != -1 ; o++)
+				{
+					const uint8_t sendfd_connected = peer[peer[n].file[f].offer[o].offerer_n].sendfd_connected;
+					const uint8_t recvfd_connected = peer[peer[n].file[f].offer[o].offerer_n].recvfd_connected;
+					const uint8_t online = recvfd_connected + sendfd_connected;
+					const uint8_t blacklisted = peer[peer[n].file[f].offer[o].offerer_n].blacklisted;
+					if(!online || blacklisted) // check blacklist and online status
+						continue;
+					uint8_t utilized = 0;
+					int8_t utilized_fd_type = -1;
+					for(int16_t section = 0; section <= splits; section++)
+					{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
+						const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
+						const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
+						if(relevant_split_status_n == peer[n].file[f].offer[o].offerer_n)
+						{
+							utilized++;
+							utilized_fd_type = tmp_fd_type;
+						}
+					}
+					if(utilized >= online)
+						continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
+					for(int16_t section = 0; section <= splits; section++)
+					{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
+						const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
+						const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
+						const uint64_t relevant_progress = peer[n].file[f].split_progress[section];
+						const int8_t relevant_split_status_fd = peer[n].file[f].split_status_fd[section];
+						if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
+						{
+							if(relevant_split_status_fd > -1)
+								printf("Checkpoint select_peer existing: n=%d fd=%d sec=%d %lu of %lu\n",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
+							continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
+						}
+						if(offerer_progress >= target_progress)
+						{ // >= should result in the largest most recent offer being selected
+							target_n = peer[n].file[f].offer[o].offerer_n;
+							target_progress = offerer_progress;
+							file_request_strc.section = section;
+							target_o = o;
+							if(utilized && utilized_fd_type == 0) // XXX must prevent requesting two different sections of the same file concurrently on the same socket!!!
+								file_request_strc.fd_type = 1;
+							else if(utilized && utilized_fd_type == 1)
+								file_request_strc.fd_type = 0;
+							else if(sendfd_connected)
+								file_request_strc.fd_type = 1; // we'll prefer sendfd for transfers because we prefer recvfd for messages
+							else
+								file_request_strc.fd_type = 0;
+						}
+					}
+				}
+				torx_unlock(n) // 🟩🟩🟩
+			}
+		}
 		if(target_n > -1)
 		{
 			if(getter_uint8(target_n,INT_MIN,-1,offsetof(struct peer_list,owner)) != ENUM_OWNER_GROUP_PEER)
@@ -904,8 +918,10 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 		return;
 	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
+	{
 		while(select_peer(n,f,-1) > -1)
 			continue; // Request from lots of people concurrently.
+	}
 	else
 	{ // These are _CTRL(p2p) and _GROUP_CTRL(PM) transfers
 		if(fd_type == -1)

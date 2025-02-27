@@ -76,7 +76,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_GROUP_PEER && owner != ENUM_OWNER_CTRL)
 	{
-		error_printf(0,"Questionable action in send_prep: %u Coding error. Report this.",owner);
+		error_printf(0,"Questionable action in send_prep, possibly caused by a protocol being sent to a GROUP_CTRL without being registered as group_msg / ENUM_EXCLUSIVE_GROUP_MSG. Target owner=%u. Coding error. Report this.",owner);
 		goto error;
 	}
 	uint64_t start = 0;
@@ -336,7 +336,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	else
 		error_simple(0,"Send prep failed for reasons.");
 	error: {}
-	if(protocol != ENUM_PROTOCOL_FILE_PIECE)
+	if(protocol != ENUM_PROTOCOL_FILE_PIECE && fd_type > -1)
 	{
 		torx_read(n) // 🟧🟧🟧
 		const int socket_utilized = peer[n].socket_utilized[fd_type];
