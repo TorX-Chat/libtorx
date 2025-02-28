@@ -104,9 +104,11 @@ void delete_log(const int n)
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_delete_history(peer_index); // TODO must go first. consider verifying return before deleting in memory
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+	if(owner == ENUM_OWNER_GROUP_PEER) // TODO 2025/02/28 The issue may occur in not calling message_remove near the end of this function. We should probably utilize the same "VERY IMPORTANT / COMPLEX if statement, do not change" if statement, if _GROUP_PEER, if this warning occurs.
+		error_simple(0,"delete_log may not be prepared (yet) for deleting solely ENUM_OWNER_GROUP_PEER. Coding error. Report this.");
+	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Handle GROUP_PEER ; not tested fully. Must go first before GROUP_CTRL
-		const int g = set_g(n,NULL);
 		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
@@ -143,11 +145,8 @@ void delete_log(const int n)
 	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(int i = min_i ; i <= max_i ; i++)
 	{
-		if(owner == ENUM_OWNER_GROUP_CTRL/* || owner == ENUM_OWNER_GROUP_PEER*/)
-		{ // I think only ENUM_OWNER_GROUP_CTRL hits this, even for PMs
-			const int g = set_g(n,NULL);
+		if(owner == ENUM_OWNER_GROUP_CTRL)
 			message_remove(g,n,i);
-		}
 		torx_write(n) // 🟥🟥🟥
 		zero_i(n,i);
 		torx_unlock(n) // 🟩🟩🟩
@@ -160,7 +159,7 @@ void delete_log(const int n)
 }
 
 int message_edit(const int n,const int i,const char *message)
-{ // pass NULL to delete
+{ // Pass NULL to delete // NOTE: Changing a message's length while it is queued to send may result in abnormal behavior in packet_removal.
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
@@ -175,121 +174,99 @@ int message_edit(const int n,const int i,const char *message)
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
-	if(message)
-	{ // TODO changing a message's length while it is queued to send is undefined behavior
-		const uint32_t base_message_len = (uint32_t)strlen(message);
-		if(protocol == ENUM_PROTOCOL_UTF8_TEXT || protocol == ENUM_PROTOCOL_UTF8_TEXT_PRIVATE)
-		{ // this process is a bit complex but its all necessary to make sure the swap is as fast as possible, since there is a potential for race condition here.	
-			char *message_new = torx_secure_malloc(base_message_len+1);
-			snprintf(message_new,base_message_len+1,"%s",message);
-			torx_write(n) // 🟥🟥🟥
-			char *message_old = peer[n].message[i].message; // need to free this *after* swap
-			peer[n].message[i].message_len = base_message_len+1;
-			peer[n].message[i].message = message_new;
-			torx_free((void*)&message_old);
-			torx_unlock(n) // 🟩🟩🟩
-			sql_update_message(n,i);
-			message_modified_cb(n,i);
-		}
-		else if(signature_len && getter_uint8(n,i,-1,offsetof(struct message_list,stat)) != ENUM_MESSAGE_RECV)
-		{
-			unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
-			int signing_n;
-			if(owner == ENUM_OWNER_GROUP_PEER)
-			{
-				const int g = set_g(n,NULL);
-				const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-				signing_n = group_n;
+	char *message_old = NULL;
+	char *message_new = NULL; // must initialize
+	const uint32_t base_message_len = message ? (uint32_t)strlen(message) : 0;
+	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
+	if(!message || (signature_len && getter_uint8(n,i,-1,offsetof(struct message_list,stat)) != ENUM_MESSAGE_RECV && protocol == ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED) || protocol == ENUM_PROTOCOL_UTF8_TEXT || protocol == ENUM_PROTOCOL_UTF8_TEXT_PRIVATE)
+	{ // Don't mess with the logic here
+		uint32_t final_len = 0;
+		if(message)
+		{ // A message was passed
+			if(signature_len)
+			{ // Need to sign
+				unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
+				const int signing_n = (owner == ENUM_OWNER_GROUP_PEER) ? getter_group_int(g,offsetof(struct group_list,n)) : n;
+				getter_array(&sign_sk,sizeof(sign_sk),signing_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
+				message_new = message_sign(&final_len,sign_sk,time,nstime,p_iter,message,base_message_len);
+				sodium_memzero(sign_sk,sizeof(sign_sk));
 			}
 			else
-				signing_n = n;
-			getter_array(&sign_sk,sizeof(sign_sk),signing_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
-			uint32_t signed_len = 0;
-			char *message_new = message_sign(&signed_len,sign_sk,time,nstime,p_iter,message,base_message_len);
-			sodium_memzero(sign_sk,sizeof(sign_sk));
+				message_new = message_sign(&final_len,NULL,time,nstime,p_iter,message,base_message_len);
+		}
+		if(message_new || !message) // NOT else if
+		{
 			if(message_new)
-			{
+			{ // Replacing a message
 				torx_write(n) // 🟥🟥🟥
-				char *message_old = peer[n].message[i].message; // need to free this *after* swap
-				peer[n].message[i].message_len = signed_len;
+				message_old = peer[n].message[i].message; // need to free this *after* swap
+				peer[n].message[i].message_len = final_len;
 				peer[n].message[i].message = message_new;
 				torx_unlock(n) // 🟩🟩🟩
-				if(owner == ENUM_OWNER_GROUP_CTRL)
-				{ // private messages will NOT come here
-					const int g = set_g(n,NULL);
-					const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-					for(uint32_t p = 0; p < g_peercount; p++)
-					{
-						pthread_rwlock_rdlock(&mutex_expand_group);
-						const int peer_n = group[g].peerlist[p];
-						pthread_rwlock_unlock(&mutex_expand_group);
-						const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
-						const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-						for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
-						{
-							const time_t time_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,time));
-							const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
-							if(time_ii == time && nstime_ii == nstime)
-							{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
-								torx_write(peer_n) // 🟥🟥🟥
-								peer[peer_n].message[ii].message_len = signed_len;
-								peer[peer_n].message[ii].message = message_new;
-								torx_unlock(peer_n) // 🟩🟩🟩
-								break;
-							}
-						}
-					}
-				}
-				torx_write(n) // 🟥🟥🟥
-				torx_free((void*)&message_old);
-				torx_unlock(n) // 🟩🟩🟩
-				sql_update_message(n,i);
-				message_modified_cb(n,i);
 			}
-		}
-		else
-		{ // Example: inbound signed messages cannot be modified, only deleted.
-			error_simple(0,"Editing for this message type is unsupported");
-			return -1;
-		}
-	}
-	else
-	{ // Delete individual message
-		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-		sql_delete_message(peer_index,time,nstime); // TODO must go first. consider verifying return before deleting in memory
-		if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
-		{
-			const int g = set_g(n,NULL);
-			message_remove(g,n,i);
+			else
+			{ // Deleting a message
+				const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+				sql_delete_message(peer_index,time,nstime); // Must go first. Consider verifying return before deleting in memory.
+				if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
+					message_remove(g,n,i);
+			}
 			if(owner == ENUM_OWNER_GROUP_CTRL)
-			{ // ONLY effects outbound group_msg
+			{ // private messages will NOT come here
 				const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 				for(uint32_t p = 0; p < g_peercount; p++)
 				{
 					pthread_rwlock_rdlock(&mutex_expand_group);
 					const int peer_n = group[g].peerlist[p];
 					pthread_rwlock_unlock(&mutex_expand_group);
-					int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
+					const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 					const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 					for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
 					{
 						const time_t time_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,time));
 						const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 						if(time_ii == time && nstime_ii == nstime)
-						{ // DO NOT need to print_message_cb here. No private messages will come here.
+						{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
 							torx_write(peer_n) // 🟥🟥🟥
-							zero_i(peer_n,ii);
+							if(message_new)
+							{
+								peer[peer_n].message[ii].message_len = final_len;
+								peer[peer_n].message[ii].message = message_new;
+							}
+							else
+								zero_i(peer_n,ii);
 							torx_unlock(peer_n) // 🟩🟩🟩
 							break;
 						}
 					}
 				}
-			} //else // Inbound messages, PMs (in/out)
+			}
+			if(message_new)
+			{
+				torx_write(n) // 🟥🟥🟥
+				torx_free((void*)&message_old);
+				torx_unlock(n) // 🟩🟩🟩
+				sql_update_message(n,i);
+				message_modified_cb(n,i);
+			}
+			else
+			{
+				torx_write(n) // 🟥🟥🟥
+				zero_i(n,i);
+				torx_unlock(n) // 🟩🟩🟩
+				message_deleted_cb(n,i);
+			}
 		}
-		torx_write(n) // 🟥🟥🟥
-		zero_i(n,i);
-		torx_unlock(n) // 🟩🟩🟩
-		message_deleted_cb(n,i);
+		else
+			error_simple(0,"Message_new is null. Coding error. Report this");
+	}
+	else
+	{ // Example: inbound signed messages cannot be modified, only deleted.
+		pthread_rwlock_rdlock(&mutex_protocols);
+		const char *name = protocols[p_iter].name;
+		pthread_rwlock_unlock(&mutex_protocols);
+		error_printf(0,"Editing for this message type is unsupported: %s",name);
+		return -1;
 	}
 	return 0;
 }

@@ -4287,7 +4287,7 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
 	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-//	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_NONE,1,1,0); // not in use
+//	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0); // not in use
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,"UTF8 Text Private","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST,"Group Broadcast","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
