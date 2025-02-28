@@ -127,10 +127,10 @@ int file_is_complete(const int n,const int f)
 { // Assumes split_path is free'd when file is completed
 	torx_read(n) // 🟧🟧🟧
 	const uint64_t size = peer[n].file[f].size;
-	const char *split_path = peer[n].file[f].split_path;
-	const char *file_path_p = peer[n].file[f].file_path;
+	const uint8_t split_path_exists = peer[n].file[f].split_path ? 1 : 0;
+	const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 	torx_unlock(n) // 🟩🟩🟩
-	if(split_path || file_path_p == NULL)
+	if(split_path_exists || !file_path_exists)
 		return 0;
 	if(size == calculate_transferred_inbound(n,f))
 		return 1; // Saves checking on disk, if this file is already completed.
@@ -149,9 +149,9 @@ int file_status_get(const int n,const int f)
 	if(file_is_cancelled(n,f))
 		return ENUM_FILE_INACTIVE_CANCELLED;
 	torx_read(n) // 🟧🟧🟧
-	const char *file_path = peer[n].file[f].file_path;
+	const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 	torx_unlock(n) // 🟩🟩🟩
-	if(file_path == NULL)
+	if(!file_path_exists)
 		return ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND;
 	const int active = file_is_active(n,f);
 	if(active)
@@ -251,13 +251,13 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 { // Updates split or deletes it if complete. section starts at 0. One split == 2 sections, 0 and 1. Set them via: 	peer[n].file[f].split_progress[0] = 123; peer[n].file[f].split_progress[1] = 456; split_update (n,f);
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	torx_read(n) // 🟧🟧🟧
-	const char *split_path = peer[n].file[f].split_path;
-	const uint64_t *split_progress = peer[n].file[f].split_progress;
+	const uint8_t split_path_exists = peer[n].file[f].split_path ? 1 : 0;
+	const uint8_t split_progress_exists = peer[n].file[f].split_progress ? 1 : 0;
 	const uint64_t size = peer[n].file[f].size;
 	torx_unlock(n) // 🟩🟩🟩
-	if(splits == 0 || split_path == NULL)
+	if(splits == 0 || !split_path_exists)
 		return;
-	split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+	const char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
 	{
 		printf(PINK"Checkpoint DELETING SPLIT PATH\n"RESET);
@@ -272,7 +272,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 		torx_unlock(n) // 🟩🟩🟩
 		return;
 	}
-	if(section > -1 && split_progress) // sanity check, should be unnecessary
+	if(section > -1 && split_progress_exists) // sanity check, should be unnecessary
 	{
 		FILE *fp;
 		if((fp = fopen(split_path,"r+")) == NULL)
@@ -444,12 +444,12 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		if(o > -1)
 		{
 			torx_read(group_n) // 🟧🟧🟧
-			struct offer_list *offer = peer[group_n].file[f].offer;
-			const unsigned char *split_hashes = peer[group_n].file[f].split_hashes;
-			const char *filename = peer[group_n].file[f].filename;
-			const uint64_t *offer_progress = peer[group_n].file[f].offer[o].offer_progress; // only exists if we have received a partial before
+			const uint8_t offer_exists = peer[group_n].file[f].offer ? 1 : 0;
+			const uint8_t split_hashes_exists = peer[group_n].file[f].split_hashes ? 1 : 0;
+			const uint8_t filename_exists = peer[group_n].file[f].filename ? 1 : 0;
+			const uint8_t offer_progress_exists = peer[group_n].file[f].offer[o].offer_progress ? 1 : 0; // only exists if we have received a partial before
 			torx_unlock(group_n) // 🟩🟩🟩
-			if(offer)
+			if(offer_exists)
 			{ // Sanity check
 				torx_write(group_n) // 🟥🟥🟥
 				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
@@ -464,9 +464,9 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			}
 			else
 				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.1");
-			if(!split_hashes && !filename) // Whether this is the first time seeing the file or not, we need additional info
+			if(!split_hashes_exists && !filename_exists) // Whether this is the first time seeing the file or not, we need additional info
 			{ // Do not modify logic here.
-				if(offer_progress) // Only requesting if this is the second time or greater that we got a _PARTIAL, because otherwise we could be requesting an offer that is already on its way (due to _PARTIAL being sent on a different socket and arriving first)
+				if(offer_progress_exists) // Only requesting if this is the second time or greater that we got a _PARTIAL, because otherwise we could be requesting an offer that is already on its way (due to _PARTIAL being sent on a different socket and arriving first)
 					message_send(n,ENUM_PROTOCOL_FILE_INFO_REQUEST,message,CHECKSUM_BIN_LEN);
 			}
 			else
@@ -512,10 +512,10 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		}
 		sodium_memzero(hash_of_hashes,sizeof(hash_of_hashes));
 		torx_read(group_n) // 🟧🟧🟧
-		const unsigned char *split_hashes = peer[group_n].file[f].split_hashes;
-		const char *filename = peer[group_n].file[f].filename;
+		const uint8_t split_hashes_exists = peer[group_n].file[f].split_hashes ? 1 : 0;
+		const uint8_t filename_exists = peer[group_n].file[f].filename ? 1 : 0;
 		torx_unlock(group_n) // 🟩🟩🟩
-		if(!split_hashes && !filename)
+		if(!split_hashes_exists && !filename_exists)
 		{
 			torx_write(group_n) // 🟥🟥🟥
 			peer[group_n].file[f].splits = splits; // verified via hash of hashes
@@ -989,10 +989,9 @@ int initialize_split_info(const int n,const int f)
 		printf("Checkpoint owner==%d size==%"PRIu64"\n",getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)),size);
 		return -1;
 	}
-	char *split_path = peer[n].file[f].split_path;
-	const uint64_t *split_progress = peer[n].file[f].split_progress;
+	const uint8_t split_progress_exists = peer[n].file[f].split_progress ? 1 : 0;
 	torx_unlock(n) // 🟩🟩🟩
-	if(split_progress == NULL)
+	if(!split_progress_exists)
 	{ // Initialize if not already
 		split_read(n,f); // reads split file or initializes in memory
 		struct stat file_stat = {0};
@@ -1000,8 +999,8 @@ int initialize_split_info(const int n,const int f)
 		const int stat_file = stat(file_path, &file_stat); // Note: file_path cannot be null, but we checked it earlier.
 		torx_free((void*)&file_path);
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
-		if(stat_file && stat(split_path, &file_stat) && splits > 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
+		char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+		if(stat_file && split_path && stat(split_path, &file_stat) && splits > 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // file nor .split exists; write an initialized .split file
 			FILE *fp;
 			if((fp = fopen(split_path,"w+")) == NULL)
@@ -1036,9 +1035,9 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 	}
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	torx_write(n) // 🟥🟥🟥 yes, its a write, see += several lines later
-	const uint64_t *split_progress = peer[n].file[f].split_progress;
-	const uint64_t *split_status_req = peer[n].file[f].split_status_req;
-	if(split_progress == NULL || split_status_req == NULL)
+	const uint8_t split_progress_exists = peer[n].file[f].split_progress ? 1 : 0;
+	const uint8_t split_status_req_exists = peer[n].file[f].split_status_req ? 1 : 0;
+	if(!split_progress_exists || !split_status_req_exists)
 	{
 		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failure in section_update2. Coding error. Report this.");

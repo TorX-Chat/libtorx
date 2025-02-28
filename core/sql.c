@@ -209,9 +209,9 @@ int message_edit(const int n,const int i,const char *message)
 			sodium_memzero(sign_sk,sizeof(sign_sk));
 			if(message_new)
 			{
-				setter(n,i,-1,offsetof(struct message_list,message_len),&signed_len,sizeof(signed_len));
 				torx_write(n) // 🟥🟥🟥
 				char *message_old = peer[n].message[i].message; // need to free this *after* swap
+				peer[n].message[i].message_len = signed_len;
 				peer[n].message[i].message = message_new;
 				torx_unlock(n) // 🟩🟩🟩
 				if(owner == ENUM_OWNER_GROUP_CTRL)
@@ -231,14 +231,9 @@ int message_edit(const int n,const int i,const char *message)
 							const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 							if(time_ii == time && nstime_ii == nstime)
 							{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
-								torx_read(n) // 🟧🟧🟧
-								const uint32_t local_message_len = peer[n].message[i].message_len;
-								char *local_message = peer[n].message[i].message;
-								torx_unlock(n) // 🟩🟩🟩
-
 								torx_write(peer_n) // 🟥🟥🟥
-								peer[peer_n].message[ii].message_len = local_message_len;
-								peer[peer_n].message[ii].message = local_message;
+								peer[peer_n].message[ii].message_len = signed_len;
+								peer[peer_n].message[ii].message = message_new;
 								torx_unlock(peer_n) // 🟩🟩🟩
 								break;
 							}
@@ -1227,11 +1222,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				peer[file_n].file[f].file_path = torx_secure_malloc(extraneous_len+1);
 				memcpy(peer[file_n].file[f].file_path,file_path,extraneous_len);
 				peer[file_n].file[f].file_path[extraneous_len] = '\0';
-				const uint64_t *split_progress = peer[file_n].file[f].split_progress;
+				const uint8_t split_progress_exists = peer[file_n].file[f].split_progress ? 1 : 0;
 				torx_unlock(file_n) // 🟩🟩🟩
 				extraneous_len = 0; // MUST because related to callback
 				const int file_status = file_status_get(file_n,f);
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && file_status != ENUM_FILE_INACTIVE_CANCELLED && (file_status != ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || split_progress == NULL))
+				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && file_status != ENUM_FILE_INACTIVE_CANCELLED && (file_status != ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || !split_progress_exists))
 				{
 					initialize_split_info(file_n,f);
 					torx_read(file_n) // 🟧🟧🟧

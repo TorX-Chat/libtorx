@@ -1560,9 +1560,9 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		return;
 	}
 	torx_read(event_strc->n) // 🟧🟧🟧
-	struct bufferevent *bev_recv_existing = peer[event_strc->n].bev_recv;
+	const uint8_t bev_recv_exists = peer[event_strc->n].bev_recv ? 1 : 0;
 	torx_unlock(event_strc->n) // 🟩🟩🟩
-	if(bev_recv_existing != NULL)
+	if(bev_recv_exists)
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	struct event_base *base = evconnlistener_get_base(listener);
 	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep

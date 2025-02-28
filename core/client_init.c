@@ -904,9 +904,9 @@ void file_request_internal(const int n,const int f,const int8_t fd_type)
 		return;
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	torx_read(n) // 🟧🟧🟧
-	const char *file_path = peer[n].file[f].file_path;
+	const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 	torx_unlock(n) // 🟩🟩🟩
-	if(file_path)
+	if(file_path_exists)
 	{
 		if(file_unwritable(n,f,NULL))
 			return;
@@ -996,10 +996,10 @@ void file_accept(const int n,const int f)
 		return;
 	torx_read(n) // 🟧🟧🟧
 	const uint8_t owner = peer[n].owner;
-	const char *filename = peer[n].file[f].filename;
+	const uint8_t filename_exists = peer[n].file[f].filename ? 1 : 0;
 	torx_unlock(n) // 🟩🟩🟩
 	const int file_status = file_status_get(n,f);
-	if(filename == NULL)
+	if(!filename_exists)
 	{ // probably ENUM_OWNER_GROUP_PEER, non-PM message, or where the file path is not yet set by UI
 		error_simple(0,"File information not provided. Cannot accept. Coding error. Report this.");
 		printf("Checkpoint file_accept owner: %u file_status: %d\n",owner,file_status);
@@ -1018,12 +1018,12 @@ void file_accept(const int n,const int f)
 	else if(file_status == ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || file_status == ENUM_FILE_INACTIVE_ACCEPTED)
 	{ // Accept, re-accept, or unpause a file
 		pthread_rwlock_rdlock(&mutex_global_variable);
-		const char *local_download_dir = download_dir;
+		const uint8_t download_dir_exists = download_dir ? 1 : 0;
 		pthread_rwlock_unlock(&mutex_global_variable);
 		torx_read(n) // 🟧🟧🟧
-		const char *file_path = peer[n].file[f].file_path;
+		const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 		torx_unlock(n) // 🟩🟩🟩
-		if(local_download_dir != NULL && file_path == NULL)
+		if(download_dir_exists && !file_path_exists)
 		{ // Setting file_path to inside download_dir if existing. Client may have already set .file_path, preventing this from occuring.
 			torx_write(n) // 🟥🟥🟥
 			pthread_rwlock_rdlock(&mutex_global_variable);
@@ -1033,16 +1033,16 @@ void file_accept(const int n,const int f)
 			pthread_rwlock_unlock(&mutex_global_variable);
 			torx_unlock(n) // 🟩🟩🟩
 		}
-		else if(local_download_dir == NULL && file_path == NULL)
+		else if(!download_dir_exists && !file_path_exists)
 		{
 			error_simple(0,"Cannot accept file. Have not set file path nor download directory.");
 			return;
 		}
 		uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 		torx_read(n) // 🟧🟧🟧
-		const unsigned char *split_hashes = peer[n].file[f].split_hashes;
+		const uint8_t split_hashes_exists = peer[n].file[f].split_hashes ? 1 : 0;
 		torx_unlock(n) // 🟩🟩🟩
-		if(splits == 0 && split_hashes == NULL)
+		if(splits == 0 && !split_hashes_exists)
 		{ // set splits to 1 if not already, but not on group files (which will have split_hashes)
 			splits = 1; // set default before split_read, which might overwrite it.
 			setter(n,INT_MIN,f,offsetof(struct file_list,splits),&splits,sizeof(splits));

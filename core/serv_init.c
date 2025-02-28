@@ -296,7 +296,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		else if(fd_type == 1)
 			bev = peer[n].bev_send;
 		torx_unlock(n) // 🟩🟩🟩
-		if(bev && (output = bufferevent_get_output(bev)))
+		if(bev && (output = bufferevent_get_output(bev))) // TODO perhaps the locks should wrap this line? Should be of minor consequence.
 		{
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
