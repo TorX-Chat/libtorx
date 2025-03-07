@@ -201,29 +201,32 @@ static inline void peer_offline(struct event_strc *event_strc)
 	const uint8_t online = recvfd_connected + sendfd_connected;
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-	for(int i = max_i; i >= min_i; i--) // We go through in reverse because we are deleting and possibly shrinking message struct.
-	{ // Run through messages and clean out stream messages as appropriate.
-		const int p_iter = getter_int(event_strc->n,i,-1,offsetof(struct message_list,p_iter));
-		if(p_iter > -1)
-		{
-			pthread_rwlock_rdlock(&mutex_protocols);
-			const uint8_t logged = protocols[p_iter].logged;
-			const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
-			const uint8_t stream = protocols[p_iter].stream;
-			pthread_rwlock_unlock(&mutex_protocols);
-			if(stream)
+	for(uint8_t cycle = 0; cycle < 2; cycle++)
+		for(int i = cycle ? -1 : 0, plus_or_minus = cycle ? -1 : 1; cycle ? i >= min_i : i <= max_i ; i += plus_or_minus) // same as 2j0fj3r202k20f
+		{ // Run through messages and clean out stream messages as appropriate. We are deleting and possibly shrinking message struct.
+			const int p_iter = getter_int(event_strc->n,i,-1,offsetof(struct message_list,p_iter));
+			if(p_iter > -1)
 			{
-				const int8_t fd_type = getter_int8(event_strc->n,i,-1,offsetof(struct message_list,fd_type));
-				const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
-				if(((!socket_swappable && fd_type == event_strc->fd_type) || !online) && (stat == ENUM_MESSAGE_FAIL || (stat == ENUM_MESSAGE_SENT && !logged)))
-				{ // We don't need to delete them from disk because they aren't saved until sent. We shouldn't actually see any _SENT && !logged here.
-					torx_write(event_strc->n) // 🟥🟥🟥
-					zero_i(event_strc->n,i);
-					torx_unlock(event_strc->n) // 🟩🟩🟩
+				pthread_rwlock_rdlock(&mutex_protocols);
+				const uint8_t logged = protocols[p_iter].logged;
+				const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
+				const uint8_t stream = protocols[p_iter].stream;
+				pthread_rwlock_unlock(&mutex_protocols);
+				if(stream)
+				{
+					const int8_t fd_type = getter_int8(event_strc->n,i,-1,offsetof(struct message_list,fd_type));
+					const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
+					if(((!socket_swappable && fd_type == event_strc->fd_type) || !online) && (stat == ENUM_MESSAGE_FAIL || (stat == ENUM_MESSAGE_SENT && !logged)))
+					{ // We don't need to delete them from disk because they aren't saved until sent. We shouldn't actually see any _SENT && !logged here.
+						torx_write(event_strc->n) // 🟥🟥🟥
+						const int shrinkage = zero_i(event_strc->n,i);
+						torx_unlock(event_strc->n) // 🟩🟩🟩
+						if(shrinkage)
+							shrinkage_cb(event_strc->n,shrinkage);
+					}
 				}
 			}
 		}
-	}
 	consider_transfers_paused(event_strc);
 }
 
@@ -435,8 +438,10 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						else
 						{ // discard/delete message and attempt rollback
 							torx_write(event_strc->n) // 🟥🟥🟥
-							zero_i(event_strc->n,i);
+							const int shrinkage = zero_i(event_strc->n,i);
 							torx_unlock(event_strc->n) // 🟩🟩🟩
+							if(shrinkage)
+								shrinkage_cb(event_strc->n,shrinkage);
 						/*	printf("Checkpoint actually deleted group_peer's i\n");
 							// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
 							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
@@ -452,8 +457,10 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							sql_delete_message(peer_index,time,nstime);
 						}
 						torx_write(event_strc->n) // 🟥🟥🟥
-						zero_i(event_strc->n,i);
+						const int shrinkage = zero_i(event_strc->n,i);
 						torx_unlock(event_strc->n) // 🟩🟩🟩
+						if(shrinkage)
+							shrinkage_cb(event_strc->n,shrinkage);
 					}
 					else
 					{
@@ -1439,8 +1446,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(repeated)
 						{
 							torx_write(nn) // 🟥🟥🟥
-							zero_i(nn,i);
+							const int shrinkage = zero_i(nn,i);
 							torx_unlock(nn) // 🟩🟩🟩
+							if(shrinkage)
+								shrinkage_cb(nn,shrinkage);
 						}
 						else
 						{ // unique same time/nstime

@@ -99,13 +99,11 @@ Legal:
 //TODO	shrink_message_struct_cb(n); // TODO remember to remove message_deleted_cb from delete_log
 } */
 
-void delete_log(const int n)
-{ // WARNING: If called on GROUP_CTRL, THIS WILL ALSO DELETE PRIVATE MESSAGES
-	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-	sql_delete_history(peer_index); // TODO must go first. consider verifying return before deleting in memory
+void message_offload(const int n)
+{ // Unload all messages from RAM.
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner == ENUM_OWNER_GROUP_PEER) // TODO 2025/02/28 The issue may occur in not calling message_remove near the end of this function. We should probably utilize the same "VERY IMPORTANT / COMPLEX if statement, do not change" if statement, if _GROUP_PEER, if this warning occurs.
-		error_simple(0,"delete_log may not be prepared (yet) for deleting solely ENUM_OWNER_GROUP_PEER. Coding error. Report this.");
+		error_simple(0,"message_unload may not be prepared (yet) for deleting solely ENUM_OWNER_GROUP_PEER. Coding error. Report this.");
 	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Handle GROUP_PEER ; not tested fully. Must go first before GROUP_CTRL
@@ -117,45 +115,54 @@ void delete_log(const int n)
 			pthread_rwlock_unlock(&mutex_expand_group);
 			const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 			const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-			for(int i = min_i ; i <= max_i ; i++)
-			{
-				const int p_iter = getter_int(peer_n,i,-1,offsetof(struct message_list,p_iter));
-				if(p_iter > -1) // snuff out deleted messages
-				{
-					pthread_rwlock_rdlock(&mutex_protocols);
-					const uint8_t group_msg = protocols[p_iter].group_msg;
-					const uint8_t group_pm = protocols[p_iter].group_pm;
-					pthread_rwlock_unlock(&mutex_protocols);
-					const uint8_t stat = getter_uint8(peer_n,i,-1,offsetof(struct message_list,stat));
-					if((stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm)) // XXX VERY IMPORTANT / COMPLEX if statement, do not change
-						message_remove(g,peer_n,i); // do not remove (segfaults will happen). Conditions are to avoid sanity check errors.
-					torx_write(peer_n) // 🟥🟥🟥
-					zero_i(peer_n,i);
-					torx_unlock(peer_n) // 🟩🟩🟩
-					message_deleted_cb(peer_n,i); // optional
+			for(uint8_t cycle = 0; cycle < 2; cycle++)
+				for(int i = cycle ? -1 : 0, plus_or_minus = cycle ? -1 : 1; cycle ? i >= min_i : i <= max_i ; i += plus_or_minus)
+				{ // same as 2j0fj3r202k20f
+					const int p_iter = getter_int(peer_n,i,-1,offsetof(struct message_list,p_iter));
+					if(p_iter > -1) // snuff out deleted messages
+					{
+						pthread_rwlock_rdlock(&mutex_protocols);
+						const uint8_t group_msg = protocols[p_iter].group_msg;
+						const uint8_t group_pm = protocols[p_iter].group_pm;
+						pthread_rwlock_unlock(&mutex_protocols);
+						const uint8_t stat = getter_uint8(peer_n,i,-1,offsetof(struct message_list,stat));
+						if((stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm)) // XXX VERY IMPORTANT / COMPLEX if statement, do not change
+							message_remove(g,peer_n,i); // do not remove (segfaults will happen). Conditions are to avoid sanity check errors.
+						torx_write(peer_n) // 🟥🟥🟥
+						const int shrinkage = zero_i(peer_n,i);
+						torx_unlock(peer_n) // 🟩🟩🟩
+						message_deleted_cb(peer_n,i); // optional
+						if(shrinkage)
+							shrinkage_cb(peer_n,shrinkage); // must be AFTER message_deleted_cb or UI structs might have issues deleting the messages
+					}
 				}
-			}
-			torx_write(peer_n) // 🟥🟥🟥
-			peer[peer_n].max_i = -1;
-			torx_unlock(peer_n) // 🟩🟩🟩
-		//TODO	shrink_message_struct(peer_n);
 		}
 	}
 	const int max_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-	for(int i = min_i ; i <= max_i ; i++)
-	{
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-			message_remove(g,n,i);
-		torx_write(n) // 🟥🟥🟥
-		zero_i(n,i);
-		torx_unlock(n) // 🟩🟩🟩
-		message_deleted_cb(n,i); // optional
-	}
-	torx_write(n) // 🟥🟥🟥
-	peer[n].max_i = -1;
-	torx_unlock(n) // 🟩🟩🟩
-//TODO	shrink_message_struct(n);
+	for(uint8_t cycle = 0; cycle < 2; cycle++)
+		for(int i = cycle ? -1 : 0, plus_or_minus = cycle ? -1 : 1; cycle ? i >= min_i : i <= max_i ; i += plus_or_minus)
+		{ // same as 2j0fj3r202k20f
+			const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
+			if(p_iter > -1) // snuff out deleted messages
+			{
+				if(owner == ENUM_OWNER_GROUP_CTRL)
+					message_remove(g,n,i);
+				torx_write(n) // 🟥🟥🟥
+				const int shrinkage = zero_i(n,i);
+				torx_unlock(n) // 🟩🟩🟩
+				message_deleted_cb(n,i); // optional
+				if(shrinkage)
+					shrinkage_cb(n,shrinkage); // must be AFTER message_deleted_cb or UI structs might have issues deleting the messages
+			}
+		}
+}
+
+void delete_log(const int n)
+{ // WARNING: If called on GROUP_CTRL, THIS WILL ALSO DELETE PRIVATE MESSAGES
+	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	sql_delete_history(peer_index); // TODO must go first. consider verifying return before deleting in memory
+	message_offload(n);
 }
 
 int message_edit(const int n,const int i,const char *message)
@@ -221,12 +228,13 @@ int message_edit(const int n,const int i,const char *message)
 					pthread_rwlock_unlock(&mutex_expand_group);
 					const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 					const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-					for(int ii = min_i ; ii <= max_i ; ii++) // should perhaps reverse this check, for greater speed?
+					for(int ii = max_i ; ii >= min_i ; ii--)
 					{
 						const time_t time_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,time));
 						const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 						if(time_ii == time && nstime_ii == nstime)
 						{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
+							int shrinkage;
 							torx_write(peer_n) // 🟥🟥🟥
 							if(message_new)
 							{
@@ -234,8 +242,10 @@ int message_edit(const int n,const int i,const char *message)
 								peer[peer_n].message[ii].message = message_new;
 							}
 							else
-								zero_i(peer_n,ii);
+								shrinkage = zero_i(peer_n,ii);
 							torx_unlock(peer_n) // 🟩🟩🟩
+							if(shrinkage)
+								shrinkage_cb(peer_n,shrinkage);
 							break;
 						}
 					}
@@ -252,9 +262,11 @@ int message_edit(const int n,const int i,const char *message)
 			else
 			{
 				torx_write(n) // 🟥🟥🟥
-				zero_i(n,i);
+				const int shrinkage = zero_i(n,i);
 				torx_unlock(n) // 🟩🟩🟩
 				message_deleted_cb(n,i);
+				if(shrinkage)
+					shrinkage_cb(n,shrinkage); // must be AFTER message_deleted_cb or UI structs might have issues deleting the messages
 			}
 		}
 		else

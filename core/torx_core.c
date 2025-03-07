@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 24 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 25 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -133,7 +133,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 500; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen. Needs also to consider that file related messages are included yet invisible.
+uint32_t show_log_messages = 30; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen. Needs also to consider that file related messages are included yet invisible.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -447,6 +447,11 @@ void initialize_g_cb(const int g)
 	if(initialize_g_registered)
 		initialize_g_registered(g);
 }
+void shrinkage_cb(const int n,const int shrinkage)
+{
+	if(shrinkage_registered)
+		shrinkage_registered(n,shrinkage);
+}
 void expand_file_struc_cb(const int n,const int f)
 {
 	if(expand_file_struc_registered)
@@ -551,7 +556,7 @@ void message_modified_cb(const int n,const int i)
 		message_modified_registered(n,i);
 }
 void message_deleted_cb(const int n,const int i)
-{
+{ // XXX WARNING: DO NOT ACCESS .message STRUCT due to shrinkage possibly having occurred
 	if(message_deleted_registered)
 		message_deleted_registered(n,i);
 }
@@ -614,6 +619,12 @@ void initialize_g_setter(void (*callback)(int))
 {
 	if(initialize_g_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
 		initialize_g_registered = callback;
+}
+
+void shrinkage_setter(void (*callback)(int,int))
+{
+	if(shrinkage_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		shrinkage_registered = callback;
 }
 
 void expand_file_struc_setter(void (*callback)(int,int))
@@ -944,6 +955,11 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 	{
 		void *real_ptr = (char *)arg - 8;
 		const size_t len_old = *((uint32_t *)real_ptr);
+		if(len_old == len_new)
+		{ // Not an error, just dumb coding resulted in non-op. Should avoid, but not at all harmful.
+			error_simple(0,"Called torx_realloc with an unchanged length. Non-op occured. Carry on.");
+			return arg;
+		}
 		const uint32_t type = *((uint32_t *)real_ptr+1);
 		if(type == ENUM_MALLOC_TYPE_SECURE)
 			allocation = torx_secure_malloc(len_new);
@@ -2167,10 +2183,18 @@ char *which(const char *binary)
 	return NULL;
 }
 
-void zero_i(const int n,const int i) // XXX do not put locks in here (except mutex_global_variable + mutex_protocols)
+static inline int find_message_struc_pointer(const int min_i)
+{ // Note: returns negative. Min_i must be <=0, which it should be.
+	const int multiple_of_10 = (min_i / 10) * 10; // XXX DO NOT MODIFY THIS MATH. This is C math, not regular math!!!
+	if (min_i <= multiple_of_10)
+		return multiple_of_10 - 10;
+	return -10;
+}
+
+int zero_i(const int n,const int i) // XXX do not put locks in here (except mutex_global_variable + mutex_protocols)
 { // GROUP_PEER looks hacky because we should maybe use ** but we don't (note: hacky here simplifies a lot of things elsewhere)
 	if(peer[n].message[i].p_iter == -1)
-		return; // already deleted
+		return 0; // already deleted
 	const int p_iter = peer[n].message[i].p_iter;
 	pthread_rwlock_rdlock(&mutex_protocols);
 	const uint8_t group_msg = protocols[p_iter].group_msg;
@@ -2186,8 +2210,34 @@ void zero_i(const int n,const int i) // XXX do not put locks in here (except mut
 	peer[n].message[i].fd_type = -1;
 	peer[n].message[i].time = 0;
 	peer[n].message[i].nstime = 0;
-	while(peer[n].max_i == i)
-		peer[n].max_i--; // ROLLBACK FUNCTIONALITY (utilized primarily on streams to try to reduce burden on our struct)
+	// ROLLBACK FUNCTIONALITY (utilized primarily on streams, when clearing history, and when deleting peers to try to reduce burden on our struct). In the future, will facilitate message offloading.
+	int shrinkage = 0; // Mandatory shrinkage
+	const int pointer_location = find_message_struc_pointer(peer[n].min_i); // XXX DO NOT MOVE THIS. It must use min_i from *before* we shrink.
+	if(peer[n].max_i == i)
+		while(peer[n].message[peer[n].max_i].p_iter == -1 && peer[n].max_i > -1)
+		{
+			if(peer[n].max_i && peer[n].max_i % 10 == 0)
+				shrinkage -= 10;
+			peer[n].max_i--;
+		}
+	else if(peer[n].min_i == i)
+		while(peer[n].message[peer[n].min_i].p_iter == -1 && peer[n].min_i < 0)
+		{
+			if(peer[n].min_i % 10 == 0) // min_i is never zero, so we don't check it
+				shrinkage += 10;
+			peer[n].min_i++;
+		}
+	if(shrinkage)
+	{ // TODO Maybe have this not occur on shutdown (BUT, it should happen when calling zero_n, to allow for a re-initialized n suitable for re-use)
+		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
+		const size_t current_shift = (size_t)abs(shrinkage);
+		printf("Experimental rollback functionality occuring! n=%d min_i=%d max_i=%d pointer_location=%d shrinkage=%d\n",n,peer[n].min_i,peer[n].max_i,pointer_location,shrinkage);
+		if(shrinkage > 0) // We shift everything forward
+			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size - sizeof(struct message_list) *current_shift,1) - pointer_location - current_shift;
+		else
+			peer[n].message = (struct message_list*)torx_realloc(peer[n].message + pointer_location, current_allocation_size - sizeof(struct message_list) *current_shift) - pointer_location;
+	}
+	return shrinkage;
 }
 
 static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].offer) before calling! XXX
@@ -2228,13 +2278,16 @@ static inline void zero_f(const int n,const int f) // XXX do not put locks in he
 
 void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of the mutex
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
-	for(int i = peer[n].min_i ; i < peer[n].max_i + 1 ; i++) // must go before .owner, for variations in zero_i
-		zero_i(n,i);
+	for(int i = 0 ; i <= peer[n].max_i ; i++) // must go before .owner = 0, for variations in zero_i
+		zero_i(n,i);  // same as 2j0fj3r202k20f
+	for(int i = -1 ; i >= peer[n].min_i ; i--) // we seperate this out for more efficient zero_i rollback
+		zero_i(n,i); // same as 2j0fj3r202k20f
+
 	for(int f = 0 ; !is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN) ; f++)
 		zero_f(n,f);
 //	torx_free((void*)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup. NOTE: 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
-	peer[n].max_i = -1; // must be after zero_i
-	peer[n].min_i = 0; // must be after zero_i
+//	peer[n].max_i = -1; // should now be handled by zero_i/shrinkage
+//	peer[n].min_i = 0; // should now be handled by zero_i/shrinkage
 	peer[n].owner = 0;
 	peer[n].status = 0;
 	memset(peer[n].privkey,'0',sizeof(peer[n].privkey)-1); // DO NOT REPLACE WITH SODIUM MEMZERO as we currently expect these to be 0'd not \0'd
@@ -3382,14 +3435,6 @@ static inline void expand_file_struc(const int n,const int f)
 			initialize_f_cb(n,j);
 	}
 	sodium_memzero(checksum,sizeof(checksum));
-}
-
-static inline int find_message_struc_pointer(const int min_i)
-{ // Note: returns negative
-	const int multiple_of_10 = (min_i / 10) * 10;
-	if (min_i <= multiple_of_10)
-		return multiple_of_10 - 10;
-	return -10;
 }
 
 void expand_message_struc(const int n,const int i) // XXX do not put locks in here

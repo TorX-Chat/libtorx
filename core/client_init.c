@@ -473,8 +473,10 @@ static inline int message_distribute(const uint8_t skip_prep,const int n,const u
 		{ // delete unsuccessful discardable stream message
 			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",nnnn,iiii,fd_type,protocol);
 			torx_write(nnnn) // 🟥🟥🟥
-			zero_i(nnnn,iiii);
+			const int shrinkage = zero_i(nnnn,iiii);
 			torx_unlock(nnnn) // 🟩🟩🟩
+			if(shrinkage)
+				shrinkage_cb(nnnn,shrinkage);
 			if(target_g < 0)
 				return INT_MIN; // WARNING: do not attempt to free. pointer is already pointing to bunk location after zero_i. will segfault. experimental 2024/03/09
 		}
