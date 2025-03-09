@@ -602,19 +602,20 @@ void (*peer_online_registered)(const int n);
 void (*peer_offline_registered)(const int n);
 void (*peer_new_registered)(const int n);
 void (*onion_ready_registered)(const int n);
-void (*tor_log_registered)(char *message); // torx_secure_free required
-void (*error_registered)(char *error_message); // torx_secure_free required
-void (*fatal_registered)(char *error_message); // torx_secure_free required
-void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext); // torx_secure_free required
+void (*tor_log_registered)(char *message);
+void (*error_registered)(char *error_message);
+void (*fatal_registered)(char *error_message);
+void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
 void (*message_new_registered)(const int n,const int i);
 void (*message_modified_registered)(const int n,const int i);
 void (*message_deleted_registered)(const int n,const int i);
-void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len); // torx_secure_free required
+void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len);
+void (*message_more_registered)(const int loaded,int *loaded_array_n,int *loaded_array_i);
 void (*login_registered)(const int value);
 void (*peer_loaded_registered)(const int n);
 void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
-void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len); // torx_secure_free required
-void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len); // torx_secure_free required
+void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len);
+void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len);
 
 /* Callback Setters */
 void initialize_n_setter(void (*callback)(int));
@@ -642,6 +643,7 @@ void message_new_setter(void (*callback)(int,int));
 void message_modified_setter(void (*callback)(int,int));
 void message_deleted_setter(void (*callback)(int,int));
 void message_extra_setter(void (*callback)(int,int,unsigned char*,uint32_t));
+void message_more_setter(void (*callback)(int,int*,int*));
 void login_setter(void (*callback)(int));
 void peer_loaded_setter(void (*callback)(int));
 void cleanup_setter(void (*callback)(int));
@@ -674,6 +676,7 @@ void message_new_cb(const int n,const int i);
 void message_modified_cb(const int n,const int i);
 void message_deleted_cb(const int n,const int i);
 void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t data_len);
+void message_more_cb(const int loaded,int *loaded_array_n,int *loaded_array_i);
 void login_cb(const int value);
 void peer_loaded_cb(const int n);
 void cleanup_cb(const int sig_num);
@@ -758,7 +761,7 @@ int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
 time_t message_find_since(const int n)__attribute__((warn_unused_result));
-int *message_load_more(int *count,const int n)__attribute__((warn_unused_result));
+int message_load_more(const int n);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)__attribute__((warn_unused_result));
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));

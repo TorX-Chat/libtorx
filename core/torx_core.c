@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 25 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 26 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -133,7 +133,7 @@ char *download_dir = {0}; // XXX Should be set otherwise will save in config dir
 char *split_folder = {0}; // For .split files. If NULL, it .split file will go beside the downloading file.
 uint32_t sing_expiration_days = 30; // default 30 days, is deleted after. 0 should be no expiration.
 uint32_t mult_expiration_days = 365; // default 1 year, is deleted after. 0 should be no expiration.
-uint32_t show_log_messages = 30; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen. Needs also to consider that file related messages are included yet invisible.
+uint32_t show_log_messages = 50; // TODO For production, set this to a high number (hundreds or thousands) to avoid causing issues with file transfers. For testing/debugging, set this to something low (like 25 to 205) and ensure it works. Note: Needs to be above what could be reasonably shown on any size of large screen. Needs also to consider that file related messages are included yet invisible.
 uint8_t global_log_messages = 1; // 0 no, 1 encrypted, 2 plaintext (depreciated, no longer exists). This is the "global default" which can be overridden per-peer.
 uint8_t log_last_seen = 1;
 uint8_t auto_accept_mult = 0; // 1 is yes, 0 is no. Yes is not good. Using mults in general is not good. We should rate limit them or have them only come on line for 1 minute every 30 minutes (randomly) and accept 1 connect.
@@ -567,6 +567,16 @@ void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t
 	else
 		torx_free((void*)&data);
 }
+void message_more_cb(const int loaded,int *loaded_array_n,int *loaded_array_i)
+{
+	if(message_more_registered)
+		message_more_registered(loaded,loaded_array_n,loaded_array_i);
+	else
+	{
+		torx_free((void*)&loaded_array_n);
+		torx_free((void*)&loaded_array_i);
+	}
+}
 void login_cb(const int value)
 {
 	if(login_registered)
@@ -745,6 +755,12 @@ void message_extra_setter(void (*callback)(int,int,unsigned char*,uint32_t))
 {
 	if(message_extra_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
 		message_extra_registered = callback;
+}
+
+void message_more_setter(void (*callback)(int,int*,int*))
+{
+	if(message_more_registered == NULL || IS_ANDROID) // refuse to set twice, for security, except on android because their lifecycle requires re-setting after .detach
+		message_more_registered = callback;
 }
 
 void login_setter(void (*callback)(int))
@@ -1357,10 +1373,46 @@ time_t message_find_since(const int n)
 	return oldest_time;
 }
 
-static inline void inline_load_array(const int g,const int n,int *loaded_array,const int loaded,const int freshly_loaded)
+static inline void sort_load_more(int *loaded_array_n,int *loaded_array_i,const int array_len)
+{ // Sorted list for message_load_more, specifically for groups. Not necessary except in groups.
+	if(!loaded_array_n || !loaded_array_i || !array_len)
+		return;
+	int tmp_array_n[array_len];
+	int tmp_array_i[array_len];
+	for(int outer = 0 ; outer < array_len ; outer++)
+	{
+		time_t highest_time = 0;
+		time_t highest_nstime = 0;
+		int current_winner_iter = 0;
+		for(int inner = 0 ; inner < array_len ; inner++)
+		{
+			const int n = loaded_array_n[inner];
+			if(n > -1)
+			{
+				const int i = loaded_array_i[inner];
+				const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
+				const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
+				if(time > highest_time || (time == highest_time && nstime > highest_nstime))
+				{
+					highest_time = time;
+					highest_nstime = nstime;
+					current_winner_iter = inner;
+					tmp_array_n[outer] = n; // yes, outer
+					tmp_array_i[outer] = i; // yes, outer
+				}
+			}
+		}
+		loaded_array_n[current_winner_iter] = -1; // destroy it to avoid using twice
+	}
+	memcpy(loaded_array_n,tmp_array_n,sizeof(tmp_array_n));
+	memcpy(loaded_array_i,tmp_array_i,sizeof(tmp_array_i));
+}
+
+static inline int inline_load_array(const int g,const int n,int *loaded_array_n,int *loaded_array_i,const int loaded,const int freshly_loaded)
 {
 	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
-	for(int i = min_i, discovered = 0; discovered < freshly_loaded ; i++)
+	int discovered = 0;
+	for(int i = min_i; discovered < freshly_loaded ; i++)
 	{
 		const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter > -1)
@@ -1372,35 +1424,40 @@ static inline void inline_load_array(const int g,const int n,int *loaded_array,c
 			pthread_rwlock_unlock(&mutex_protocols);
 			if(!(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
 			{ // XXX j2fjq0fiofg WARNING: This MUST be the same as in sql_populate_message
-				loaded_array[loaded + discovered++] = i;
+				loaded_array_n[loaded + discovered] = n;
+				loaded_array_i[loaded + discovered++] = i;
 				if(g > -1)
 					message_insert(g,n,i);
 			}
 		}
 	}
+	return discovered;
 }
 
-int *message_load_more(int *count,const int n)
-{
+int message_load_more(const int n)
+{ // Load show_log_messages more messages for the given peer
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	int loaded = 0; // must initialize as 0
-	int g = -1;
-	int *loaded_array = NULL; // must initialize as NULL
+	int *loaded_array_n = NULL; // must initialize as NULL
+	int *loaded_array_i = NULL; // must initialize as NULL
 	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
 	{ // need to use helper function to get since rather than guessing with exponential growth, then call sql_populate_message with since
 		const time_t since = message_find_since(n); // YES, use n not group_n here because we respect what our caller is looking for
-		g = set_g(n,NULL);
+		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 		const int group_n_peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-		loaded_array = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
+		loaded_array_n = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
+		loaded_array_i = torx_insecure_malloc(1); // DO NOT REMOVE. THIS IS TO ALLOW REALLOC TO FUNCTION properly in case the group_n loads none.
 		int freshly_loaded;
 		if((freshly_loaded = sql_populate_message(group_n_peer_index,0,0,since)))
 		{ // Do GROUP CTRL first
-			loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
-			inline_load_array(g,group_n,loaded_array,loaded,freshly_loaded);
+			loaded_array_n = torx_realloc(loaded_array_n,(size_t)(loaded + freshly_loaded) * sizeof(int));
+			loaded_array_i = torx_realloc(loaded_array_i,(size_t)(loaded + freshly_loaded) * sizeof(int));
+			inline_load_array(g,group_n,loaded_array_n,loaded_array_i,loaded,freshly_loaded);
 			loaded += freshly_loaded;
 		}
+	//	printf("Checkpoint loaded group_n=%d count=%d\n",group_n,freshly_loaded);
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
@@ -1410,27 +1467,37 @@ int *message_load_more(int *count,const int n)
 			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			if((freshly_loaded = sql_populate_message(peer_n_peer_index,0,0,since)))
 			{ // Do each GROUP_PEER
-				loaded_array = torx_realloc(loaded_array,(size_t)(loaded + freshly_loaded) * sizeof(int));
-				inline_load_array(g,peer_n,loaded_array,loaded,freshly_loaded);
+				loaded_array_n = torx_realloc(loaded_array_n,(size_t)(loaded + freshly_loaded) * sizeof(int));
+				loaded_array_i = torx_realloc(loaded_array_i,(size_t)(loaded + freshly_loaded) * sizeof(int));
+				inline_load_array(g,peer_n,loaded_array_n,loaded_array_i,loaded,freshly_loaded);
 				loaded += freshly_loaded;
+			//	printf("Checkpoint loaded peer_n=%d count=%d\n",peer_n,freshly_loaded);
 			}
 		}
+		sort_load_more(loaded_array_n,loaded_array_i,loaded);
 	}
 	else if(owner == ENUM_OWNER_CTRL)
 	{
 		const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 		if((loaded = sql_populate_message(peer_index,0,local_show_log_messages,0)))
 		{
-			loaded_array = torx_insecure_malloc((size_t)loaded * sizeof(int));
-			inline_load_array(g,n,loaded_array,0,loaded);
+			loaded_array_n = torx_insecure_malloc((size_t)loaded * sizeof(int));
+			loaded_array_i = torx_insecure_malloc((size_t)loaded * sizeof(int));
+			inline_load_array(-1,n,loaded_array_n,loaded_array_i,0,loaded);
+			int inverted_n[loaded];
+			int inverted_i[loaded];
+			for(int increase = 0,decrease = loaded-1; increase < loaded ; increase++,decrease--)
+			{ // Change order (this is a bit faster than sort_load_more, but either can be used)
+				inverted_n[increase] = loaded_array_n[decrease];
+				inverted_i[increase] = loaded_array_i[decrease];
+			}
+			memcpy(loaded_array_n,inverted_n,sizeof(inverted_n));
+			memcpy(loaded_array_i,inverted_i,sizeof(inverted_i));
 		}
 	}
-	if(count) // do not change logic
-		*count = loaded;
-	if(loaded && count) // do not change logic
-		return loaded_array;
-	torx_free((void*)&loaded_array); // do not change logic
-	return NULL;
+	if(loaded)
+		message_more_cb(loaded,loaded_array_n,loaded_array_i);
+	return loaded;
 }
 
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)
