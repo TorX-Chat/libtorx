@@ -136,12 +136,11 @@ typedef u_short in_port_t;
 
 #endif // XXX
 
-#define TORX_PHTREAD_CANCEL_TYPE PTHREAD_CANCEL_DEFERRED // prior to 2025, was PTHREAD_CANCEL_ASYNCHRONOUS, but we read that's bad (and could cause mutex lockups).
-
 #ifdef __ANDROID__
 	#define TORX_PHTREAD_CANCEL_TYPE 0 // pthread_cancel / pthread_setcanceltype is not and will not be supported by android
 	#define IS_ANDROID 1
 #else
+	#define TORX_PHTREAD_CANCEL_TYPE PTHREAD_CANCEL_DEFERRED // prior to 2025, was PTHREAD_CANCEL_ASYNCHRONOUS, but we read that's bad (and could cause mutex lockups).
 	#define IS_ANDROID 0
 #endif
 
