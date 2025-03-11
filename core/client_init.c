@@ -708,10 +708,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	}
 	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
-	{ // TODO Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
+	{ // TODO (old note: ) Can trigger upon Accept -> Reject / Cancel -> Re-offer -> Accept
 		torx_unlock(n) // 🟩🟩🟩
-		error_simple(0,"Sanity check failure. Something is unexpectantly NULL in select_peer. Should call split_read or section_update first, either of which will initialize. Coding error. Report this.");
-		return -1; // TODO split_read(n,f); We did this prior to 2025/01/15
+		error_printf(0,"select_peer split_status_n/fd is NULL; file may be unaccepted, completed, or cancelled: %d",file_status_get(n,f)); //  If this is an error, call split_read or section_update first, either of which will initialize.
+		return -1;
 	}
 	torx_unlock(n) // 🟩🟩🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
