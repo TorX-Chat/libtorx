@@ -67,23 +67,23 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	option(CMAKE_PLATFORM_NO_VERSIONED_SONAME TRUE) # WORKS for libevent, not for sodium
 	set(CMAKE_PLATFORM_NO_VERSIONED_SONAME TRUE) # 
 	if("${ANDROID_ABI}" STREQUAL "arm64-v8a")
-		set(SODIUM_BLD_CMD ./dist-build/android-armv8-a.sh)
+		set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 NDK_PLATFORM=android-${ANDROID_PLATFORM} ./dist-build/android-armv8-a.sh)
 		set(SODIUM_OUT_BIN_DIR libsodium-android-armv8-a+crypto/lib)
 		set(SSL_ARCH android-arm64)
 		set(SSL_CONFIG_ADDITIONAL enable-ec_nistp_64_gcc_128)
 		set(SQLCIPHER_ARCH aarch64-linux-android)
 	elseif("${ANDROID_ABI}" STREQUAL "armeabi-v7a")
-		set(SODIUM_BLD_CMD ./dist-build/android-armv7-a.sh)
+		set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 NDK_PLATFORM=android-${ANDROID_PLATFORM} ./dist-build/android-armv7-a.sh)
 		set(SODIUM_OUT_BIN_DIR libsodium-android-armv7-a/lib)
 		set(SSL_ARCH android-arm)
 		set(SQLCIPHER_ARCH arm-linux-androideabi)
 	elseif("${ANDROID_ABI}" STREQUAL "x86")
-		set(SODIUM_BLD_CMD ./dist-build/android-${ANDROID_ABI}.sh)
+		set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 NDK_PLATFORM=android-${ANDROID_PLATFORM} ./dist-build/android-${ANDROID_ABI}.sh)
 		set(SODIUM_OUT_BIN_DIR libsodium-android-i686/lib)
 		set(SSL_ARCH android-x86)
 		set(SQLCIPHER_ARCH i686-linux-android)
 	elseif("${ANDROID_ABI}" STREQUAL "x86_64")
-		set(SODIUM_BLD_CMD ./dist-build/android-${ANDROID_ABI}.sh)
+		set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 NDK_PLATFORM=android-${ANDROID_PLATFORM} ./dist-build/android-${ANDROID_ABI}.sh)
 		set(SODIUM_OUT_BIN_DIR libsodium-android-westmere/lib)
 		set(SSL_ARCH android-x86_64)
 		set(SSL_CONFIG_ADDITIONAL enable-ec_nistp_64_gcc_128)
@@ -104,7 +104,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 else()
 	set(SSL_ARCH linux-x86_64) # TODO do not hardcode this
 	set(SODIUM_OUT_BIN_DIR src/libsodium/.libs)
-	set(SODIUM_BLD_CMD make -j8)
+	set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 make -j8)
 	set(SSL_CONFIG_ADDITIONAL enable-ec_nistp_64_gcc_128) # NOTE: only necessary on 64bit
 	set(SSL_CONFIG_CMD ./Configure ${SSL_ARCH} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
 	set(SQLCIPHER_CONFIG_CMD ./configure)
@@ -188,7 +188,7 @@ if(BUILD_TORX_DEPS)
 	##	CMAKE_ARGS -DCMAKE_C_STANDARD=11 # not functional
 	#	CMAKE_ARGS -D CMAKE_BUILD_TYPE=Release
 		CONFIGURE_COMMAND ./autogen.sh -s -f && ./configure ${SODIUM_CONFIG_ARGS} # --disable-pie # ./configure ${EXTRA_CONFIG_OPTIONS_FOR_ANDROID} # --enable-minimal
-		BUILD_COMMAND cmake -E env LIBSODIUM_FULL_BUILD=1 ${SODIUM_BLD_CMD}
+		BUILD_COMMAND ${SODIUM_BLD_CMD}
 	##	INSTALL_COMMAND cp -R ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/src/libsodium/include/sodiu* ${CMAKE_CURRENT_SOURCE_DIR}/include
 	##	INSTALL_COMMAND cp -R ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/src/libsodium/include/sodium ${CMAKE_CURRENT_SOURCE_DIR}/include
 		INSTALL_COMMAND ""
