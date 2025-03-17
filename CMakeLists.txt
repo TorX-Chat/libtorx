@@ -58,6 +58,7 @@ endif()
 set(SSL_CONFIG_ARGS no-ssl3 no-weak-ssl-ciphers no-dtls no-dso no-comp no-ec2m no-psk no-srp no-camellia no-idea no-md2 no-md4 no-mdc2 no-rc2 no-rc4 no-rc5 no-rmd160 no-whirlpool no-hw no-ui-console no-unit-test no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl ) # removed temp: no-asm no-comp no-stdio, removed permanent (tor requires): no-engine . NOTE: some of these might be needed by sqlcipher but not tor.
 ## XXX XXX REMOVED enable-ec_nistp_64_gcc_128 because it overrides no-comp. It MIGHT BE NECESSARY FOR TOR XXX XXX
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+	add_definitions(-D__USE_GNU=1) # __USE_GNU is necessary for libevent for android otherwise we get pipe2 issues upon rebuild
 	option(EVENT__HAVE_SIGNALFD OFF) # this is not being detected when building... perhaps we need to pass --sysroot if our manual "OFF" is insufficient
 	set(EVENT__HAVE_SIGNALFD OFF)
 ##	set(CLANG_BINARY_PATH $ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang)
@@ -330,7 +331,6 @@ target_include_directories(
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 )
 add_compile_definitions(SQLITE_HAS_CODEC QR_GENERATOR SECURE_MALLOC)
-
 if(WIN32)
 target_link_libraries(
 	${PROJECT_NAME}
