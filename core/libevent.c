@@ -669,7 +669,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
 				}
 			}
-			continued = 1;
+			else
+				continued = 1;
 			uint16_t trash_int = 0;
 			uint16_t minimum_length = 2+2; // packet length + protocol
 			const size_t evbuffer_len = evbuffer_get_length(input);

@@ -342,7 +342,7 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 		if(cnt != 6)
 		{ // Occured on 2024/02/21 when taking down a group peer.
 			error_simple(0,"read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
-			if(evutil_closesocket(proxyfd) == -1)
+			if(evutil_closesocket(proxyfd) == -1) // 2025/04/07 May have been the cause of a fatal error on Flutter (there was a memory error at the time though too, so maybe not): "fdsan: attempted to close file descriptor 136, expected to be unowned, actually owned by unique_fd 0xbcff8e96504c"
 				error_simple(0,"Failed to close socket. 95324"); // Occured on 2024/09/28 when repeatedly blocking/unblocking.
 			return -1;
 		}

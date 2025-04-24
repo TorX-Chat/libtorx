@@ -4348,7 +4348,15 @@ void initial(void)
 	sodium_initialized = 1;
 	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Use randombytes_random(). Note: rand() is terrible on Windows.
 	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
-
+	if(debug_file)
+	{ // If a debug file is enabled, write the fact and current time to it. NOTE: Debug file could be enabled later by UI, skipping this.
+		time_t now;
+		time(&now);
+		struct tm *utc_time = gmtime(&now);
+		char timebuffer[20];
+		strftime(timebuffer,20,"%Y/%m/%d %H:%M:%S",utc_time);
+		error_printf(0,"Warning: Starting up TorX with debug file enabled at %s. Current time: %s UTC",debug_file,timebuffer);
+	}
 	#ifdef WIN32
 		evthread_use_windows_threads();
 		WSADATA wsaData;
