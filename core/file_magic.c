@@ -644,7 +644,7 @@ static inline void *peer_init(void *arg)
 		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,1); // delete our PEER XXX after load_onion, otherwise we'll have zeros in our new onion's peernick
 	}
-	if(evutil_closesocket(proxyfd) == -1)
+	if(evutil_closesocket(proxyfd) < 0)
 		error_simple(0,"Failed to close socket. 3414");
 	torx_free((void*)&peernick);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
@@ -1263,9 +1263,15 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		int ret_recv = 0;
 		torx_write(n) // 🟥🟥🟥
 		if(peer[n].sendfd > 0)
+		{
 			ret_send = evutil_closesocket(peer[n].sendfd);
+			peer[n].sendfd = 0;
+		}
 		if(peer[n].recvfd > 0)
+		{
 			ret_recv = evutil_closesocket(peer[n].recvfd);
+			peer[n].recvfd = 0;
+		}
 		torx_unlock(n) // 🟩🟩🟩
 		if(ret_send == -1 || ret_recv == -1)
 			error_printf(0,"Failed to close a socket in takedown_onion. Owner=%u send=%d recv=%d",owner,ret_send,ret_recv);

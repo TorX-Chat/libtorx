@@ -1345,6 +1345,7 @@ int sql_populate_peer(void)
 			{
 				if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 					continue;
+				peer_loaded_cb(n);
 			}
 			else if((status == ENUM_STATUS_BLOCKED || AUTOMATICALLY_LOAD_CTRL == 0) && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER))
 			{ // handle blocked 		CTRL		load struct + log

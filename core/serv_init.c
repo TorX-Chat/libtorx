@@ -433,6 +433,7 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 	event_strc->buffer = NULL;
 	event_strc->buffer_len = 0;
 	event_strc->untrusted_message_len = 0;
+	event_strc->killed = 0;
 }
 
 static inline void *send_init(void *arg)
@@ -485,10 +486,7 @@ static inline void *send_init(void *arg)
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 			initialize_event_strc(event_strc,n,owner,1,socket);
 			torx_events(event_strc); // NOTE: deleted peers will come out of here with owner "0000"
-			if(evutil_closesocket(socket) == -1) // no need to check return on this. Sometimes -1, sometimes 0. Its just for ensuring cleanup
-				error_printf(3,"Failed to close socket. 02312. Owner: %u. Status: %u.",owner,status);
-			else
-				error_simple(3,"Bingo. 02312"); // this sometimes occurs.
+			// XXX DO NOT ATTEMPT TO CLOSE socket: Causes fsan errors on Android because the socket has already been closed by disconnect() XXX
 		}
 	}
 //	torx_free((void*)&port_string);

@@ -566,6 +566,7 @@ struct event_strc { // XXX Do not sodium_malloc structs unless they contain sens
 	char *buffer; // for use with incomplete messages in read_conn.
 	uint32_t buffer_len; // current length of .buffer (received so far)
 	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
+	uint8_t killed;
 };
 struct int_char { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int i; // cannot make const, not necessary anyway
@@ -884,6 +885,7 @@ int file_remove_offer(const int file_n,const int f,const int peer_n);
 int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
 int message_resend(const int n,const int i);
+int message_send_select(const uint32_t target_count,const int *target_list,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 void kill_code(const int n,const char *explanation); // must accept -1
 void file_request_internal(const int n,const int f,const int8_t fd_type);
@@ -898,7 +900,7 @@ int file_send(const int n,const char *path);
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
 
 /* libevent.c */
-void *torx_events(void *arg);
+void *torx_events(void *ctx);
 
 /* onion_gen.c */
 void generate_onion_simple(char onion[56+1],char privkey[88+1]);

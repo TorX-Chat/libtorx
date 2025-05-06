@@ -332,7 +332,7 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	if(cnt != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed
 	{ // All good, we hit this all the time on shutdown
 	//	error_simple(0,"Read failed, probably due to tor being killed, or we are starting too fast.");
-		if(proxyfd > 0 && evutil_closesocket(proxyfd) == -1)
+		if(evutil_closesocket(proxyfd) == -1)
 			error_simple(0,"Failed to close socket. 142535");
 		return -1;
 	}

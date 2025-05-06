@@ -2371,10 +2371,16 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	peer[n].socket_utilized[0] = INT_MIN;
 	peer[n].socket_utilized[1] = INT_MIN;
 	if(peer[n].sendfd > 0)
+	{
 		evutil_closesocket(peer[n].sendfd); // TODO TODO TODO added 2023/08/09.
+		peer[n].sendfd = 0;
+	}
 	peer[n].sendfd = 0;
 	if(peer[n].recvfd > 0)
+	{
 		evutil_closesocket(peer[n].recvfd); // TODO TODO TODO added 2023/08/09.
+		peer[n].recvfd = 0;
+	}
 	peer[n].recvfd = 0;
 	peer[n].sendfd_connected = 0;
 	peer[n].recvfd_connected = 0;
@@ -2784,8 +2790,8 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 		}
 		else if(arg)
 		{ // passed port not available
-			error_printf(2,"Port (%u) not available. Returning -1.",arg);
 			port = 0;
+			error_printf(2,"Port %u not available. Returning port %u (error).",arg,port);
 			if(evutil_closesocket(socket_rand) < 0)
 				error_simple(0,"Unlikely socket failed to close error.2");
 			break;
@@ -4964,9 +4970,9 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 	const size_t tor_call_len = strlen(msg);
 	if(!success)
 	{ // Verify connection
+		error_printf(0,"Tor Control Port not running on %s:%u after %d tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries); // DO NOT make -1 or a bad forced torrc setting is unrecoverable
 		if(evutil_closesocket(sock) < 0)
 			error_simple(0,"Unlikely socket failed to close error.3");
-		error_printf(0,"Tor Control Port not running on %s:%u after %d tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries); // DO NOT make -1 or a bad forced torrc setting is unrecoverable
 		pthread_rwlock_wrlock(&mutex_global_variable);
 		tor_running = 0; // XXX this occurs when tor is not running at all
 		pthread_rwlock_unlock(&mutex_global_variable);
