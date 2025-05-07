@@ -1180,8 +1180,13 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		{
 			int file_n = n;
 			int f = -1;
-			if(file_checksum && message && message_stat != ENUM_MESSAGE_RECV)
+			if(file_checksum && message_stat != ENUM_MESSAGE_RECV)
 			{ // handle outbound file related messages
+				if(!message)
+				{ // 2025/05/07 Unknown cause: "Expected a message, but didn't find one. owner=5 f=-1 protocol=32918 file_checksum=1 stat=3"
+					error_printf(0,"Expected a message, but didn't find one. owner=%u f=%d protocol=%u file_checksum=%u stat=%u",owner,f,protocol,file_checksum,message_stat);
+					continue;
+				}
 				if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
 					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
 				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
@@ -1205,6 +1210,11 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			}
 			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
 			{ // Retrieve file_path /* goat */
+				if(f < 0)
+				{ // avoid illegal memory access
+					error_printf(0,"Expected f > -1, but it was not. owner=%u f=%d protocol=%u file_checksum=%u stat=%u",owner,f,protocol,file_checksum,message_stat);
+					continue;
+				}
 				extraneous = NULL;
 				const char *file_path = (const char *)sqlite3_column_blob(stmt, 8);
 				torx_write(file_n) // 🟥🟥🟥
@@ -1382,7 +1392,6 @@ int sql_populate_peer(void)
 				//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
 					torx_unlock(n) // 🟩🟩🟩
 					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-
 				}
 			}
 			else
@@ -1407,7 +1416,6 @@ int sql_populate_peer(void)
 			breakpoint();
 		}
 	}
-
 	if(val != SQLITE_DONE)
 	{
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX

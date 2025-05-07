@@ -146,6 +146,8 @@ int file_is_complete(const int n,const int f)
 
 int file_status_get(const int n,const int f)
 { // Unified function. Do not change the order. The order is important for efficiency and other reasons. // TODO How can we pause? Do we need pauses? Pauses were weird anyway because either peer could unpause.
+	if(n < 0 || f < 0)
+		error_simple(-1,"Negative value passed to file_status_get. Sanity check failed.");
 	if(file_is_cancelled(n,f))
 		return ENUM_FILE_INACTIVE_CANCELLED;
 	torx_read(n) // 🟧🟧🟧
