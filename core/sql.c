@@ -1105,7 +1105,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			offset--;
 			uint8_t expanded = 0;
 			torx_write(n) // 🟥🟥🟥
-			if(peer[n].message[i].p_iter == -1 && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
+			if(peer[n].message[i].p_iter == -1 && i && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
 			{ // NOTE: same as joafdoiwfoefjioasdf
 				expand_message_struc(n,i); // before adjusting min_i
 				expanded = 1;

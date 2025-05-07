@@ -737,10 +737,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					continue;
 				}
 				cur += 4; // 4 --> 8
-				uint64_t trash_start; // network order
-				memcpy(&trash_start,&read_buffer[cur],8);
+				const uint64_t packet_start = be64toh(align_uint64((void*)&read_buffer[cur]));
 				cur += 8; // 8 --> 16
-				const uint64_t packet_start = be64toh(trash_start);
 				const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
 				const int16_t section = section_determination(size,splits_nn,packet_start);

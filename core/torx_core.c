@@ -2290,7 +2290,7 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	else if(peer[n].min_i == i)
 		while(peer[n].message[peer[n].min_i].p_iter == -1 && peer[n].min_i < 0)
 		{
-			if(peer[n].min_i % 10 == 0) // min_i is never zero, so we don't check it
+			if(peer[n].min_i && peer[n].min_i % 10 == 0)
 				shrinkage += 10;
 			peer[n].min_i++;
 		}
@@ -3286,7 +3286,7 @@ static void initialize_f(const int n,const int f) // XXX do not put locks in her
 
 	peer[n].file[f].offer = torx_insecure_malloc(sizeof(struct offer_list) *11);
 	peer[n].file[f].request = torx_insecure_malloc(sizeof(struct request_list) *11);
-	for(int j = 0; j < 11; j++) /* Initialize iter 0-10 */
+	for(int j = 0; j < 11; j++) // Initialize iter 0 - 10
 	{
 		initialize_offer(n,f,j);
 		initialize_request(n,f,j);
@@ -3377,54 +3377,43 @@ static void initialize_g(const int g) // XXX do not put locks in here
 
 void re_expand_callbacks(void)
 { // UI helper function for re-calling the expand struct callbacks (useful when UI is disposed) // WARNING: if conditions must be equal to those in expand_*_struct functions
-	char onion = '\0';
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	for(int n = 0; ; n += 10)
-	{
-		getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
-		if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n%10 == 0 && n+10 > max_peer)
-			break;
-		error_simple(0,"Checkpoint re_expand_callbacks n");
+	for(int n = 10; n + 10 <= max_peer ; n += 10)
+	{ // starting at 10 because 0-10 should be initialized
 		expand_peer_struc_cb(n);
 		for(int nn = n + 10; nn > n; nn--)
 		{
 			initialize_n_cb(nn);
 			const int max_i = getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,max_i));
 			const int min_i = getter_int(nn,INT_MIN,-1,offsetof(struct peer_list,min_i));
-			for(int i = min_i; ; i += 10)
-			{
-				const int p_iter = getter_int(nn,i,-1,offsetof(struct message_list,p_iter));
-				if(p_iter == -1 && i % 10 == 0 && i + 10 > max_i + 1)
-					break;
-				error_simple(0,"Checkpoint re_expand_callbacks i");
-				expand_message_struc_cb(nn,i);
-				for(int j = i + 10; j > i; j--)
-					initialize_i_cb(nn,j);
+			for(int i = min_i; i <= max_i ; i++)
+			{ // Note: min_i is not necessarily a multiple of -10/10
+				if(i && i % 10 == 0)
+				{
+					expand_message_struc_cb(nn,i);
+					if(i < 0) // Expanding down
+						for(int j = i - 10; j < i; j++)
+							initialize_i_cb(nn,j);
+					else // Expanding up
+						for(int j = i + 10; j > i; j--)
+							initialize_i_cb(nn,j);
+				}
 			}
-			for(int f = 0; ; f += 10)
-			{
+			for(int f = 10; ; f += 10)
+			{ // starting at 10 because 0-10 should be initialized
 				getter_array(&checksum,sizeof(checksum),nn,INT_MIN,f,offsetof(struct file_list,checksum));
-				if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN))
+				if(is_null(checksum,CHECKSUM_BIN_LEN))
 					break;
-				error_simple(0,"Checkpoint re_expand_callbacks f");
 				expand_file_struc_cb(nn,f);
 				for(int j = f + 10; j > f; j--)
 					initialize_f_cb(nn,j);
 			}
 		}
 	}
-	for(int g = 0; ; g += 10)
-	{
-		pthread_rwlock_rdlock(&mutex_expand_group); // XXX
-		if(g % 10 == 0 && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
-		{
-			pthread_rwlock_unlock(&mutex_expand_group); // XXX
-			break;
-		}
-		pthread_rwlock_unlock(&mutex_expand_group); // XXX
-		error_simple(0,"Checkpoint re_expand_callbacks g");
+	for(int g = 10; g + 10 <= max_group ; g += 10)
+	{ // starting at 10 because 0-10 should be initialized
 		expand_group_struc_cb(g);
-		for(int j = g+10; j > g; j--)
+		for(int j = g + 10; j > g; j--)
 			initialize_g_cb(j);
 	}
 }
@@ -3441,19 +3430,14 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 	if(peer[n].file[f].offer)
 		offerer_n = peer[n].file[f].offer[o].offerer_n;
 	torx_unlock(n) // 🟩🟩🟩
-	if(offerer_n == -1 && o % 10 == 0)
+	if(offerer_n == -1 && o && o % 10 == 0)
 	{
 		torx_write(n) // 🟥🟥🟥
-		size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
+		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
 		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,current_allocation_size + sizeof(struct offer_list) *10);
-		current_allocation_size = torx_allocation_len(peer[n].file[f].request);
-		peer[n].file[f].request = torx_realloc(peer[n].file[f].request,current_allocation_size + sizeof(struct request_list) *10);
 		// callback unnecessary, not doing
-		for(int j = o+10; j > o; j--)
-		{
+		for(int j = o + 10; j > o; j--)
 			initialize_offer(n,f,j);
-			initialize_request(n,f,j);
-		}
 		torx_unlock(n) // 🟩🟩🟩
 	}
 }
@@ -3474,13 +3458,13 @@ static inline void expand_request_struc(const int n,const int f,const int r)
 	}
 	const int requester_n = peer[n].file[f].request[r].requester_n;
 	torx_unlock(n) // 🟩🟩🟩
-	if(requester_n == -1 && r % 10 == 0)
+	if(requester_n == -1 && r && r % 10 == 0)
 	{
 		torx_write(n) // 🟥🟥🟥
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].request);
 		peer[n].file[f].request = torx_realloc(peer[n].file[f].request,current_allocation_size + sizeof(struct request_list) *10);
 		// callback unnecessary, not doing
-		for(int j = r+10; j > r; j--)
+		for(int j = r + 10; j > r; j--)
 			initialize_request(n,f,j);
 		torx_unlock(n) // 🟩🟩🟩
 	}
@@ -3495,16 +3479,16 @@ static inline void expand_file_struc(const int n,const int f)
 	}
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
-	if(f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f+10 > max_file because we never clear checksum so it is currently a reliable check
+	if(f && f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f + 10 > max_file because we never clear checksum so it is currently a reliable check
 	{
 		torx_write(n) // 🟥🟥🟥
 		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
 		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
-		for(int j = f+10; j > f; j--)
+		for(int j = f + 10; j > f; j--)
 			initialize_f(n,j);
 		torx_unlock(n) // 🟩🟩🟩
 		expand_file_struc_cb(n,f);
-		for(int j = f+10; j > f; j--)
+		for(int j = f + 10; j > f; j--)
 			initialize_f_cb(n,j);
 	}
 	sodium_memzero(checksum,sizeof(checksum));
@@ -3520,7 +3504,7 @@ void expand_message_struc(const int n,const int i) // XXX do not put locks in he
 	const int max_i = peer[n].max_i;
 	const int min_i = peer[n].min_i;
 	const int p_iter = peer[n].message[i].p_iter;
-	if(p_iter == -1 && i % 10 == 0 && (i + 10 > max_i + 1 || i - 10 < min_i - 1)) // NOTE: same as joafdoiwfoefjioasdf
+	if(p_iter == -1 && i && i % 10 == 0 && (i + 10 > max_i + 1 || i - 10 < min_i - 1)) // NOTE: same as joafdoiwfoefjioasdf
 	{ // NOTE: This is only a redundant sanity check. It should already have been checked by the calling function.
 		int pointer_location;
 		int current_shift = 0;
@@ -3550,16 +3534,16 @@ static inline void expand_peer_struc(const int n)
 	}
 	char onion = '\0';
 	getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
-	if(n > -1 && onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n % 10 == 0 && n + 10 > max_peer)
+	if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n && n % 10 == 0 && n + 10 > max_peer)
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
 		const size_t current_allocation_size = torx_allocation_len(peer);
 		peer = torx_realloc(peer,current_allocation_size + sizeof(struct peer_list) *10);
-		for(int j = n+10; j > n; j--)
+		for(int j = n + 10; j > n; j--)
 			initialize_n(j);
 		pthread_rwlock_unlock(&mutex_expand);
 		expand_peer_struc_cb(n);
-		for(int j = n+10; j > n; j--)
+		for(int j = n + 10; j > n; j--)
 		{
 			initialize_n_cb(j);
 			for(int jj = -10; jj < 11; jj++)
@@ -3578,34 +3562,36 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 		error_simple(0,"expand_group_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	if(g % 10 == 0 && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
+	if(g % 10 == 0 && g && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
 	{ // Safe to cast g as size_t because > -1
 		const size_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
 		pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 		expand_group_struc_cb(g);
 		pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
-		for(int j = g+10; j > g; j--)
+		for(int j = g + 10; j > g; j--)
 			initialize_g(j);
 	}
 }
 
 void expand_message_struc_followup(const int n,const int i)
 { // must be called after expand_message_struc, after unlock
+	if(n < 0 || i == 0 || i % 10) // i must not be 0, must be divisible by 10
+		error_simple(-1,"expand_message_struc_followup sanity check failed");
 	expand_message_struc_cb(n,i);
 	torx_write(n) // 🟥🟥🟥
 	if(i < 0) // Expanding down
-		for(int j = i-10; j < i; j++)
+		for(int j = i - 10; j < i; j++)
 			initialize_i(n,j);
 	else // Expanding up
-		for(int j = i+10; j > i; j--)
+		for(int j = i + 10; j > i; j--)
 			initialize_i(n,j);
 	torx_unlock(n) // 🟩🟩🟩
 	if(i < 0) // Expanding down
-		for(int j = i-10; j < i; j++)
+		for(int j = i - 10; j < i; j++)
 			initialize_i_cb(n,j);
 	else // Expanding up
-		for(int j = i+10; j > i; j--)
+		for(int j = i + 10; j > i; j--)
 			initialize_i_cb(n,j);
 }
 
@@ -3622,7 +3608,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 		i = peer[n].max_i + 1;
 	if(!offset)
 	{ // In the case of offset, we must have already expanded the struct in sql_populate_message
-		if(peer[n].message[i].p_iter == -1 && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
+		if(peer[n].message[i].p_iter == -1 && i && i % 10 == 0 && (i + 10 > peer[n].max_i + 1 || i - 10 < peer[n].min_i - 1))
 		{ // NOTE: same as joafdoiwfoefjioasdf
 			expand_message_struc(n,i);
 			expanded = 1;
