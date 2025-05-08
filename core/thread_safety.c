@@ -856,6 +856,12 @@ uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg)
 	read_integer // macro
 }
 
+int threadsafe_read_int(pthread_rwlock_t *mutex,const int *arg)
+{
+	int value;
+	read_integer // macro
+}
+
 void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *source,const size_t len)
 {
 	if(source == NULL || len < 1)

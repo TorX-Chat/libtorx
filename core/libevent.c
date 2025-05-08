@@ -331,7 +331,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		time_t nstime_oldest = LONG_MAX; // must initialize as a very high value (some time into the future)
 		int o_oldest = -1;
 		packets_to_remove = 0;
-		for(int o = 0 ; o <= highest_ever_o ; o++)
+		for(int o = 0 ; o <= threadsafe_read_int(&mutex_global_variable,&highest_ever_o) ; o++)
 			if(packet[o].n == event_strc->n && packet[o].fd_type == event_strc->fd_type)
 			{
 				packets_to_remove++;
@@ -500,7 +500,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
 					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%ld nstime=%ld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,packet_time,packet_nstime,name);
 					pthread_rwlock_rdlock(&mutex_packet);
-					for(int ooo = 0 ; ooo <= highest_ever_o ; ooo++)
+					for(int ooo = 0 ; ooo <= threadsafe_read_int(&mutex_global_variable,&highest_ever_o) ; ooo++)
 						if(packet[ooo].p_iter > -1 && packet[ooo].n == event_strc->n && packet[ooo].fd_type == event_strc->fd_type)
 						{ // This is important debug info
 							pthread_rwlock_rdlock(&mutex_protocols);

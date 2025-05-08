@@ -101,7 +101,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 						}
 					}
 					int iter_peer = 0;
-					for(int n = 0; iter_peer < BROADCAST_MAX_PEERS && n <= max_peer; n++)
+					for(int n = 0; iter_peer < BROADCAST_MAX_PEERS && n <= threadsafe_read_int(&mutex_global_variable,&max_peer); n++)
 					{ // Queue suitable peers
 						torx_read(n) // 🟧🟧🟧
 						if(peer[n].peer_index > -1 && n != origin_or_group_n && peer[n].status == ENUM_STATUS_FRIEND && (peer[n].owner == ENUM_OWNER_CTRL || peer[n].owner == ENUM_OWNER_GROUP_CTRL))

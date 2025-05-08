@@ -303,8 +303,12 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where packet_removal can (and will on some devices) trigger before we register packet
 			while(o < SIZE_PACKET_STRC && packet[o].n != -1) // find first re-usable or empty iter
 				o++;
-			if(o > highest_ever_o)
+			if(o > threadsafe_read_int(&mutex_global_variable,&highest_ever_o))
+			{
+				pthread_rwlock_wrlock(&mutex_global_variable);
 				highest_ever_o = o;
+				pthread_rwlock_unlock(&mutex_global_variable);
+			}
 			if(o >= SIZE_PACKET_STRC)
 			{
 				pthread_rwlock_unlock(&mutex_packet);

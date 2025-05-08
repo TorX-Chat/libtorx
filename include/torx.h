@@ -736,6 +736,7 @@ uint8_t threadsafe_read_uint8(pthread_rwlock_t *mutex,const uint8_t *arg)__attri
 uint16_t threadsafe_read_uint16(pthread_rwlock_t *mutex,const uint16_t *arg)__attribute__((warn_unused_result));
 uint32_t threadsafe_read_uint32(pthread_rwlock_t *mutex,const uint32_t *arg)__attribute__((warn_unused_result));
 uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg)__attribute__((warn_unused_result));
+int threadsafe_read_int(pthread_rwlock_t *mutex,const int *arg)__attribute__((warn_unused_result));
 
 /* torx_core.c */
 int protocol_lookup(const uint16_t protocol)__attribute__((warn_unused_result));

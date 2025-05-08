@@ -3348,9 +3348,9 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].file = torx_secure_malloc(sizeof(struct file_list) *11);
 	for(int j = 0; j < 11; j++)
 		initialize_f(n,j);
-
+	pthread_rwlock_wrlock(&mutex_global_variable);
 	max_peer++;
-
+	pthread_rwlock_unlock(&mutex_global_variable);
 //	initialize_o(n); // depreciate, do not place here
 }
 
@@ -3372,13 +3372,15 @@ static void initialize_g(const int g) // XXX do not put locks in here
 	pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_g_cb(g);
 	pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
+	pthread_rwlock_wrlock(&mutex_global_variable);
 	max_group++;
+	pthread_rwlock_unlock(&mutex_global_variable);
 }
 
 void re_expand_callbacks(void)
 { // UI helper function for re-calling the expand struct callbacks (useful when UI is disposed) // WARNING: if conditions must be equal to those in expand_*_struct functions
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	for(int n = 10; n + 10 <= max_peer ; n += 10)
+	for(int n = 10; n + 10 <= threadsafe_read_int(&mutex_global_variable,&max_peer) ; n += 10)
 	{ // starting at 10 because 0-10 should be initialized
 		expand_peer_struc_cb(n);
 		for(int nn = n + 10; nn > n; nn--)
@@ -3410,7 +3412,7 @@ void re_expand_callbacks(void)
 			}
 		}
 	}
-	for(int g = 10; g + 10 <= max_group ; g += 10)
+	for(int g = 10; g + 10 <= threadsafe_read_int(&mutex_global_variable,&max_group) ; g += 10)
 	{ // starting at 10 because 0-10 should be initialized
 		expand_group_struc_cb(g);
 		for(int j = g + 10; j > g; j--)
@@ -3534,7 +3536,7 @@ static inline void expand_peer_struc(const int n)
 	}
 	char onion = '\0';
 	getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
-	if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n && n % 10 == 0 && n + 10 > max_peer)
+	if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n && n % 10 == 0 && n + 10 > threadsafe_read_int(&mutex_global_variable,&max_peer))
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
 		const size_t current_allocation_size = torx_allocation_len(peer);
@@ -3562,7 +3564,7 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 		error_simple(0,"expand_group_struc failed sanity check. Coding error. Report this.");
 		return;
 	}
-	if(g % 10 == 0 && g && g + 10 > max_group && is_null(group[g].id,GROUP_ID_SIZE))
+	if(g % 10 == 0 && g && g + 10 > threadsafe_read_int(&mutex_global_variable,&max_group) && is_null(group[g].id,GROUP_ID_SIZE))
 	{ // Safe to cast g as size_t because > -1
 		const size_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
@@ -4854,8 +4856,9 @@ void cleanup_lib(const int sig_num)
 		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?).");
 	sodium_memzero(control_password_clear,sizeof(control_password_clear));
 	sodium_memzero(control_password_hash,sizeof(control_password_hash));
-	if(highest_ever_o > 0) // this does not mean file transfers occured, i think
-		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o);
+	const int highest_ever_o_local = threadsafe_read_int(&mutex_global_variable,&highest_ever_o);
+	if(highest_ever_o_local > 0) // this does not mean file transfers occured, i think
+		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o_local);
 	// XXX Most activity should be brought to a halt by the above locks XXX
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE) ;  g++)
