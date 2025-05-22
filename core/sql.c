@@ -621,42 +621,6 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 	return n;
 }
 
-static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uint16_t tport,const int maxstreams,...)
-{ /* Takes a linked list of v3authkeys and applies them to onion. Ready for groupchats */ // we have to detach because we dont use one single tor_call() control connection
-// TODO 2022, not using detach / single control connection, is why we have to harden access to control port. If we use a single control connection, we can perhaps do API calls over insecure controlport (ie, we can use an existing Orbot instance, but we must "TAKEOWNERSHIP" to shutdown when control connection closes)
-//	note: orbot would require custom configuration for controlport access, so either we use their intents api or we require manual controlport configuration, or we run our own tor
-	char *string = {0};
-	char *buffer = torx_secure_malloc(4096); // TODO can eliminate malloc by eliminating this function // TODO could be subject to overflow here, if we used this function with a long linked list. Should keep track to prevent.
-	int auths = 0;
-	va_list va_args;
-	va_start(va_args,maxstreams);
-	while(1)
-	{
-		size_t len = 0;
-		if((string = va_arg(va_args,char*)) == NULL || (len = strlen(string)) == 0)
-		{ // Must be null terminated
-			if(!auths)
-				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
-			strcat(buffer,"\n");
-			break; // End of list, none or no more auths to add in LL
-		}
-		else
-		{
-			auths++;
-			if(len == 56 && string[52] == '=')
-				string[52] = '\0';				
-			else if(len != 52) // We now have tests to prevent this from occuring. It occured ocassionally either for natural reasons, a problem with our x2 conversion, or libsodium issue
-				error_printf(0,"Wrong length ClientAuthv3: %lu. This onion will not function.",len);
-			if(auths == 1)
-				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach,V3Auth MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
-			strcat(buffer," ClientAuthv3=");
-			strcat(buffer,string);
-		}
-	}
-	va_end(va_args);
-	return buffer;
-}
-
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
 { // not filling 'peer_sign_pk' and 'sign_sk', leaving them as NULL. Fill them during handshake with sql_update_peer.
 	if(!privkey || !peeronion || !peernick) // TODO could add some additional checks here
