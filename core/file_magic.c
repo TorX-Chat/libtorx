@@ -1256,10 +1256,11 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		char onion[56+1];
 		getter_array(&onion,sizeof(onion),n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		char apibuffer[512];
-		snprintf(apibuffer,512,"%s%s%s%s%s","authenticate \"",control_password_clear,"\"\ndel_onion ",onion,"\n");
+		snprintf(apibuffer,sizeof(apibuffer),"del_onion %s\n",onion);
 		sodium_memzero(onion,sizeof(onion));
 	//	printf("Checkpoint tor_call takedown_onion\n");
-		tor_call(NULL,-1,apibuffer);
+		char *rbuff = tor_call(apibuffer);
+		torx_free((void*)&rbuff);
 		sodium_memzero(apibuffer,sizeof(apibuffer));
 		int ret_send = 0;
 		int ret_recv = 0;

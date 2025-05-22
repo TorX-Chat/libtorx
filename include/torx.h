@@ -542,6 +542,11 @@ enum file_statuses
 
 /* Struct Models/Types used for passing to specific pthread'd functions */ // Don't forget to initialize = {0} when calling these types.
 
+struct tor_call_strc {
+	pthread_t thrd;
+	void (*callback)(char*);
+	char *msg;
+};
 struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	char *path;
@@ -573,7 +578,6 @@ struct int_char { // XXX Do not sodium_malloc structs unless they contain sensit
 	const char *p;
 	const unsigned char *up;
 };
-
 struct file_request_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	int f;
@@ -825,8 +829,8 @@ void login_start(const char *password);
 void cleanup_lib(const int sig_num);
 void xstrupr(char *string);
 void xstrlwr(char *string);
-void load_onion_events(const int n);
-int tor_call(void (*callback)(int),const int n,const char *msg);
+char *tor_call(const char *msg)__attribute__((warn_unused_result));
+void tor_call_async(void (*callback)(char*),const char *msg);
 char *onion_from_privkey(const char *privkey)__attribute__((warn_unused_result));
 char *torxid_from_onion(const char *onion)__attribute__((warn_unused_result));
 char *onion_from_torxid(const char *torxid)__attribute__((warn_unused_result));
@@ -840,7 +844,6 @@ void broadcast_start(void);
 
 /* sql.c */
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
-void load_onion(const int n);
 void message_offload(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
@@ -899,6 +902,8 @@ int file_send(const int n,const char *path);
 
 /* serv_init.c */
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
+int add_onion_call(const int n);
+void load_onion(const int n);
 
 /* libevent.c */
 void *torx_events(void *ctx);

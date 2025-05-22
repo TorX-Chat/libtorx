@@ -1622,24 +1622,24 @@ void *torx_events(void *ctx)
 { /* Is called ONLY ONCE for .recvfd (which never closes, unless block/delete), but MULTIPLE TIMES for .sendfd (which closes every time there is disconnect) */
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
+	int failed_tor_call = 0; // must initialize as 0
 	if(event_strc->fd_type == 0)
 	{
 		torx_write(event_strc->n) // 🟥🟥🟥
 		pusher(zero_pthread,(void*)&peer[event_strc->n].thrd_recv)
 		torx_unlock(event_strc->n) // 🟩🟩🟩
+		failed_tor_call = add_onion_call(event_strc->n);
 	}
 	struct event_base *base = event_base_new();
 	if(!base)
 	{
 		error_simple(0,"Couldn't open event base.");
-		torx_free((void*)&event_strc->buffer);
-		torx_free((void*)&ctx);
-		return 0;
+		goto complete_failure;
       	}
-	while(1)
+	while(!failed_tor_call)
 	{ // not a real while loop, just to avoid goto
 		if(event_strc->fd_type == 0)
-		{ /* Exclusively comes here from load_onion_events */
+		{ /* Exclusively comes here from load_onion */
 			struct evconnlistener *listener = evconnlistener_new(base, accept_conn, ctx, LEV_OPT_THREADSAFE|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE/*|EVLOOP_ONCE*/, -1, event_strc->sockfd);	// |LEV_OPT_DEFERRED_ACCEPT could cause issues. It is the source of problems if connections fail
 			if(!listener)
 			{
@@ -1728,6 +1728,7 @@ void *torx_events(void *ctx)
 		break;
 	}
 	event_base_free(base);
+	complete_failure: {}
 	torx_free((void*)&event_strc->buffer);
 	torx_free((void*)&ctx);
 	return 0;

@@ -392,11 +392,12 @@ static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey
 	}
 /*	if(crypto_sign_ed25519_sk_to_curve25519(x25519_sk,ed25519_sk) < 0) // XXX do not delete. #crypto ms7821. might need this in future if libsodium fixes bug. (FALSE, bad assumption)
 		error("Fatal private key conversion issue");*/
-	char apibuffer[512];
+	char apibuffer[512]; // zero'd
 	char *p = b64_encode(ed25519_sk,sizeof(ed25519_sk));
-	snprintf(apibuffer,512,"%s%s%s%s%s%s\n","authenticate \"",control_password_clear,"\"\nONION_CLIENT_AUTH_ADD ",peeronion," x25519:",p); // torx_free((void*)&)'d
+	snprintf(apibuffer,sizeof(apibuffer),"ONION_CLIENT_AUTH_ADD %s x25519:%s\n",peeronion,p);
 	torx_free((void*)&p);
-	tor_call(NULL,-1,apibuffer);
+	char *rbuff = tor_call(apibuffer);
+	torx_free((void*)&rbuff);
 	sodium_memzero(apibuffer,sizeof(apibuffer));
 	if(local_debug > 2)
 	{
@@ -498,9 +499,98 @@ static inline void *send_init(void *arg)
 	return 0; // peer blocked TODO did we close sockets?
 }
 
-void load_onion_events(const int n)
-{ /* Passable to tor_call as callback after load_onion */ // TODO should check if this n is still valid and not deleted (or blocked?)
+int add_onion_call(const int n)
+{ // PEER / GROUP_PEER doesn't have a listening service nor v3auth. Everything else goes through this, even without v3auth.
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+	char incomingauthkey[56+1] = {0}; // zero'd
+	if(owner == ENUM_OWNER_CTRL)
+	{ // _CTRL is the only type that may have v3auth
+		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+		if(local_v3auth_enabled == 1 && getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion)) > 1)
+		{ // V3auth
+			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
+			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
+			char peeronion_uppercase[56+1] = {0};
+			baseencode_error_t err = {0}; // for base32
+			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+			xstrupr(peeronion_uppercase);
+			unsigned char *p1;
+			memcpy(ed25519_pk,p1=base32_decode(peeronion_uppercase,56,&err),sizeof(ed25519_pk));
+			sodium_memzero(peeronion_uppercase,sizeof(peeronion_uppercase));
+			torx_free((void*)&p1);
+			if(crypto_sign_ed25519_pk_to_curve25519(x25519_pk, ed25519_pk) < 0)
+			{
+				error_simple(0,"Critical public key conversion issue.");
+				sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+				return -1;
+			}
+			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+			if(base32_encode((unsigned char*)incomingauthkey,x25519_pk,sizeof(ed25519_pk)) != 56)
+			{
+				error_simple(0,"Serious error in load_onion relating to incoming auth key. Report this");
+				sodium_memzero(x25519_pk,sizeof(x25519_pk));
+				return -1;
+			}
+			sodium_memzero(x25519_pk,sizeof(x25519_pk));
+			error_printf(3,"Incoming Auth: %s",incomingauthkey);
+		}
+		else if(local_v3auth_enabled)
+			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1.");
+	}
+	char privkey[88+1];
+	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
+	const uint16_t vport = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,vport));
+	const uint16_t tport = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,tport));
+	char *apibuffer = v3auth_ll(privkey,vport,tport,owner == ENUM_OWNER_GROUP_CTRL ? MAX_STREAMS_GROUP : MAX_STREAMS_PEER,incomingauthkey,NULL);
+	sodium_memzero(privkey,sizeof(privkey));
+	sodium_memzero(incomingauthkey,sizeof(incomingauthkey));
+	char *rbuff = tor_call(apibuffer);
+	torx_free((void*)&apibuffer);
+	int failed_tor_call;
+	if(rbuff && !strncmp(rbuff,"250",3))
+	{
+		error_simple(4,"Received success code from Tor when calling ADD_ONION.");
+		failed_tor_call = 0;
+	}
+	else
+	{
+		error_simple(0,"Received FAILURE code from Tor when calling ADD_ONION.");
+		failed_tor_call = 1;
+	}
+	torx_free((void*)&rbuff);
+	return failed_tor_call;
+}
+
+void load_onion(const int n)
+{ // Not to be called on ENUM_OWNER_PEER
+	if(n < 0)
+	{
+		error_simple(0,"Attempted to load_onion an negative value. Report this.");
+		breakpoint();
+		return;
+	}
+	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
+	const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
+	if(status == ENUM_STATUS_PENDING || status == ENUM_STATUS_BLOCKED)
+	{
+		error_simple(3,"Not loading a pending or blocked onion.");
+		return; // do not load unaccepted friend requests
+	}
+	uint16_t vport;
+	if(owner == ENUM_OWNER_CTRL)
+		vport = CTRL_VPORT;
+	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
+		vport = CTRL_VPORT;
+	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
+		vport = INIT_VPORT;
+	else
+	{
+		error_simple(0,"Load_onion attempted to load a PEER. This is wrong, as PEER is not a listening server.");
+		return;
+	}
+	setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
+	const uint16_t tport = randport(0);
+	setter(n,INT_MIN,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 	{
 		torx_read(n) // 🟧🟧🟧
@@ -513,13 +603,7 @@ void load_onion_events(const int n)
 		return; // done, do not need to load listener because we no sockets to listen on
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Open .recvfd for a SING/MULT/CTRL/GROUP_CTRL onion, then call torx_events() on it
-		struct sockaddr_in serv_addr = {0};//, cli_addr;
-		const uint16_t tport = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,tport));
-		if(tport < 1025)
-		{
-			error_simple(0,"No valid port provided.");
-			return;
-		}
+		struct sockaddr_in serv_addr = {0}; //, cli_addr;
 		const evutil_socket_t sock = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0);
 		if(sock < 0)
 		{
@@ -545,11 +629,6 @@ void load_onion_events(const int n)
 		pthread_t *thrd_recv = &peer[n].thrd_recv;
 		torx_unlock(n) // 🟩🟩🟩
 		if(pthread_create(thrd_recv,&ATTR_DETACHED,&torx_events,(void*)event_strc))
-			error_simple(-1,"Failed to create thread from load_onion_events");
-	}
-	else
-	{ // Error if this is called on ENUM_OWNER_PEER
-		error_printf(0,"Called load_onion_events on something wrong. Owner: %d. Report this.",owner);
-		breakpoint();
+			error_simple(-1,"Failed to create thread from load_onion");
 	}
 }

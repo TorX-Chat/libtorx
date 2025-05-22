@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 27 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 28 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2761,7 +2761,7 @@ static inline int get_tor_version(void)
 }
 
 uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is available (currently unused functionality, but works)
-{ // Returns an available random port. Mutex used here to prevent race condition when calling randport() concurrently on different threads (which we do)
+{ // Returns an available random port above at 10,000. Mutex used here to prevent race condition when calling randport() concurrently on different threads (which we do)
 	uint16_t port = 0;
 	evutil_socket_t socket_rand;
 	struct sockaddr_in serv_addr = {0};
@@ -2877,11 +2877,13 @@ static inline void *tor_log_reader(void *arg)
 			}
 			remove_lines_with_suffix(msg);
 			pthread_mutex_unlock(&mutex_tor_pipe);
-			if(utf8_valid(msg,strlen(msg)))
+			const size_t remaining_len = strlen(msg);
+			if(remaining_len && utf8_valid(msg,remaining_len))
 				tor_log_cb(msg);
 			else
-			{ // 2024/12/25 This can occur when restarting Tor
-				error_simple(0,"Disgarding a Tor log message due to failure of utf8_valid check.");
+			{
+				if(remaining_len) // 2024/12/25 This can occur when restarting Tor
+					error_simple(0,"Disgarding a Tor log message due to failure of utf8_valid check.");
 				torx_free((void*)&msg);
 			}
 		}
@@ -4912,33 +4914,31 @@ void xstrlwr(char *string)
 			string[i] += 32;
 }
 
-int tor_call(void (*callback)(int),const int n,const char *msg)
-{  /* Passes messages to Tor. Note that they can contain sensitive data. */ // 204 is the length of a successful gen response at the time of writing. 275 is with a single valid ClientAuthv3. Every additional ClientAuthv3 adds 70.
- // TODO investigate viability of having all tor calls on a single connection instead of using a password. Could facilitate the use of Orbot/System-Tor/Tails and also takedown onions during crashes.
+char *tor_call(const char *msg)
+{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead.
 	if(msg == NULL)
-	{ // do not check if n is negative
-		error_simple(0,"Sanity check fail in tor_call. Possible coding error. Report this. Bailing.");
-		breakpoint();
-		return -1;
+	{
+		error_simple(0,"Sanity check fail in tor_call. Coding error. Report this.");
+		return NULL;
 	}
 	struct sockaddr_in serv_addr = {0};
 	evutil_socket_t sock; 
 	if((sock = SOCKET_CAST_IN socket(AF_INET,SOCK_STREAM,0)) < 0)
 	{
-		error_simple(0,"Socket creation error. Report this. Bailing.");
-		return -1;
+		error_simple(0,"Socket creation error. Report this.");
+		return NULL;
 	}
 	const uint16_t local_tor_ctrl_port = threadsafe_read_uint16(&mutex_global_variable,&tor_ctrl_port);
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_port = htobe16(local_tor_ctrl_port);
-	if(inet_pton(AF_INET,TOR_CTRL_IP,&serv_addr.sin_addr) <= 0) 	// Convert IPv4 and IPv6 addresses from text to binary form
+	if(inet_pton(AF_INET,TOR_CTRL_IP,&serv_addr.sin_addr) <= 0) // Convert IPv4 and IPv6 addresses from text to binary form
 	{
-		error_simple(0,"Invalid address for Tor Control. Report this. Bailing.");
+		error_simple(0,"Invalid address for Tor Control. Coding error. Report this.");
 		if(evutil_closesocket(sock) < 0)
 			error_simple(0,"Unlikely socket failed to close error.2");
-		return -1;
+		return NULL;
 	}
-	int retries = 0;
+	long int retries = 0;
 	int8_t success = 0;
 	struct timespec req;
 	req.tv_sec = 0; // 0s
@@ -4951,54 +4951,98 @@ int tor_call(void (*callback)(int),const int n,const char *msg)
 			{
 				error_simple(0,"nanosleep failed. Falling back to sleep(1). Platform may not support nanosleep?");
 				sleep(1);
+				retries += 1000000000 / req.tv_nsec;
 			}
-			retries++;
+			else
+				retries++;
 		}
 		else
 			success = 1;
 	}
-	const size_t tor_call_len = strlen(msg);
-	if(!success)
-	{ // Verify connection
-		error_printf(0,"Tor Control Port not running on %s:%u after %d tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries); // DO NOT make -1 or a bad forced torrc setting is unrecoverable
-		if(evutil_closesocket(sock) < 0)
-			error_simple(0,"Unlikely socket failed to close error.3");
-		pthread_rwlock_wrlock(&mutex_global_variable);
-		tor_running = 0; // XXX this occurs when tor is not running at all
-		pthread_rwlock_unlock(&mutex_global_variable);
-		return -1; // fail
-	}
-	else
+	char *msg_recv = NULL;
+	if(success)
 	{ // Attempt Send
-		error_printf(5,"Tor call SUCCESS after %d retries: %s",retries,msg);
-		const ssize_t s = send(SOCKET_CAST_OUT sock,msg,SOCKET_WRITE_SIZE tor_call_len,0);
-		char rbuff[4096]; // zero'd
-		const ssize_t r = recv(SOCKET_CAST_OUT sock,rbuff,sizeof(rbuff)-1,0);
-		if(s > 0 && r > -1)
-		{ // 250 is from the tor api spec which indicates success
-			rbuff[r] = '\0'; // do not remove, recv is not null terminating
-			if(evutil_closesocket(sock) < 0)
-				error_simple(0,"Unlikely socket failed to close error.4"); // DO NOT error out here. This occured once even with a 250 success. Not a big deal. 2023/08
-			pthread_rwlock_wrlock(&mutex_global_variable);
-			tor_running = 1;
-			pthread_rwlock_unlock(&mutex_global_variable);
-			if(r > 0 && !strncmp(rbuff,"250",3))
-				error_simple(4,"Received success code from Tor.");
-			else
-				error_simple(0,"Received FAILURE code from Tor.");
-			sodium_memzero(rbuff,sizeof(rbuff));
-			if(callback && n > -1)
-				(*callback)(n);
-			return 0; // success
+		error_printf(5,"Tor call SUCCESS after %ld retries: %s",retries,msg);
+		char apibuffer[64]; // Must authenticate
+		snprintf(apibuffer,sizeof(apibuffer),"authenticate \"%s\"\n",control_password_clear);
+		send(SOCKET_CAST_OUT sock,apibuffer,SOCKET_WRITE_SIZE strlen(apibuffer),0);
+		sodium_memzero(apibuffer,sizeof(apibuffer));
+		const ssize_t s = send(SOCKET_CAST_OUT sock,msg,SOCKET_WRITE_SIZE strlen(msg),0);
+		if(s > 0)
+		{ // Sent message
+			char rbuff[4096]; // zero'd
+			ssize_t r;
+			size_t current_allocation_size = 0;
+			do
+			{ // Receive response
+				r = recv(SOCKET_CAST_OUT sock,rbuff,sizeof(rbuff),0);
+				if(r > 0)
+				{ // r is safe to cast to size_t after this check
+					if(msg_recv)
+					{ // Subsequent
+						msg_recv = torx_realloc(msg_recv,current_allocation_size + (size_t)r);
+						memcpy(&msg_recv[current_allocation_size-1],rbuff,(size_t)r); // overwrite existing null byte
+						current_allocation_size += (size_t)r;
+					}
+					else
+					{ // First
+						msg_recv = torx_secure_malloc((size_t)r + 1); // include space for one null byte
+						memcpy(&msg_recv[current_allocation_size],rbuff,(size_t)r);
+						current_allocation_size += (size_t)r + 1; // include space for one null byte
+					}
+					msg_recv[current_allocation_size-1] = '\0';
+				}
+			} while(r == sizeof(rbuff));
+			if(msg_recv)
+			{
+				sodium_memzero(rbuff,sizeof(rbuff));
+				pthread_rwlock_wrlock(&mutex_global_variable);
+				tor_running = 1;
+				pthread_rwlock_unlock(&mutex_global_variable);
+			}
 		}
-		pthread_rwlock_wrlock(&mutex_global_variable);
-		tor_running = 0; // XXX this occurs when another instance of tor is already running, from a crashed TorX... also seemingly false positives?
-		pthread_rwlock_unlock(&mutex_global_variable);
-		error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
-		sodium_memzero(rbuff,sizeof(rbuff));
-		return -1; // fail
+		else // Failed to send data, despite connecting to port
+			error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
 	}
+	else // Failed to connect to port
+		error_printf(0,"Tor Control Port not running on %s:%u after %ld tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries); // DO NOT make -1 or a bad forced torrc setting is unrecoverable
+	if(evutil_closesocket(sock) < 0)
+		error_simple(0,"Unlikely socket failed to close error.3");
+	return msg_recv;
+}
 
+static inline void *tor_call_async_threaded(void *arg)
+{ // Confirmed working
+	if(!arg)
+	{
+		error_simple(0,"tor_call_async_threaded has null arg. Coding error. Report this.");
+		return 0;
+	}
+	struct tor_call_strc *tor_call_strc = (struct tor_call_strc *)arg;
+	pusher(zero_pthread,(void*)&tor_call_strc->thrd) // Note: unnecessary because this thread will not be killed.
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
+	char *rbuff = tor_call(tor_call_strc->msg);
+	if(tor_call_strc->callback)
+		(*tor_call_strc->callback)(rbuff);
+	else
+		torx_free((void*)&rbuff);
+	return 0;
+}
+
+void tor_call_async(void (*callback)(char*),const char *msg)
+{ // This is a UI helper function, especially for making GETINFO calls to determine connectivity status. Ex: "GETINFO network-liveness\r\n" / "GETINFO dormant\r\n" / "GETINFO status/bootstrap-phase\r\n"
+	if(!msg)
+	{
+		error_simple(0,"No message passed to tor_call_async. Coding error. Report this.");
+		return;
+	}
+	const size_t msg_len = strlen(msg);
+	struct tor_call_strc *tor_call_strc = torx_insecure_malloc(sizeof(struct tor_call_strc));
+	tor_call_strc->thrd = 0; // initializing
+	tor_call_strc->callback = callback; // Note: may be null
+	tor_call_strc->msg = torx_secure_malloc(msg_len + 1);
+	memcpy(tor_call_strc->msg,msg,msg_len + 1);
+	pthread_create(&tor_call_strc->thrd,&ATTR_DETACHED,&tor_call_async_threaded,tor_call_strc);
 }
 
 char *onion_from_privkey(const char *privkey)

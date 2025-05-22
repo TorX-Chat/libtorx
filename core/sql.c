@@ -625,8 +625,6 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 { /* Takes a linked list of v3authkeys and applies them to onion. Ready for groupchats */ // we have to detach because we dont use one single tor_call() control connection
 // TODO 2022, not using detach / single control connection, is why we have to harden access to control port. If we use a single control connection, we can perhaps do API calls over insecure controlport (ie, we can use an existing Orbot instance, but we must "TAKEOWNERSHIP" to shutdown when control connection closes)
 //	note: orbot would require custom configuration for controlport access, so either we use their intents api or we require manual controlport configuration, or we run our own tor
-// TODO for groups, how do we know which authorized peer is sending messages if they are all unsigned messages on the same port? cannot
-// different ports are not an option because then peers could spoof each other. we might HAVE TO use signed messages, or one onion per peer, which means no size cap but huge overhead.
 	char *string = {0};
 	char *buffer = torx_secure_malloc(4096); // TODO can eliminate malloc by eliminating this function // TODO could be subject to overflow here, if we used this function with a long linked list. Should keep track to prevent.
 	int auths = 0;
@@ -638,7 +636,7 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 		if((string = va_arg(va_args,char*)) == NULL || (len = strlen(string)) == 0)
 		{ // Must be null terminated
 			if(!auths)
-				snprintf(buffer,512,"authenticate \"%s\"\nADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach MaxStreams=%d Port=%u,%u",control_password_clear,privkey,maxstreams,vport,tport);
+				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
 			strcat(buffer,"\n");
 			break; // End of list, none or no more auths to add in LL
 		}
@@ -650,94 +648,13 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 			else if(len != 52) // We now have tests to prevent this from occuring. It occured ocassionally either for natural reasons, a problem with our x2 conversion, or libsodium issue
 				error_printf(0,"Wrong length ClientAuthv3: %lu. This onion will not function.",len);
 			if(auths == 1)
-				snprintf(buffer,512,"authenticate \"%s\"\nADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach,V3Auth MaxStreams=%d Port=%u,%u",control_password_clear,privkey,maxstreams,vport,tport);
+				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach,V3Auth MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
 			strcat(buffer," ClientAuthv3=");
 			strcat(buffer,string);
 		}
 	}
 	va_end(va_args);
 	return buffer;
-}
-
-void load_onion(const int n)
-{ // SING/MULT/CTRL. TODO refine TODO v3auth_ll() probably doesn't need to be called for SING/MULT/Group
-	if(n < 0)
-	{
-		error_simple(0,"Attempted to load_onion an negative value. Report this.");
-		breakpoint();
-		return;
-	}
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
-	if(status == ENUM_STATUS_PENDING || status == ENUM_STATUS_BLOCKED)
-	{
-		error_simple(3,"Not loading a pending or blocked onion.");
-		return; // do not load unaccepted friend requests
-	}
-	char incomingauthkey[56+1] = {0}; // zero'd
-	uint16_t vport;
-	if(owner == ENUM_OWNER_CTRL)
-	{ /* Handle CTRL, which may have v3auth */
-		vport = CTRL_VPORT;
-		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-		if(local_v3auth_enabled == 1 && getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion)) > 1)
-		{ // V3auth
-			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
-			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
-			char peeronion_uppercase[56+1] = {0};
-			baseencode_error_t err = {0}; // for base32
-			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
-			xstrupr(peeronion_uppercase);
-			unsigned char *p1;
-			memcpy(ed25519_pk,p1=base32_decode(peeronion_uppercase,56,&err),sizeof(ed25519_pk));
-			sodium_memzero(peeronion_uppercase,sizeof(peeronion_uppercase));
-			torx_free((void*)&p1);
-			if(crypto_sign_ed25519_pk_to_curve25519(x25519_pk, ed25519_pk) < 0)
-			{
-				error_simple(0,"Critical public key conversion issue.");
-				sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-				return;
-			}
-			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-			if(base32_encode((unsigned char*)incomingauthkey,x25519_pk,sizeof(ed25519_pk)) != 56)
-			{
-				error_simple(0,"Serious error in load_onion relating to incoming auth key. Report this");
-				sodium_memzero(x25519_pk,sizeof(x25519_pk));
-				return;
-			}
-			sodium_memzero(x25519_pk,sizeof(x25519_pk));
-			error_printf(3,"Incoming Auth: %s",incomingauthkey);
-		}
-		else if(local_v3auth_enabled)
-			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1.");
-	}
-	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
-		vport = CTRL_VPORT;
-	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
-		vport = INIT_VPORT;
-	else
-	{
-		error_simple(0,"Load_onion attempted to load a PEER. This is wrong, as PEER is not a listening server.");
-		return;
-	}
-	setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
-	const uint16_t tport = randport(0);
-	setter(n,INT_MIN,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
-	if(owner == ENUM_OWNER_GROUP_PEER)
-		load_onion_events(n); // no recv on this to setup, so no need to tor_call
-	else
-	{ /* Build and send API call to Tor */ // Group Peer doesn't have a listening service nor v3auth. Everything else goes through this, even without v3auth
-		int max_streams = MAX_STREAMS_PEER;
-		if(owner == ENUM_OWNER_GROUP_CTRL)
-			max_streams = MAX_STREAMS_GROUP;
-		char privkey[88+1];
-		getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
-		char *apibuffer = v3auth_ll(privkey,vport,tport,max_streams,incomingauthkey,NULL);
-		sodium_memzero(privkey,sizeof(privkey));
-		sodium_memzero(incomingauthkey,sizeof(incomingauthkey));
-		tor_call(load_onion_events,n,apibuffer);
-		torx_free((void*)&apibuffer);
-	}
 }
 
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
