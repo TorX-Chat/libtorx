@@ -740,7 +740,7 @@ int threadsafe_read_int(pthread_rwlock_t *mutex,const int *arg)__attribute__((wa
 
 /* torx_core.c */
 int protocol_lookup(const uint16_t protocol)__attribute__((warn_unused_result));
-int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
+int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint8_t null_terminate,const uint8_t date,const uint8_t sign,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
 void torx_fn_read(const int n);
 void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);

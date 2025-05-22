@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 26 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 27 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -280,7 +280,7 @@ int protocol_lookup(const uint16_t protocol)
 	return -1; // protocol not found. be sure to catch this.
 }
 
-int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint32_t null_terminated_len,const uint32_t date_len,const uint32_t signature_len,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream)
+int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint8_t null_terminate,const uint8_t date,const uint8_t sign,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream)
 { // Register a custom protocol // TODO probbaly passing a struct + protocol is more rational than this massive amount of args
 	if(protocol_lookup(protocol) != -1)
 	{ // TODO more sanity checks
@@ -305,9 +305,9 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 				snprintf(protocols[p_iter].name,sizeof(protocols[p_iter].name),"%s",name);
 			if(description)
 				snprintf(protocols[p_iter].description,sizeof(protocols[p_iter].description),"%s",description);
-			protocols[p_iter].null_terminated_len = null_terminated_len;
-			protocols[p_iter].date_len = date_len;
-			protocols[p_iter].signature_len = signature_len;
+			protocols[p_iter].null_terminated_len = null_terminate;
+			protocols[p_iter].date_len = date ? 2*sizeof(uint32_t) : 0;
+			protocols[p_iter].signature_len = sign ? crypto_sign_BYTES : 0;
 			protocols[p_iter].logged = logged;
 			protocols[p_iter].notifiable = notifiable;
 			protocols[p_iter].file_checksum = file_checksum;
@@ -969,42 +969,43 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 	void *allocation = NULL;
 	if(arg)
 	{
-		void *real_ptr = (char *)arg - 8;
-		const size_t len_old = *((uint32_t *)real_ptr);
-		if(len_old == len_new)
-		{ // Not an error, just dumb coding resulted in non-op. Should avoid, but not at all harmful.
-			error_simple(0,"Called torx_realloc with an unchanged length. Non-op occured. Carry on.");
-			return arg;
-		}
-		const uint32_t type = *((uint32_t *)real_ptr+1);
-		if(type == ENUM_MALLOC_TYPE_SECURE)
-			allocation = torx_secure_malloc(len_new);
-		else if(type == ENUM_MALLOC_TYPE_INSECURE)
-			allocation = torx_insecure_malloc(len_new);
-		else
+		if(len_new)
 		{
-			error_simple(0,"Called torx_realloc on a non-TorX malloc, resulting in an illegal read and failure.");
-			breakpoint();
-			return NULL;
-		}
-		char *new = allocation;
-		char *old = arg;
-		const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
-		if(len_new < len_old)
-		{ // Shrink
-			error_printf(0,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
-			if(shift_data_forwards) // Cause loss of start data, instead of end data.
-				memcpy(allocation,&old[diff],len_new);
+			void *real_ptr = (char *)arg - 8;
+			const size_t len_old = *((uint32_t *)real_ptr);
+			if(len_old == len_new)
+			{ // Not an error, just dumb coding resulted in non-op. Should avoid, but not at all harmful.
+				error_simple(0,"Called torx_realloc with an unchanged length. Non-op occured. Carry on.");
+				return arg;
+			}
+			const uint32_t type = *((uint32_t *)real_ptr+1);
+			if(type == ENUM_MALLOC_TYPE_SECURE)
+				allocation = torx_secure_malloc(len_new);
+			else if(type == ENUM_MALLOC_TYPE_INSECURE)
+				allocation = torx_insecure_malloc(len_new);
 			else
-				memcpy(allocation,arg,len_new);
-		}
-		else
-		{ // Expand
-			if(shift_data_forwards) // Leaves uninitialized data at the start, instead of the end
-				memcpy(&new[diff],arg,len_old);
+			{
+				error_simple(0,"Called torx_realloc on a non-TorX malloc, resulting in an illegal read and failure.");
+				breakpoint();
+				return NULL;
+			}
+			const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
+			if(len_new < len_old)
+			{ // Shrink
+				error_printf(0,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
+				if(shift_data_forwards) // Cause loss of start data, instead of end data.
+					memcpy(allocation,(char*)arg + diff,len_new);
+				else
+					memcpy(allocation,arg,len_new);
+			}
 			else
-				memcpy(allocation,arg,len_old);
-		}
+			{ // Expand
+				if(shift_data_forwards) // Leaves uninitialized data at the start, instead of the end
+					memcpy((char*)allocation + diff,arg,len_old);
+				else
+					memcpy(allocation,arg,len_old);
+			}
+		} // If zero is passed, simply free without complaining
 		torx_free(&arg);
 	}
 	else
@@ -1916,8 +1917,8 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 		message_prepared[base_message_len] = '\0';
 	if(date_len)
 	{
-		if(date_len && !signature_len)
-			error_simple(0,"You are trying to date a message without signing it. This is pointless.");
+	//	if(!signature_len)
+	//		error_simple(0,"You are trying to date a message without signing it. This is pointless.");
 		uint32_t trash = htobe32((uint32_t)time);
 		memcpy(&message_prepared[base_message_len + null_terminated_len],&trash,sizeof(trash));
 		trash = htobe32((uint32_t)nstime);
@@ -4385,7 +4386,7 @@ void initial(void)
 	// protocol, name, description,	null_terminated_len, date_len, signature_len, logged, notifiable, file_checksum, file_offer, exclusive_type, utf8, socket_swappable, stream XXX NOTE: cannot depreciate group mechanics, as stream is not suitable (stream deletes upon fail)
 	file_piece_p_iter = protocol_registration(ENUM_PROTOCOL_FILE_PIECE,"File Piece","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
+	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,1,1,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
 	protocol_registration(ENUM_PROTOCOL_FILE_INFO_REQUEST,"File Info Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_NON_DISCARDABLE);
 	protocol_registration(ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,"File Partial Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
@@ -4398,11 +4399,11 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_NON_DISCARDABLE); // TODO we store file path here, so if it doesn't save, we can't resume. This means accepting a file while a peer is offline is meaningless if they don't come online before we restart our client.
 	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
+	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,1,1,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-//	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0); // not in use
-	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,2*sizeof(uint32_t),crypto_sign_BYTES,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
+//	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0); // not in use
+	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,1,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,"UTF8 Text Private","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST,"Group Broadcast","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_FIRST,"Group Offer First","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
@@ -4412,9 +4413,9 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,"Group Offer Accept Reply","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,"Group Public Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
 	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
-	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
-	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,2*sizeof(uint32_t),crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
-	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,crypto_sign_BYTES,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
+	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
+	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
 
 	size_t len;
 	if(file_db_plaintext == NULL)
