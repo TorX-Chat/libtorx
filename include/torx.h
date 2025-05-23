@@ -884,7 +884,6 @@ void takedown_onion(const int peer_index,const int delete);
 void block_peer(const int n);
 
 /* client_init.c */
-void DisableNagle(const evutil_socket_t sendfd);
 int file_remove_offer(const int file_n,const int f,const int peer_n);
 int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
@@ -914,7 +913,7 @@ void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
 
 /* socks.c */
-evutil_socket_t remote_connect(const char *host, const char *port, struct addrinfo hints)__attribute__((warn_unused_result));
+void DisableNagle(const evutil_socket_t sendfd);
 evutil_socket_t socks_connect(const char *host, const char *port)__attribute__((warn_unused_result));
 
 /* cpucount.c */
@@ -973,7 +972,6 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 #include "../core/thread_safety.c"
 #include "../core/libbaseencode/base32.c"	// from libbaseencode. Issue: it sometimes outputs short output due to requiring null input.
 #include "../core/netcat-openbsd/socks.c"		// openbsd socks 
-#include "../core/netcat-openbsd/remote_connect.c"	// openbsd socks
 #include "../core/broadcast.c"
 #include "../core/libevent.c"			/* Libevent testing file */
 #include "../core/onion_gen.c"

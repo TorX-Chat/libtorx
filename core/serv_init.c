@@ -476,7 +476,7 @@ static inline void *send_init(void *arg)
 	{
 		const evutil_socket_t socket = socks_connect(suffixonion,port_string);
 		if(socket < 1)
-		{ // this causes blocking only until connected TODO endless segfaults here for unexplained reasons
+		{ // this causes blocking only until connected
 			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep. MUST be before the sendfd_connected check to give libevent time to close.
 			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 			if(sendfd_connected) // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
@@ -484,7 +484,6 @@ static inline void *send_init(void *arg)
 		} // TODO 2024/12/25 This happens when restarting Tor. Cannot make this fatal until we resolve it. Perhaps it shouldn't be fatal anyway. This may be a side effect of LEV_OPT_CLOSE_ON_FREE.
 		else
 		{
-			DisableNagle(socket);
 			evutil_make_socket_nonblocking(socket); // for libevent
 			setter(n,INT_MIN,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
 			error_simple(1,"Connected to existing peer.");

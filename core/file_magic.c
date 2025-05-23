@@ -594,7 +594,6 @@ static inline void *peer_init(void *arg)
 	memcpy(&buffer[0],&trash,sizeof(uint16_t));
 	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 	memcpy(&buffer[2+56],ed25519_pk,sizeof(ed25519_pk));
-	DisableNagle(proxyfd); // DO NOT REMOVE THIS it helps packets stay together
 	listen(SOCKET_CAST_OUT proxyfd,1); // Maximum one connect at a time
 	const ssize_t s = send(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // this is blocking
 	if(s < 0)
@@ -647,7 +646,7 @@ static inline void *peer_init(void *arg)
 		takedown_onion(peer_index,1); // delete our PEER XXX after load_onion, otherwise we'll have zeros in our new onion's peernick
 	}
 	if(evutil_closesocket(proxyfd) < 0)
-		error_simple(0,"Failed to close socket. 3414");
+		error_simple(0,"Failed to close socket in peer_init.");
 	torx_free((void*)&peernick);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));

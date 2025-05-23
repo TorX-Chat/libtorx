@@ -60,30 +60,6 @@ any form.
 severable if found in contradiction with the License or applicable law.
 */
 
-void DisableNagle(const evutil_socket_t sendfd)
-{ // Might slightly reduce latency. As far as we can see, it is having no effect at all, because the OS or something is still implementing Nagle.
-	const int on = 1;
-	if(setsockopt(SOCKET_CAST_OUT sendfd, IPPROTO_TCP, TCP_NODELAY, OPTVAL_CAST &on, sizeof(on)) == -1)
-	{
-		error_simple(0,"Error in DisableNagle setting TCP_NODELAY. Report this.");
-		perror("getsockopt");
-	}
-	const int sndbuf_size = SOCKET_SO_SNDBUF;
-	const int recvbuf_size = SOCKET_SO_RCVBUF;
-	if(sndbuf_size)
-		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &sndbuf_size, sizeof(sndbuf_size)) == -1)
-		{ // set socket recv buff size (operating system)
-			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
-			perror("getsockopt");
-		}
-	if(recvbuf_size)
-		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &recvbuf_size, sizeof(recvbuf_size)) == -1)
-		{ // set socket recv buff size (operating system)
-			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
-			perror("getsockopt");
-		}
-}
-
 static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const int f,const int peer_n,const int8_t fd_type)
 { // This is used on ALL TYPES of file transfer (group, PM, p2p).
 	const uint8_t peer_owner = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,owner));

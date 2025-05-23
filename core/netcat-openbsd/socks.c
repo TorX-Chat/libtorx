@@ -116,6 +116,39 @@ severable if found in contradiction with the License or applicable law.
  *(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  *THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* $OpenBSD: netcat.c,v 1.217 2020/02/12 14:46:36 schwarze Exp $ */
+/*
+ *Copyright (c) 2001 Eric Jackson <ericj@monkey.org>
+ *Copyright (c) 2015 Bob Beck.  All rights reserved.
+ *
+ *Redistribution and use in source and binary forms, with or without
+ *modification, are permitted provided that the following conditions
+ *are met:
+ *
+ *1. Redistributions of source code must retain the above copyright
+ *  notice, this list of conditions and the following disclaimer.
+ *2. Redistributions in binary form must reproduce the above copyright
+ *  notice, this list of conditions and the following disclaimer in the
+ *  documentation and/or other materials provided with the distribution.
+ *3. The name of the author may not be used to endorse or promote products
+ *  derived from this software without specific prior written permission.
+ *
+ *THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ *IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ *OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ *IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ *INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ *NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ *DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ *THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ *(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ *THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ *Re-written nc(1) for OpenBSD. Original implementation by
+ **Hobbit* <hobbit@avian.org>.
+ */
 
 #define SOCKS_V5	5
 #define SOCKS_NOAUTH	0
@@ -156,24 +189,124 @@ static inline const char *socks5_strerror(int e)
 	}
 } */
 
-static inline int decode_addrport(const char *h, const char *p, struct sockaddr *addr,const size_t addrlen,const int numeric)
+void DisableNagle(const evutil_socket_t sendfd)
+{ // Might slightly reduce latency. As far as we can see, it is having no effect at all, because the OS or something is still implementing Nagle.
+	const int on = 1;
+	if(setsockopt(SOCKET_CAST_OUT sendfd, IPPROTO_TCP, TCP_NODELAY, OPTVAL_CAST &on, sizeof(on)) == -1)
+	{
+		error_simple(0,"Error in DisableNagle setting TCP_NODELAY. Report this.");
+		perror("getsockopt");
+	}
+	const int sndbuf_size = SOCKET_SO_SNDBUF;
+	const int recvbuf_size = SOCKET_SO_RCVBUF;
+	if(sndbuf_size)
+		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &sndbuf_size, sizeof(sndbuf_size)) == -1)
+		{ // set socket recv buff size (operating system)
+			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
+			perror("getsockopt");
+		}
+	if(recvbuf_size)
+		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_RCVBUF, OPTVAL_CAST &recvbuf_size, sizeof(recvbuf_size)) == -1)
+		{ // set socket recv buff size (operating system)
+			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
+			perror("getsockopt");
+		}
+}
+
+static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr *name,const size_t namelen)
 {
+	#ifdef WIN32
+	WSAPOLLFD pfd = {0};
+	#else
+	struct pollfd pfd = {0};
+	#endif
+	int optval = 0;
+	int ret;
+	if((ret = connect(SOCKET_CAST_OUT proxyfd, name, (socklen_t)namelen)) != 0) // && errno == EINPROGRESS
+	{
+		pfd.fd = SOCKET_CAST_OUT proxyfd;
+		pfd.events = POLLOUT;
+		#ifdef WIN32
+		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT);
+		#else
+		ret = poll(&pfd, 1, MESSAGE_TIMEOUT);
+		#endif
+		if(ret == 1)
+		{
+			socklen_t optlen = sizeof(optval);
+			if((ret = getsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_ERROR, (char *) &optval, &optlen)) == 0) // This occurs on startup with optval == 0, if connections get attempted before sockets are up. Not a big deal. // errno = optval;
+				ret = -1; // 2023/08/13 put this instead of ret = optval == 0 ? 0 : -1;
+		}
+		else if(ret == 0)
+		{
+			error_simple(0, "timeout_connect error: timeout");
+			ret = -1;
+		}
+		else
+		{
+			error_simple(0, "timeout_connect error: poll failed");
+			ret = -1;
+		}
+	}
+	return ret;
+}
+
+static inline evutil_socket_t socks_establish(const char *host, const char *port, struct addrinfo hints)
+{
+	struct addrinfo *res, *res0 = {0};
+	evutil_socket_t proxyfd = -1;
+	const int error = getaddrinfo(host, port, &hints, &res0); // essentially DNS query of TOR_CTRL_IP
+	if(error)
+	{
+		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
+		return -1;
+	}
+	uint8_t success = 0;
+	for (res = res0; res; res = res->ai_next)
+	{ // XXX This for NOT a loop for our purposes because "DNS queries" of TOR_CTRL_IP return a maximum of one res. There will be no res->ai_next.
+		if((proxyfd = SOCKET_CAST_IN socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1)
+		{
+			error_simple(0,"socks_establish failed to bind.");
+			continue;
+		}
+		#ifndef WIN32
+		{
+			const int one = 1;
+			setsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_REUSEADDR, OPTVAL_CAST &one, sizeof(one));
+		}
+		#endif
+		if(timeout_connect(proxyfd, res->ai_addr, res->ai_addrlen) == 0)
+		{ // Connected
+			success = 1;
+			DisableNagle(proxyfd);
+			break;
+		}
+		if(evutil_closesocket(proxyfd) == -1)
+			error_simple(0,"Failed to close socket in socks_establish.");
+	}
+	freeaddrinfo(res0);
+	if(success)
+		return proxyfd;
+	return -1; // NOTE: This occurs when Tor isn't running yet or is being restarted
+}
+
+static inline int decode_addrport(const char *host, const char *port, struct sockaddr *addr,const size_t addrlen)
+{ // Decode address of TOR_CTRL_IP
 	struct addrinfo hints, *res = {0};
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = PF_INET;
 	hints.ai_flags = 0;
 	hints.ai_socktype = SOCK_STREAM;
-	int r = getaddrinfo(h, p, &hints, &res); // DNS lookup
-	if(r != 0) 
-	{ // Don't fatal when attempting to convert a numeric address
-		if(!numeric)
-			error_printf(0, "getaddrinfo(%s, %s): %s",h,p,gai_strerror(r)); // return value is const, cannot be freed, so leave it as is
+	const int error = getaddrinfo(host, port, &hints, &res); // essentially DNS query of TOR_CTRL_IP
+	if(error)
+	{
+		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
 		return -1;
 	}
 	if(addrlen < res->ai_addrlen) 
 	{
 		freeaddrinfo(res);
-		error_simple(0,"decode_addrport() internal error: addrlen < res->ai_addrlen");
+		error_simple(0,"decode_addrport internal error: addrlen < res->ai_addrlen");
 		return -1;
 	}
 	memcpy(addr, res->ai_addr, res->ai_addrlen);
@@ -181,11 +314,8 @@ static inline int decode_addrport(const char *h, const char *p, struct sockaddr 
 	return 0;
 }
 
-/*
- *ensure all of data on socket comes through. f==read || f==vwrite
- */
 static inline size_t atomicio(const short int pollin_or_pollout,const evutil_socket_t fd,void *_s,const size_t n)
-{
+{ // ensure all of data on socket comes through. f==read || f==vwrite
 	char *s = _s;
 	size_t pos = 0;
 	#ifdef WIN32
@@ -244,14 +374,15 @@ static inline size_t atomicio(const short int pollin_or_pollout,const evutil_soc
 
 evutil_socket_t socks_connect(const char *host, const char *port)
 {
+	size_t hlen;
 	if(!port || strtoll(port, NULL, 10) < 1025)
 	{
 		error_printf(0,"Attempted socks_connect to invalid port: %s. Report this.",port);
 		return -1;
 	}
-	if(!host || strlen(host) != (56+6))
-	{
-		error_simple(0,"Attempted socks_connect to null or invalid host. Report this.");
+	if(!host || (hlen = strlen(host)) != (56+6))
+	{ // includes .onion
+		error_simple(0,"Attempted socks_connect to null or invalid host. Should be 62 chars including domain. Report this.");
 		return -1;
 	}
 	char proxyport[6];
@@ -265,52 +396,29 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	hints.ai_socktype = SOCK_STREAM;
 	struct sockaddr_storage addr = {0};
 	struct sockaddr_in *in4 = (struct sockaddr_in *)&addr;
-	if(decode_addrport("127.0.0.1", port, (struct sockaddr *)&addr, sizeof(addr), 1) == -1)
-	{ // TorX Note: Unsure what this does here but it breaks if we remove it. TODO
+	if(decode_addrport(TOR_CTRL_IP, port, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+	{
 		error_simple(0,"Proxy port not specified to socks_connect");
 		return -1;
 	}
 	in_port_t serverport = in4->sin_port;
 	evutil_socket_t proxyfd;
-	if((proxyfd = remote_connect(TOR_CTRL_IP, proxyport, hints)) < 0) // Contains DNS lookup
+	if((proxyfd = socks_establish(TOR_CTRL_IP, proxyport, hints)) < 0)
 		return -1;
 //	addr.ss_family = 0;
-	unsigned char buf[1024] = {0};
+	unsigned char buf[5 + hlen + sizeof(serverport)]; // 5+62+2
 	buf[0] = SOCKS_V5;
 	buf[1] = 1;
 	buf[2] = SOCKS_NOAUTH;
-	size_t cnt = atomicio(POLLOUT, proxyfd, buf, 3);
-	if(cnt != 3)
-	{ // TODO 2023/05 Seems to occur when a tor instance is running but not being killed (ie, after a crash + deletion of pid file) TODO
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 124125"); // 2024/12/25 Occurs frequently on restart of Tor
-		else
-			error_simple(0,"Bingo. 124125");
-		return -1;
-	}
-	cnt = atomicio(POLLIN, proxyfd, buf, 2);
-	if(cnt != 2)
+	if(atomicio(POLLOUT, proxyfd, buf, 3) != 3 || atomicio(POLLIN, proxyfd, buf, 2) != 2)
 	{
-		error_simple(0,"socks_connect error: read failed1");
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 524255");
-		return -1;
+		error_simple(0,"socks_connect error: socket read or read failed");
+		goto error;
 	}
 	if(buf[1] == SOCKS_NOMETHOD)
 	{
-		error_simple(0,"socks_connect error: authentication failed1");
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 6222125");
-		return -1;
-	}
-	size_t wlen = 0;
-	size_t hlen = 0;
-	if((hlen = strlen(host)) != 62)
-	{
-		error_printf(0,"Host name wrong size to be onion: %lu. Should be 62 chars including domain. Something is very wrong.",hlen);
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 52115");
-		return -1; // THIS IS BAD.
+		error_simple(0,"socks_connect error: authentication failed");
+		goto error;
 	}
 	buf[0] = SOCKS_V5;
 	buf[1] = SOCKS_CONNECT;
@@ -318,41 +426,30 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	buf[3] = SOCKS_DOMAIN;
 	buf[4] = (unsigned char)hlen; // looks bad but should be ok due to prior check
 	memcpy(buf + 5, host, hlen);
-	memcpy(buf + 5 + hlen, &serverport, sizeof serverport);
-	wlen = 7 + hlen;
-	cnt = atomicio(POLLOUT, proxyfd, buf, wlen);
-	if(cnt != wlen)
+	memcpy(buf + 5 + hlen, &serverport, sizeof(serverport));
+	if(atomicio(POLLOUT, proxyfd, buf, sizeof(buf)) != sizeof(buf))
 	{
-		error_simple(0,"socks_connect error: write failed2");
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 3526323");
-		return -1;
+		error_simple(0,"socks_connect error: write failed");
+		goto error;
 	}
-	cnt = atomicio(POLLIN, proxyfd, buf, 4);
-	if(cnt != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed
-	{ // All good, we hit this all the time on shutdown
-	//	error_simple(0,"Read failed, probably due to tor being killed, or we are starting too fast.");
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 142535");
-		return -1;
-	}
-	if(buf[3] == SOCKS_IPV4)
+	if(atomicio(POLLIN, proxyfd, buf, 4) != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed.
 	{
-		cnt = atomicio(POLLIN, proxyfd, buf + 4, 6);
-		if(cnt != 6)
-		{ // Occured on 2024/02/21 when taking down a group peer.
-			error_simple(0,"read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
-			if(evutil_closesocket(proxyfd) == -1) // 2025/04/07 May have been the cause of a fatal error on Flutter (there was a memory error at the time though too, so maybe not): "fdsan: attempted to close file descriptor 136, expected to be unowned, actually owned by unique_fd 0xbcff8e96504c"
-				error_simple(0,"Failed to close socket. 95324"); // Occured on 2024/09/28 when repeatedly blocking/unblocking.
-			return -1;
-		}
+		error_simple(4,"Read failed, probably due to Tor being killed, or we are starting too fast. All good, we hit this all the time on shutdown.");
+		goto error;
 	}
-	else
+	if(buf[3] != SOCKS_IPV4)
 	{
 		error_simple(0, "Connection failed, unsupported address type. This should never occur."); // occured 2024/02/26 when deleting some group peers, occurs 2024/12/27 frequently, occurred 2025/01/16 when doing nothing, then reconnected just fine.
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket. 841231"); // Occured overnight on 2023/11/02
-		return -1;
+		goto error;
+	}
+	if(atomicio(POLLIN, proxyfd, buf + 4, 6) != 6)
+	{ // Occured on 2024/02/21 when taking down a group peer.
+		error_simple(0,"read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
+		goto error;
 	}
 	return proxyfd;
+	error: {}
+	if(evutil_closesocket(proxyfd) == -1)
+		error_simple(0,"Failed to close socket in socks_connect."); // Might already be closed?
+	return -1;
 }
