@@ -196,21 +196,23 @@ const char *torrc_content_default = "\
 # Log debug file tor-debug.log\n\
 ## CircuitsAvailableTimeout 86400\n\
 ## ConnectionPadding auto\n\
+## ReducedConnectionPadding 0\n\
 ## DormantTimeoutDisabledByIdleStreams 1\n\
 ## KeepalivePeriod 300\n\
-## ReducedConnectionPadding 0\n\
 ## DormantClientTimeout 1000 week\n\
 ## MaxCircuitDirtiness 1000 week\n\
+## FetchUselessDescriptors 1\n\
 "; // This default this all will be replaced by initial_keyed() if user has set something, or UI defaults
 const char *torrc_content_default_censored_region_part1 = "\
 ## Contents of this file are encrypted\n\
 ## CircuitsAvailableTimeout 86400\n\
 ## ConnectionPadding auto\n\
+## ReducedConnectionPadding 0\n\
 ## DormantTimeoutDisabledByIdleStreams 1\n\
 ## KeepalivePeriod 300\n\
-## ReducedConnectionPadding 0\n\
 ## DormantClientTimeout 1000 week\n\
 ## MaxCircuitDirtiness 1000 week\n\
+## FetchUselessDescriptors 1\n\
 UseBridges 1\n\
 UpdateBridgesFromAuthority 1\n\
 ClientTransportPlugin snowflake exec ";
@@ -3002,9 +3004,7 @@ printf("Checkpoint start_tor_threaded changing socks port\n");
 	char arg7[] = "1";
 	char arg8[] = "--ConstrainedSockSize"; // p3
 	char arg9[] = "--LongLivedPorts"; // p4
-	char arg10[] = "--FetchUselessDescriptors";
-	char arg11[] = "1";
-	char arg12[] = "--DataDirectory"; // tor_data_directory
+	char arg10[] = "--DataDirectory"; // tor_data_directory
 	char p1[21],p2[21],p3[21],p4[21];
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	snprintf(p1,sizeof(p1),"%u",tor_socks_port);
@@ -3028,13 +3028,13 @@ printf("Checkpoint start_tor_threaded changing socks port\n");
 	{
 		if(tor_data_directory)
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 		}
 		else
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,arg11,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 		}
@@ -3043,13 +3043,13 @@ printf("Checkpoint start_tor_threaded changing socks port\n");
 	{
 		if(tor_data_directory)
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,arg12,tor_data_directory,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,tor_data_directory,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 		}
 		else
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,arg11,NULL};
+			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,NULL};
 			pthread_rwlock_unlock(&mutex_global_variable);
 			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 		}
