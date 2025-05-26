@@ -75,10 +75,11 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 28 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 29 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
+void *ui_data = NULL; // XXX UI devs may put a struct on this to store data within the C backend, to avoid being lost during UI disposal. The library must NOT use it. XXX
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
 uint8_t v3auth_enabled = 1; // global default // 0 (off), 1 (BEST: derived from onion). NOT user toggleable. For discussion on the safety of using onion derived ed25519 keys and converting to x25519: https://crypto.stackexchange.com/questions/3260/using-same-keypair-for-diffie-hellman-and-signing/3311#3311
 uint8_t reduced_memory = 0; // NOTE: increasing decreases RAM requirements *and* CPU cycles. 0 = 1024mb, 1 = 256mb, 2 = 64mb. More ram allocated will make startup ever-so-slightly slower, but significantly increase security against bruteforcing. Recommended to leave as default (0, 1024mb), but could crash some devices.
