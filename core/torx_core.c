@@ -2856,7 +2856,7 @@ static inline void *tor_log_reader(void *arg)
 	#endif
 	while(handling_pipe)
 	{ // Casting as size_t is safe because > 0
-		data[len] = '\0';
+		data[len] = '\0'; // Ensure null termination. This is necessary. If issues continue, utilize utf8_valid too.
 		char *msg = NULL;
 		pthread_mutex_lock(&mutex_tor_pipe);
 		if(read_tor_pipe_cache)
@@ -2867,11 +2867,10 @@ static inline void *tor_log_reader(void *arg)
 		}
 		if(data[(size_t)len-1] == '\n')
 		{ // complete
-			data[(size_t)len] = '\0'; // Ensure null termination. This is necessary. If issues continue, utilize utf8_valid too.
 			if(read_tor_pipe_cache)
 			{
 				msg = read_tor_pipe_cache;
-				read_tor_pipe_cache = NULL;
+				read_tor_pipe_cache = NULL; // Very important!
 			}
 			else
 			{
@@ -2896,6 +2895,8 @@ static inline void *tor_log_reader(void *arg)
 			memcpy(read_tor_pipe_cache,data,(size_t)len+1); // includes copying null terminator
 			pthread_mutex_unlock(&mutex_tor_pipe);
 		}
+		else // incomplete, existing cache
+			pthread_mutex_unlock(&mutex_tor_pipe);
 		sodium_memzero(data,(size_t)len);
 	}
 	error_simple(0,"Exiting tor_log_reader, probably because Tor died or was restarted.");
