@@ -255,7 +255,7 @@ static inline evutil_socket_t socks_establish(const char *host, const char *port
 {
 	struct addrinfo *res, *res0 = {0};
 	evutil_socket_t proxyfd = -1;
-	const int error = getaddrinfo(host, port, &hints, &res0); // essentially DNS query of TOR_CTRL_IP
+	const int error = getaddrinfo(host, port, &hints, &res0); // essentially DNS query of TOR_SOCKS_IP
 	if(error)
 	{
 		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
@@ -263,7 +263,7 @@ static inline evutil_socket_t socks_establish(const char *host, const char *port
 	}
 	uint8_t success = 0;
 	for (res = res0; res; res = res->ai_next)
-	{ // XXX This for NOT a loop for our purposes because "DNS queries" of TOR_CTRL_IP return a maximum of one res. There will be no res->ai_next.
+	{ // XXX This for NOT a loop for our purposes because "DNS queries" of TOR_SOCKS_IP return a maximum of one res. There will be no res->ai_next.
 		if((proxyfd = SOCKET_CAST_IN socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1)
 		{
 			error_simple(0,"socks_establish failed to bind.");
@@ -291,13 +291,13 @@ static inline evutil_socket_t socks_establish(const char *host, const char *port
 }
 
 static inline int decode_addrport(const char *host, const char *port, struct sockaddr *addr,const size_t addrlen)
-{ // Decode address of TOR_CTRL_IP
+{ // Decode address of TOR_SOCKS_IP
 	struct addrinfo hints, *res = {0};
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = PF_INET;
 	hints.ai_flags = 0;
 	hints.ai_socktype = SOCK_STREAM;
-	const int error = getaddrinfo(host, port, &hints, &res); // essentially DNS query of TOR_CTRL_IP
+	const int error = getaddrinfo(host, port, &hints, &res); // essentially DNS query of TOR_SOCKS_IP
 	if(error)
 	{
 		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
@@ -386,9 +386,7 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 		return -1;
 	}
 	char proxyport[6];
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	snprintf(proxyport,sizeof(proxyport),"%d",tor_socks_port);
-	pthread_rwlock_unlock(&mutex_global_variable);
+	snprintf(proxyport,sizeof(proxyport),"%d",threadsafe_read_uint16(&mutex_global_variable,&tor_socks_port));
 	struct addrinfo hints = {0};
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = PF_INET;
@@ -396,14 +394,14 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	hints.ai_socktype = SOCK_STREAM;
 	struct sockaddr_storage addr = {0};
 	struct sockaddr_in *in4 = (struct sockaddr_in *)&addr;
-	if(decode_addrport(TOR_CTRL_IP, port, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+	if(decode_addrport(TOR_SOCKS_IP, port, (struct sockaddr *)&addr, sizeof(addr)) == -1)
 	{
 		error_simple(0,"Proxy port not specified to socks_connect");
 		return -1;
 	}
 	in_port_t serverport = in4->sin_port;
 	evutil_socket_t proxyfd;
-	if((proxyfd = socks_establish(TOR_CTRL_IP, proxyport, hints)) < 0)
+	if((proxyfd = socks_establish(TOR_SOCKS_IP, proxyport, hints)) < 0)
 		return -1;
 //	addr.ss_family = 0;
 	unsigned char buf[5 + hlen + sizeof(serverport)]; // 5+62+2
@@ -412,12 +410,12 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	buf[2] = SOCKS_NOAUTH;
 	if(atomicio(POLLOUT, proxyfd, buf, 3) != 3 || atomicio(POLLIN, proxyfd, buf, 2) != 2)
 	{
-		error_simple(0,"socks_connect error: socket read or read failed");
+		error_simple(0,"socks_connect read or write failed");
 		goto error;
 	}
 	if(buf[1] == SOCKS_NOMETHOD)
 	{
-		error_simple(0,"socks_connect error: authentication failed");
+		error_simple(0,"socks_connect authentication failed");
 		goto error;
 	}
 	buf[0] = SOCKS_V5;
@@ -429,12 +427,12 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	memcpy(buf + 5 + hlen, &serverport, sizeof(serverport));
 	if(atomicio(POLLOUT, proxyfd, buf, sizeof(buf)) != sizeof(buf))
 	{
-		error_simple(0,"socks_connect error: write failed");
+		error_simple(0,"socks_connect write failed");
 		goto error;
 	}
-	if(atomicio(POLLIN, proxyfd, buf, 4) != 4 || buf[1] != 0) // XXX XXX THIS TRIGGERS WHEN tor_pid is killed.
+	if(atomicio(POLLIN, proxyfd, buf, 4) != 4 || buf[1] != 0)
 	{
-		error_simple(4,"Read failed, probably due to Tor being killed, or we are starting too fast. All good, we hit this all the time on shutdown.");
+		error_simple(5,"Read failed. Could be a 120 second timeout, or Tor has been restarted / shutdown"); // or we attempted a connection before Tor came up.
 		goto error;
 	}
 	if(buf[3] != SOCKS_IPV4)
@@ -444,7 +442,7 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	}
 	if(atomicio(POLLIN, proxyfd, buf + 4, 6) != 6)
 	{ // Occured on 2024/02/21 when taking down a group peer.
-		error_simple(0,"read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
+		error_simple(0,"Read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
 		goto error;
 	}
 	return proxyfd;

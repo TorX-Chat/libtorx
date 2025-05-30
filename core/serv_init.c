@@ -154,7 +154,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				peer[n].message[i].fd_type = fd_type;
 			peer[n].socket_utilized[fd_type] = i; // XXX TODO AFTER THIS POINT, MUST USE goto error
 			torx_unlock(n) // 🟩🟩🟩
-			error_printf(0,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d, %s"RESET,n,fd_type,i,name);
+			error_printf(4,WHITE"send_prep1 peer[%d].socket_utilized[%d] = %d, %s"RESET,n,fd_type,i,name);
 		}
 		else
 		{ // Sanity check for continuing a partially sent message
@@ -347,7 +347,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		torx_unlock(n) // 🟩🟩🟩
 		if(socket_utilized == i)
 		{
-			error_printf(0,WHITE"send_prep6 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
+			error_printf(4,WHITE"send_prep2 peer[%d].socket_utilized[%d] = INT_MIN"RESET,n,fd_type);
 			torx_write(n) // 🟥🟥🟥
 			peer[n].socket_utilized[fd_type] = INT_MIN;
 			torx_unlock(n) // 🟩🟩🟩
@@ -399,9 +399,9 @@ static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey
 	char *rbuff = tor_call(apibuffer);
 	torx_free((void*)&rbuff);
 	sodium_memzero(apibuffer,sizeof(apibuffer));
-	if(local_debug > 2)
+	if(local_debug > 4)
 	{
-		error_printf(3,"Outgoing Auth: %s",p=b64_encode(ed25519_sk,32));
+		error_printf(5,"Outgoing Auth: %s",p=b64_encode(ed25519_sk,32));
 		torx_free((void*)&p);
 	}
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
@@ -486,7 +486,7 @@ static inline void *send_init(void *arg)
 		{
 			evutil_make_socket_nonblocking(socket); // for libevent
 			setter(n,INT_MIN,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
-			error_simple(1,"Connected to existing peer.");
+			error_printf(1,"Connected to existing peer n=%d",n);
 			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
 			initialize_event_strc(event_strc,n,owner,1,socket);
 			torx_events(event_strc); // NOTE: deleted peers will come out of here with owner "0000"
@@ -499,9 +499,7 @@ static inline void *send_init(void *arg)
 }
 
 static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uint16_t tport,const int maxstreams,...)
-{ /* Takes a linked list of v3authkeys and applies them to onion. Ready for groupchats */ // we have to detach because we dont use one single tor_call() control connection
-// TODO 2022, not using detach / single control connection, is why we have to harden access to control port. If we use a single control connection, we can perhaps do API calls over insecure controlport (ie, we can use an existing Orbot instance, but we must "TAKEOWNERSHIP" to shutdown when control connection closes)
-//	note: orbot would require custom configuration for controlport access, so either we use their intents api or we require manual controlport configuration, or we run our own tor
+{ // Takes a linked list of v3authkeys and prepares a string for tor_call to apply them to an onion
 	char *string = {0};
 	char *buffer = torx_secure_malloc(4096); // TODO can eliminate malloc by eliminating this function // TODO could be subject to overflow here, if we used this function with a long linked list. Should keep track to prevent.
 	int auths = 0;
@@ -513,7 +511,7 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 		if((string = va_arg(va_args,char*)) == NULL || (len = strlen(string)) == 0)
 		{ // Must be null terminated
 			if(!auths)
-				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
+				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
 			strcat(buffer,"\n");
 			break; // End of list, none or no more auths to add in LL
 		}
@@ -525,7 +523,7 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 			else if(len != 52) // We now have tests to prevent this from occuring. It occured ocassionally either for natural reasons, a problem with our x2 conversion, or libsodium issue
 				error_printf(0,"Wrong length ClientAuthv3: %lu. This onion will not function.",len);
 			if(auths == 1)
-				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,Detach,V3Auth MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
+				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,V3Auth MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
 			strcat(buffer," ClientAuthv3=");
 			strcat(buffer,string);
 		}
@@ -567,7 +565,7 @@ int add_onion_call(const int n)
 				return -1;
 			}
 			sodium_memzero(x25519_pk,sizeof(x25519_pk));
-			error_printf(3,"Incoming Auth: %s",incomingauthkey);
+			error_printf(5,"Incoming Auth: %s",incomingauthkey);
 		}
 		else if(local_v3auth_enabled)
 			error_simple(0,"Warning: Peer does not support v3auth. Tell peer to upgrade Tor to >0.4.6.1.");
@@ -583,13 +581,10 @@ int add_onion_call(const int n)
 	torx_free((void*)&apibuffer);
 	int failed_tor_call;
 	if(rbuff && !strncmp(rbuff,"250",3))
-	{
-		error_simple(4,"Received success code from Tor when calling ADD_ONION.");
 		failed_tor_call = 0;
-	}
 	else
 	{
-		error_simple(0,"Received FAILURE code from Tor when calling ADD_ONION.");
+		error_printf(0,"Received FAILURE code from Tor when calling ADD_ONION. Coding error. Report this.");
 		failed_tor_call = 1;
 	}
 	torx_free((void*)&rbuff);
@@ -648,7 +643,7 @@ void load_onion(const int n)
 		DisableNagle(sock);
 		evutil_make_socket_nonblocking(sock); // for libevent
 		serv_addr.sin_family = AF_INET;
-		serv_addr.sin_addr.s_addr = inet_addr(TOR_CTRL_IP); // IP associated with tport, not TOR_CTRL_IP
+		serv_addr.sin_addr.s_addr = inet_addr(TOR_CTRL_IP); // IP associated with tport, not necessarily TOR_CTRL_IP
 		serv_addr.sin_port = htobe16(tport);
 		if(bind(SOCKET_CAST_OUT sock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
 		{

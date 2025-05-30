@@ -67,7 +67,6 @@ XXX Known Bug List XXX
 	* change_password is not possible to change to empty password, only from empty password
 	* /accept <b2sum> // on our OWN OFFER seems to have the result of "finished transfer"
 	* MLF1 loads up peer[n].file[f]. without regard to whether the file has already completed transfer. It needs a :done: :canc: etc to interpret status.
-	* takedown_onion does not take down detached onions
 	getinfo onions/detached shows nothing. fuck. we might need to run all commands from a single levent control connection
 
 XXX To Do List XXX
@@ -1081,7 +1080,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				}
 				else
 				{
-					printf("Checkpoint VERIFIED checksum n=%d f=%d peer_n=%d sec=%d\n",n,f,peer_n,section);
+					error_printf(1,"Successfully verified checksum n=%d f=%d peer_n=%d sec=%d",n,f,peer_n,section);
 					struct file_request_strc file_request_strc = {0};
 					file_request_strc.n = n; // potentially group_n. THIS IS NOT target_n
 					file_request_strc.f = f;
@@ -1255,9 +1254,8 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		char onion[56+1];
 		getter_array(&onion,sizeof(onion),n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		char apibuffer[512];
-		snprintf(apibuffer,sizeof(apibuffer),"del_onion %s\n",onion);
+		snprintf(apibuffer,sizeof(apibuffer),"del_onion %s\n",onion); // NOTE: This will NOT close existing connections.
 		sodium_memzero(onion,sizeof(onion));
-	//	printf("Checkpoint tor_call takedown_onion\n");
 		char *rbuff = tor_call(apibuffer);
 		torx_free((void*)&rbuff);
 		sodium_memzero(apibuffer,sizeof(apibuffer));

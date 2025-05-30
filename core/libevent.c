@@ -485,8 +485,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							return drained; // must return immediately after event_base_loopexit
 						}
 					}
-					error_printf(0,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
-					error_printf(0,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
+					error_printf(4,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
+					error_printf(2,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
 					torx_write(event_strc->n) // 🟥🟥🟥
 					peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
 					torx_unlock(event_strc->n) // 🟩🟩🟩
@@ -574,6 +574,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 		}
 		if(event_strc->owner == ENUM_OWNER_SING)
 		{
+			error_simple(2,"Disconnecting forever a SING after a write.");
 			disconnect_forever(event_strc,1); // XXX Run last and return immediately after, will exit event base
 			return;
 		}
@@ -595,7 +596,6 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	if(event_strc->killed)
 		return;
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
-	error_printf(0,YELLOW"Close_conn: n=%d fd_type=%d owner=%u status=%u"RESET,event_strc->n,event_strc->fd_type,event_strc->owner,status);
 	if(events & BEV_EVENT_ERROR)
 	{ // 2024/02/20 happened during outbound file transfer when peer (or we) went offline
 		error_simple(0,"Error from bufferevent caused connection closure."); // 2023/10/30 occurs when a peer went offline during file transfer
@@ -607,7 +607,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		error_simple(2,"Some unknown type of unknown close_conn occured.");
 	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_MULT) // not GROUP_CTRL because CTRL never goes offline
 	{
-		error_simple(2,"Connection closed by peer.");
+		error_printf(2,"Connection closed by peer n=%d fd_type=%d owner=%u status=%u",event_strc->n,event_strc->fd_type,event_strc->owner,status);
 		peer_offline(event_strc); // internal callback
 	}
 	else if(event_strc->owner == ENUM_OWNER_SING) // NOTE: this doesnt trigger for successful handshakes because .owner becomes 0000
@@ -622,7 +622,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		const size_t to_drain = evbuffer_get_length(output);
 		if(to_drain)
 		{ // Note: there is an infinately small chance of a race condition by calling packet_removal before ev_buffer_drain. Unavoidable unless we use evbuffer locks.
-			printf("Checkpoint draining up to n=%d bytes=%zu\n",event_strc->n,to_drain);
+			error_printf(4,"Draining up to n=%d bytes=%zu",event_strc->n,to_drain);
 			const size_t to_actually_drain = packet_removal(event_strc,to_drain);
 			evbuffer_drain(output,to_actually_drain); // do not pass to_drain because one packet can remain on buffer for ??? reasons
 		}
@@ -889,7 +889,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						error_simple(0,"Group message received on non-group. Buggy peer or coding error. Report this.");
 						continue;
 					}
-					error_printf(0,CYAN"<--IN%d %s %u"RESET,event_strc->fd_type,name,event_strc->untrusted_message_len);
+					error_printf(2,CYAN"<--IN%d %s %u"RESET,event_strc->fd_type,name,event_strc->untrusted_message_len);
 					if(signature_len)
 					{ // XXX Signed and Signed Date messages only
 						if(event_strc->owner == ENUM_OWNER_GROUP_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER) // XXX adding GROUP_PEER without testing for full duplex
@@ -946,7 +946,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								const uint32_t g_peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
 								if(peer_g_peercount < g_peercount)
 								{ // Peer has less in their list than us, lets give them our list
-									error_printf(0,"Sending peerlist because %u < %u\n",peer_g_peercount,g_peercount);
+									error_printf(2,"Sending peerlist because %u < %u",peer_g_peercount,g_peercount);
 									if(event_strc->invite_required)
 										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PRIVATE_LEN);
 									else
@@ -1476,6 +1476,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			sodium_memzero(read_buffer,packet_len);
 		else
 			sodium_memzero(read_buffer,sizeof(read_buffer));
+		error_printf(2,"Disconnecting n=%d due to error in read_conn",event_strc->n);
 		disconnect(event_strc);
 	}
 	else if(event_strc->owner == ENUM_OWNER_SING || event_strc->owner == ENUM_OWNER_MULT)
@@ -1579,6 +1580,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	{
 		if(event_strc->owner == ENUM_OWNER_SING)
 			return; // We don't want more than one person trying to spoil our onion at a time. It could cause issues when freeing ctx in close_conn.
+		error_printf(2,"Disconnecting due to existing bev_recv in accept_conn n=%d",event_strc->n);
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	}
 	struct event_base *base = evconnlistener_get_base(listener);
@@ -1599,7 +1601,7 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 
 	if(event_strc->authenticated) // This will only trigger on _CTRL, not _GROUP_CTRL or _SING/_MULT
 	{ // MUST check if it is authenticated, otherwise we're permitting sends to an unknown peer (relevant to CTRL without v3auth)
-		error_simple(2,"Existing Peer has connected to us.");
+		error_printf(2,"Existing peer has connected to us n=%d",event_strc->n);
 		const uint8_t recvfd_connected = 1;
 		setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 		begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
@@ -1724,6 +1726,8 @@ void *torx_events(void *ctx)
 				const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 				error_printf(0,"Recv ctrl got out of base. It will die but this is unexpected. NOTE: fd_type recv should not get out unless deleted or blocked. sendfd: %d recvfd: %d owner: %u fd_type: %d",sendfd_connected,recvfd_connected,event_strc->owner,event_strc->fd_type); 	// NOTICE: ONLY SING AND PIPEMODE WILL EVER GET OUT OF BASE edit: i think no one gets out
 			}
+			else
+				error_printf(2,"Disconnected in torx_events for reasons other than killcode n=%d",event_strc->n);
 		}
 		break;
 	}

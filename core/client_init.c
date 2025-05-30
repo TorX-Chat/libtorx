@@ -478,7 +478,7 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 		}
 		if(send_prep(target_list[cycle],-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE) // NOT else if
 		{ // delete unsuccessful discardable stream message
-			printf("Checkpoint disgarding stream: n=%d i=%d fd_type=%d protocol=%u\n",target_list[cycle],iiii,fd_type,protocol);
+			error_printf(4,"Disgarding stream n=%d i=%d fd_type=%d protocol=%u",target_list[cycle],iiii,fd_type,protocol);
 			torx_write(target_list[cycle]) // 🟥🟥🟥
 			const int shrinkage = zero_i(target_list[cycle],iiii);
 			torx_unlock(target_list[cycle]) // 🟩🟩🟩
@@ -761,7 +761,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 						if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
 						{
 							if(relevant_split_status_fd > -1)
-								printf("Checkpoint select_peer existing: n=%d fd=%d sec=%d %lu of %lu\n",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
+								error_printf(5,"select_peer existing: n=%d fd=%d sec=%d %lu of %lu",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
 							continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
 						}
 						if(offerer_progress >= target_progress)
@@ -796,7 +796,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				error_simple(0,"calculate_file_request_start_end failed with a group_ctrl. Coding error. Report this."); // possible race if this occurs?
 				return -1;
 			}
-			printf(BRIGHT_GREEN"Checkpoint select_peer n=%d f=%d target_o=%d splits=%u section=%d start=%lu end=%lu\n"RESET,n,f,target_o,splits,file_request_strc.section,file_request_strc.start,file_request_strc.end);
+			error_printf(4,"select_peer n=%d f=%d target_o=%d splits=%u section=%d start=%lu end=%lu",n,f,target_o,splits,file_request_strc.section,file_request_strc.start,file_request_strc.end);
 		}
 	}
 	else

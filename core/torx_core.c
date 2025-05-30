@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 29 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 30 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -97,17 +97,19 @@ char control_password_clear[32+1] = {0}; // MUST be \0 initialized. Is cleared o
 char control_password_hash[61+1] = {0}; // MUST be \0 initialized. // does not need rwlock because only modified once // correct length.  Is cleared on shutdown in case it was set by UI to something custom.
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
 char *default_peernick = {0}; // default is set in initial() or after initial() by UI. Do not null.
-uint16_t tor_ctrl_port = 0;
-uint16_t tor_socks_port = 0;
+evutil_socket_t tor_ctrl_socket = {0}; // for tor_call()
+uint16_t tor_socks_port = 0; // Must initialize to 0 rather than PORT_DEFAULT_SOCKS to allow setting by UI for system tor usage
+uint16_t tor_ctrl_port = 0; // Must initialize to 0 rather than PORT_DEFAULT_CONTROL to allow setting by UI for system tor usage
 uint32_t tor_version[4] = {0};
 uint8_t sodium_initialized = 0; // Do not add a rwlock. Must be fast. Added to prevent SEVERE memory errors that are incredibly difficult to diagnose.
 uint8_t currently_changing_pass = 0; // TODO consider using mutex_sql_encrypted instead
 uint8_t first_run = 0; // TODO use for setting default torrc (ie, ask user). do not manually change this. This works and can be used as the basis for stuff (ex: an introduction or opening help in a GUI client)
 uint8_t destroy_input = 0; // 0 no, 1 yes. Destroy custom input file.
-uint8_t tor_running = 0; // TODO utilize this in UI somehow (but doing so requires wrapping access with rwlock)
+uint8_t tor_running = 0; // For UI, it's probably better to use bootstrapping % to determine. This is for library usage to determine if Tor is responsive.
+uint8_t using_system_tor = 0; // Trigger this by setting a tor_ctrl_port to a valid control port and optionally set control_password_clear
 uint8_t lockout = 0;
 uint8_t keyed = 0; // whether initial_keyed has run. better than checking !torrc_content or !tor_ctrl_port
-pid_t tor_pid = -1;
+pid_t tor_pid = 0; // Do not use this to check if Tor is running because this is not set when using system tor. Use tor_running.
 int highest_ever_o = 0;
 int file_piece_p_iter = -1; // save some CPU cycles by setting this on startup.
 uint8_t messages_loaded = 0; // easy way to check whether messages are already loaded, to prevent re-loading when re-running "load_onions" on restarting tor
@@ -116,10 +118,8 @@ int max_group = 0; // Should not be used except to constrain expand_message_stru
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
 time_t startup_time = 0;
 #ifdef WIN32
-HANDLE tor_fd_stdout = {0};
 const char platform_slash = '\\';
 #else
-int tor_fd_stdout = -1;
 const char platform_slash = '/';
 #endif
 
@@ -171,6 +171,7 @@ pthread_mutex_t mutex_onion = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_closing = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_message_loading = PTHREAD_MUTEX_INITIALIZER; // may be necessary in rare cases where Tor for some reason restarts on startup; related to messages_loaded
+pthread_mutex_t mutex_tor_ctrl = PTHREAD_MUTEX_INITIALIZER;
 
 /* 2024 rwmutex */
 pthread_rwlock_t mutex_debug_level = PTHREAD_RWLOCK_INITIALIZER;
@@ -978,7 +979,7 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 			const size_t len_old = *((uint32_t *)real_ptr);
 			if(len_old == len_new)
 			{ // Not an error, just dumb coding resulted in non-op. Should avoid, but not at all harmful.
-				error_simple(0,"Called torx_realloc with an unchanged length. Non-op occured. Carry on.");
+				error_simple(4,"Called torx_realloc with an unchanged length. Non-op occured. Carry on.");
 				return arg;
 			}
 			const uint32_t type = *((uint32_t *)real_ptr+1);
@@ -995,7 +996,7 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 			const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
 			if(len_new < len_old)
 			{ // Shrink
-				error_printf(0,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
+				error_printf(2,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
 				if(shift_data_forwards) // Cause loss of start data, instead of end data.
 					memcpy(allocation,(char*)arg + diff,len_new);
 				else
@@ -2142,6 +2143,11 @@ static inline int pid_read(void)
 
 void torrc_save(const char *torrc_content_local)
 { // Pass null or "" to reset defaults
+	if(threadsafe_read_uint8(&mutex_global_variable,&using_system_tor))
+	{ // In *theory* we could check config-can-saveconf and then make saveconf calls for every setting, but that's out of scope.
+		error_simple(0,"Cannot save torrc while using system Tor.");
+		return;
+	}
 	size_t len;
 	char *torrc_content_final;
 	uint8_t set_default = 0;
@@ -2176,7 +2182,7 @@ void torrc_save(const char *torrc_content_local)
 	torx_free((void*)&torrc_content);
 	torrc_content = torrc_content_final;
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(threadsafe_read_int8(&mutex_global_variable,(int8_t*)&keyed))
+	if(threadsafe_read_uint8(&mutex_global_variable,&keyed))
 	{ // checking if this was called as startup (unkeyed) or manually (keyed)
 		if(set_default)
 			sql_delete_setting(0,-1,"torrc");
@@ -2302,7 +2308,7 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	{ // TODO Maybe have this not occur on shutdown (BUT, it should happen when calling zero_n, to allow for a re-initialized n suitable for re-use)
 		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
 		const size_t current_shift = (size_t)abs(shrinkage);
-		printf("Experimental rollback functionality occuring! n=%d min_i=%d max_i=%d pointer_location=%d shrinkage=%d\n",n,peer[n].min_i,peer[n].max_i,pointer_location,shrinkage);
+		error_printf(2,"Experimental rollback functionality occuring! n=%d min_i=%d max_i=%d pointer_location=%d shrinkage=%d\n",n,peer[n].min_i,peer[n].max_i,pointer_location,shrinkage);
 		if(shrinkage > 0) // We shift everything forward
 			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size - sizeof(struct message_list) *current_shift,1) - pointer_location - current_shift;
 		else
@@ -2692,7 +2698,12 @@ static inline int hash_password_internal(const char *password)
 }
 
 static inline void hash_password(void)
-{ // Generate Tor Control Password, if not already existing
+{ // Generate Tor Control Password, if not already existing. Do not overwrite.
+	if(threadsafe_read_uint8(&mutex_global_variable,&using_system_tor))
+	{ // Sanity check
+		error_simple(0,"Hash password cannot be called while running system Tor because it could overwrite a control_password_clear. Coding error. Report this.");
+		return;
+	}
 	pthread_rwlock_wrlock(&mutex_global_variable);
 	if(is_null(control_password_hash,sizeof(control_password_hash)))
 	{
@@ -2713,54 +2724,82 @@ static inline void hash_password(void)
 	pthread_rwlock_unlock(&mutex_global_variable);
 }
 
-static inline int get_tor_version(void)
-{ /* Sets the tor_version, decides v3auth_enabled */
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	const char *tor_location_local_pointer = tor_location;
-	pthread_rwlock_unlock(&mutex_global_variable);
-	if(!tor_location_local_pointer)
+static inline int extract_version(uint32_t output[4],const char *input)
+{ // Extract version number from any null terminated string
+	if(!input || !output)
 		return -1;
-	char tor_location_local[PATH_MAX];
+	for(const char *p = input; *p; p++)
+		if(*p >= '0' && *p <= '9')
+		{
+			uint32_t one,two,three,four;
+			if(sscanf(p,"%u.%u.%u.%u",&one,&two,&three,&four) == 4)
+			{ // Success
+				output[0] = one;
+				output[1] = two;
+				output[2] = three;
+				output[3] = four;
+				return 0;
+			}
+		}
+	return -1; // Not found
+}
+
+static inline int get_tor_version(void)
+{ // Sets the tor_version, decides v3auth_enabled. Utilizes run_binary or tor_call, as appropriate.
+	char *ret = NULL;
+	char tor_location_local[PATH_MAX]; // not sensitive
 	pthread_rwlock_rdlock(&mutex_global_variable);
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+	uint8_t using_system_tor_local = (tor_ctrl_port && !tor_pid);
 	pthread_rwlock_unlock(&mutex_global_variable);
-	char arg1[] = "--quiet";
-	char arg2[] = "--version";
-	char* const args_cmd[] = {tor_location_local,arg1,arg2,NULL};
-	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
-	size_t len = 0;
-	if(ret)
-		len = strlen(ret);
-	if(len < 8)
+	if(using_system_tor_local)
+		ret = tor_call("getinfo version\n");
+	if(!ret && tor_location_local[0] != '\0') // NOT else
+	{ // Unless using system Tor, prefer to make a binary call if the binary is available so that this function can be called successfully before Tor is started.
+		if(using_system_tor_local)
+		{
+			error_simple(0,"System Tor is not working, despite being configured. Falling back to binary.");
+			using_system_tor_local = 0;
+		}
+		char arg1[] = "--quiet";
+		char arg2[] = "--version";
+		char* const args_cmd[] = {tor_location_local,arg1,arg2,NULL};
+		ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
+	}
+	else if(!ret)
 	{
-		error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
-		pthread_rwlock_wrlock(&mutex_global_variable);
-		torx_free((void*)&tor_location);
-		pthread_rwlock_unlock(&mutex_global_variable);
-		torx_free((void*)&ret);
+		error_simple(0,"No system Tor functioning and no binary available.");
 		return -1;
+	}
+	pthread_rwlock_wrlock(&mutex_global_variable);
+	using_system_tor = using_system_tor_local;
+	pthread_rwlock_unlock(&mutex_global_variable);
+	const int failed = extract_version(tor_version,ret);
+	torx_free((void*)&ret);
+	if(failed)
+	{
+		if(!using_system_tor_local && tor_location_local[0] != '\0')
+		{
+			error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
+			pthread_rwlock_wrlock(&mutex_global_variable);
+			torx_free((void*)&tor_location);
+			pthread_rwlock_unlock(&mutex_global_variable);
+		}
 	}
 	else
 	{
-		uint32_t one,two,three,four;
-		sscanf(ret,"%*s %*s %u.%u.%u.%u",&one,&two,&three,&four);
-		error_printf(0,"Tor Version: %u.%u.%u.%u",one,two,three,four);
+		error_printf(0,"Tor Version: %u.%u.%u.%u",tor_version[0],tor_version[1],tor_version[2],tor_version[3]);
 		uint8_t local_v3auth_enabled;
-		if((one > 0 || two > 4 ) || (two == 4 && three > 6) || (two == 4 && three == 6 && four > 0 ))
+		if((tor_version[0] > 0 || tor_version[1] > 4 ) || (tor_version[1] == 4 && tor_version[2] > 6) || (tor_version[1] == 4 && tor_version[2] == 6 && tor_version[3] > 0 ))
 			local_v3auth_enabled = 1; // tor version >0.4.6.0
 		else // Disable v3auth if tor version <0.4.6.1
 			local_v3auth_enabled = 0;
 		error_simple(0,local_v3auth_enabled ? "V3Auth is enabled by default." : "V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
 		pthread_rwlock_wrlock(&mutex_global_variable);
 		v3auth_enabled = local_v3auth_enabled;
-		tor_version[0] = one;
-		tor_version[1] = two;
-		tor_version[2] = three;
-		tor_version[3] = four;
 		pthread_rwlock_unlock(&mutex_global_variable);
-		torx_free((void*)&ret);
-		return 0;
 	}
+	return failed;
 }
 
 uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is available (currently unused functionality, but works)
@@ -2795,7 +2834,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 		else if(arg)
 		{ // passed port not available
 			port = 0;
-			error_printf(2,"Port %u not available. Returning port %u (error).",arg,port);
+			error_printf(5,"Port %u not available. Returning port %u (error).",arg,port);
 			if(evutil_closesocket(socket_rand) < 0)
 				error_simple(0,"Unlikely socket failed to close error.2");
 			break;
@@ -2899,7 +2938,12 @@ static inline void *tor_log_reader(void *arg)
 			pthread_mutex_unlock(&mutex_tor_pipe);
 		sodium_memzero(data,(size_t)len);
 	}
-	error_simple(0,"Exiting tor_log_reader, probably because Tor died or was restarted.");
+	#ifdef WIN32
+	CloseHandle(fd_stdout);
+	#else
+	close(fd_stdout);
+	#endif
+	error_simple(0,"Exiting Tor log reader, probably because Tor died or was restarted.");
 	return 0;
 }
 
@@ -2922,161 +2966,273 @@ char *replace_substring(const char *source,const char *search,const char *replac
 	return new;
 }
 
+static inline uint16_t extract_port(const char *input,const char *type)
+{ // Get a port from getinfo config-text. Ex: SocksPort, DNSPort, TransPort, etc. TODO Does not account for the possibility that the first port we find may be listening on non-localhost.
+	if(!input || !type)
+		return 0;
+	const size_t type_len = strlen(type);
+	const char *p = input;
+	while(*p)
+	{
+		if(!strncmp(p,type,type_len) && p[type_len] == ' ')
+		{
+			uint16_t last_num = 0;
+			const char *line_end = p;
+			while (*line_end && *line_end != '\n')
+				line_end++; // Find end of this line
+			for(const char *scan = p ; scan < line_end ; )
+			{ // Scan for numbers within this line. Skip non-digit characters.
+				while (scan < line_end && !(*scan >= '0' && *scan <= '9'))
+					scan++;
+				if (scan >= line_end)
+					break;
+				int num = 0;
+				while (scan < line_end && (*scan >= '0' && *scan <= '9'))
+				{ // Parse numbers out
+					num = num * 10 + (*scan - '0');
+					scan++;
+				}
+				if (num >= 0 && num <= 65535)
+					last_num = (uint16_t)num;
+			}
+			return last_num;
+		}
+		while(*p && *p != '\n')
+			p++;
+		if(*p == '\n')
+			p++; // Move to next line
+		else // End of input
+			return 0;
+	}
+	return 0; // Not found
+}
+
+static inline void unlock(void)
+{
+	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
+	{
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		lockout = 0;
+		pthread_rwlock_unlock(&mutex_global_variable);
+		login_cb(0);
+	}
+}
+
+static inline void kill_tor(const uint8_t wait_to_reap)
+{ // Note: should be called from within mutex_tor_pipe locks
+	if(tor_pid > 0) // Necessary sanity check
+	{
+		if(tor_ctrl_socket < 1)
+		{ // tor_ctrl_socket could be 0 because we could be killing an orphaned Tor from a pid file
+			#ifdef WIN32
+			pid_kill(tor_pid,SIGTERM);
+			#else
+			signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
+			if(!kill(tor_pid,SIGTERM) && wait_to_reap && threadsafe_read_uint8(&mutex_global_variable,&tor_running)) // DO NOT MODIFY: wait() must NOT be called if !tor_running or issues on startup occur.
+				wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
+			signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
+			#endif
+		} else if(evutil_closesocket(tor_ctrl_socket) < 0) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
+			error_simple(0,"Tor is probably already dead.");
+	//	while(!randport(tor_ctrl_port) || !randport(tor_socks_port)) // does not work because tor is not deregistering these ports properly on shutdown, it seems.
+	//		fprintf(stderr,"not ready yet. TODO REMOVE???\n");
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		tor_ctrl_socket = 0;
+		tor_running = 0;
+		tor_pid = 0;
+		pthread_rwlock_unlock(&mutex_global_variable);
+		pid_write(tor_pid);
+	}
+}
+
 static inline void *start_tor_threaded(void *arg)
 { /* Start or Restart Tor and pipe stdout to pipe_tor */ // TODO have a tor_failed global variable that can be somehow set by errors here
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_start_tor)
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	if(get_tor_version())
-		return 0; // failed
-	hash_password(); // this will ONLY do anything if Tor failed on startup due to a bad Tor binary and has since been replaced
 	pthread_rwlock_rdlock(&mutex_global_variable);
-	const char *tor_location_local_pointer = tor_location;
+	uint16_t tor_ctrl_port_local = tor_ctrl_port;
+	uint16_t tor_socks_port_local = tor_socks_port;
+	const uint8_t already_using_system_tor = using_system_tor;
+	const uint8_t already_running = tor_running;
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(tor_location_local_pointer == NULL)
-		return 0;
-//	int8_t restart = 0;
-	pthread_mutex_lock(&mutex_tor_pipe);
-	if(tor_pid == 0 || tor_pid == -1) // prolly could initialize as 0 and drop the -1
-		tor_pid = pid_read();
-	if(tor_pid > 0)
-	{
-		error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
-//		restart = 1;
-
-		#ifdef WIN32
-		pid_kill(tor_pid,SIGTERM);
-		CloseHandle(tor_fd_stdout);
-		#else
-		close(tor_fd_stdout);
-		signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
-		if(!kill(tor_pid,SIGTERM) && tor_running) // DO NOT MODIFY: wait() must NOT be called if !tor_running or issues on startup occur.
-			tor_pid = wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
-		signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
-		#endif
-	/*	while(randport(tor_ctrl_port) == -1 || randport(tor_socks_port) == -1)
-		{ // does not work because tor is not deregistering these ports properly on shutdown, it seems. 
-			fprintf(stderr,"not ready yet\n");
-		} */ // Do not delete XXX
-		pid_write(0); // TODO this assumes success... we should probably write tor_pid() instead
-//		sleep(1); // ok our wait is not enough because socket is still taken, TODO just choose a new ctrl+socks port? (what if our port was 9050?) 
-/*		while(randport(tor_ctrl_port) < 1)
-		{ // Alternative is to just choose a new port
-			error_simple(5,"Waiting for CTRL port to be released...");
-			sleep(1);
-		}
-		while(randport(tor_socks_port) < 1)
-		{ // Alternative is to just choose a new port
-			error_simple(5,"Waiting for SOCKS port to be released...");
-			sleep(1);
-		} */ // TODO currently cannot re-use port because it doesnt get released (not sure why) -- but we try anyway
-		pthread_rwlock_rdlock(&mutex_global_variable);
-		uint16_t tor_ctrl_port_local = tor_ctrl_port;
-		uint16_t tor_socks_port_local = tor_socks_port;
-		pthread_rwlock_unlock(&mutex_global_variable);
-		if(randport(tor_ctrl_port_local) < 1)
+	if(already_running && already_using_system_tor)
+	{ // Must do this before calling get_tor_version in case we are changing tor_ctrl_port
+		if(evutil_closesocket(tor_ctrl_socket) < 0)
+			error_simple(0,"Unlikely socket failed to close error.4");
+		tor_ctrl_socket = 0;
+	}
+	if(get_tor_version())
+		error_simple(0,"Cannot start Tor without a functional binary or control port.");
+	else if(threadsafe_read_uint8(&mutex_global_variable,&using_system_tor))
+	{ // System Tor is to be utilized
+		if(already_running && !already_using_system_tor)
 		{
-printf("Checkpoint start_tor_threaded changing control port\n");
-			tor_ctrl_port_local = randport(0);
-			pthread_rwlock_wrlock(&mutex_global_variable);
-			tor_ctrl_port = tor_ctrl_port_local;
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_mutex_lock(&mutex_tor_pipe);
+			kill_tor(1);
+			pthread_mutex_unlock(&mutex_tor_pipe);
 		}
-		if(randport(tor_socks_port_local) < 1)
+		char *ret = tor_call("getinfo config-text\n");
+		if(tor_socks_port_local || (tor_socks_port_local = extract_port(ret,"SocksPort")))
 		{
-printf("Checkpoint start_tor_threaded changing socks port\n");
-			tor_socks_port_local = randport(0);
+			error_simple(2,"Running system Tor.");
+			char *system_tor_torrc_content;
+			size_t ret_len;
+			const char expected_prefix[]= "250+config-text=\n";
+			const char expected_suffix[]= "\n.\n250 OK\n";
+			if(ret && (ret_len = strlen(ret)) > sizeof(expected_prefix) + sizeof(expected_suffix))
+			{ // Stripping prefix and suffix
+				system_tor_torrc_content = torx_secure_malloc(ret_len + 1 - sizeof(expected_prefix) - sizeof(expected_suffix));
+				memcpy(system_tor_torrc_content,&ret[sizeof(expected_prefix)],ret_len + 1 - sizeof(expected_prefix) - sizeof(expected_suffix));
+				system_tor_torrc_content[ret_len - sizeof(expected_prefix) - sizeof(expected_suffix)] = '\0'; // Very necessary
+			}
+			else
+				system_tor_torrc_content = NULL;
 			pthread_rwlock_wrlock(&mutex_global_variable);
 			tor_socks_port = tor_socks_port_local;
+			torx_free((void*)&torrc_content);
+			torrc_content = system_tor_torrc_content;
 			pthread_rwlock_unlock(&mutex_global_variable);
+			sql_populate_peer();
 		}
-	}
-	#ifdef WIN32
-	HANDLE fd_stdout = {0};
-	#else
-	int fd_stdout = -1;
-	#endif
-	pid_t pid;
-	char arg1[] = "-f";
-	char arg2[] = "-";
-	char arg3[] = "--SocksPort"; // p1
-	char arg4[] = "--ControlPort"; // p2
-	char arg5[] = "--HashedControlPassword"; // control_password_hash
-	char arg6[] = "--ConstrainedSockets";
-	char arg7[] = "1";
-	char arg8[] = "--ConstrainedSockSize"; // p3
-	char arg9[] = "--LongLivedPorts"; // p4
-	char arg10[] = "--DataDirectory"; // tor_data_directory
-	char p1[21],p2[21],p3[21],p4[21];
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	snprintf(p1,sizeof(p1),"%u",tor_socks_port);
-	snprintf(p2,sizeof(p2),"%u",tor_ctrl_port);
-	snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
-	snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
-	char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
-	if(!torrc_content_local)
-	{
-		if(torrc_content)
-		{ // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
-			const size_t len = strlen(torrc_content);
-			torrc_content_local = torx_secure_malloc(len+1);
-			memcpy(torrc_content_local,torrc_content,len+1);
-		}
-	}
-	char tor_location_local[PATH_MAX]; // not sensitive
-	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
-	char *ret;
-	if(ConstrainedSockSize)
-	{
-		if(tor_data_directory)
-		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,tor_data_directory,NULL};
-			pthread_rwlock_unlock(&mutex_global_variable);
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-		}
-		else
-		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,NULL};
-			pthread_rwlock_unlock(&mutex_global_variable);
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
-		}
+		else // Bad password or bad control port
+			error_simple(0,"System Tor has no functional SOCKS port.");
+		torx_free((void*)&ret);
 	}
 	else
-	{
-		if(tor_data_directory)
+	{ // Binary Tor is to be utilized
+		error_simple(2,"Running binary Tor.");
+		pthread_mutex_lock(&mutex_tor_pipe);
+		if(!tor_pid) // If Tor is not running in this runtime, check for an abandoned Tor progess.
+			tor_pid = pid_read();
+		hash_password(); // MUST NOT TRIGGER IF USING SYSTEM TOR because system Tor allows empty control_password_clear
+		if(tor_pid > 0) // NOT ELSE: This must be evaluated AFTER pid_read.
+		{ // Restart an existing Tor process
+			error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
+			kill_tor(1);
+			if(!tor_ctrl_port_local || !randport(tor_ctrl_port_local))
+			{
+				tor_ctrl_port_local = randport(0);
+				error_printf(0,"Changing Tor Control Port to %u",tor_ctrl_port_local);
+				pthread_rwlock_wrlock(&mutex_global_variable);
+				tor_ctrl_port = tor_ctrl_port_local;
+				pthread_rwlock_unlock(&mutex_global_variable);
+			}
+			if(!tor_socks_port_local || !randport(tor_socks_port_local))
+			{
+				tor_socks_port_local = randport(0);
+				error_printf(0,"Changing Tor Socks Port to %u",tor_socks_port_local);
+				pthread_rwlock_wrlock(&mutex_global_variable);
+				tor_socks_port = tor_socks_port_local;
+				pthread_rwlock_unlock(&mutex_global_variable);
+			}
+		}
+		else
+		{ // Tor was not running
+			if(!tor_socks_port_local) // Only set if UI didn't set it, then try defaults first
+				if((tor_socks_port_local = randport(PORT_DEFAULT_SOCKS)) || (tor_socks_port_local = randport(0)))
+				{ // This WILL succeed
+					pthread_rwlock_wrlock(&mutex_global_variable);
+					tor_socks_port = tor_socks_port_local;
+					pthread_rwlock_unlock(&mutex_global_variable);
+				}
+			if(!tor_ctrl_port_local) // Only set if UI didn't set it, then try defaults first
+				if((tor_ctrl_port_local = randport(PORT_DEFAULT_CONTROL)) || (tor_ctrl_port_local = randport(0)))
+				{ // This WILL succeed
+					pthread_rwlock_wrlock(&mutex_global_variable);
+					tor_ctrl_port = tor_ctrl_port_local;
+					pthread_rwlock_unlock(&mutex_global_variable);
+				}
+		}
+		#ifdef WIN32
+		HANDLE fd_stdout = {0};
+		#else
+		int fd_stdout = -1;
+		#endif
+		pid_t pid;
+		char arg1[] = "-f";
+		char arg2[] = "-";
+		char arg3[] = "--SocksPort"; // p1
+		char arg4[] = "--ControlPort"; // p2
+		char arg5[] = "--HashedControlPassword"; // control_password_hash
+		char arg6[] = "--ConstrainedSockets";
+		char arg7[] = "1";
+		char arg8[] = "--ConstrainedSockSize"; // p3
+		char arg9[] = "--LongLivedPorts"; // p4
+		char arg10[] = "--DataDirectory"; // tor_data_directory
+		char p1[21],p2[21],p3[21],p4[21];
+		pthread_rwlock_rdlock(&mutex_global_variable);
+		snprintf(p1,sizeof(p1),"%u",tor_socks_port_local);
+		snprintf(p2,sizeof(p2),"%u",tor_ctrl_port_local);
+		snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
+		snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
+		char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
+		if(!torrc_content_local)
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,tor_data_directory,NULL};
-			pthread_rwlock_unlock(&mutex_global_variable);
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			if(torrc_content)
+			{ // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
+				const size_t len = strlen(torrc_content);
+				torrc_content_local = torx_secure_malloc(len+1);
+				memcpy(torrc_content_local,torrc_content,len+1);
+			}
+		}
+		char tor_location_local[PATH_MAX]; // not sensitive
+		snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
+		char *ret;
+		if(ConstrainedSockSize)
+		{
+			if(tor_data_directory)
+			{
+				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,tor_data_directory,NULL};
+				pthread_rwlock_unlock(&mutex_global_variable);
+				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			}
+			else
+			{
+				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,NULL};
+				pthread_rwlock_unlock(&mutex_global_variable);
+				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			}
 		}
 		else
 		{
-			char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,NULL};
-			pthread_rwlock_unlock(&mutex_global_variable);
-			ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			if(tor_data_directory)
+			{
+				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,tor_data_directory,NULL};
+				pthread_rwlock_unlock(&mutex_global_variable);
+				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			}
+			else
+			{
+				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,NULL};
+				pthread_rwlock_unlock(&mutex_global_variable);
+				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
+			}
 		}
+		torx_free((void*)&ret); // we don't use this and it should be null anyway
+		torx_free((void*)&torrc_content_local);
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		tor_pid = pid;
+		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_mutex_unlock(&mutex_tor_pipe);
+		ret = tor_call("TAKEOWNERSHIP\n"); // We place this here rather than after authenticating in tor_call because we do need to run sql_populate_peer again
+		torx_free((void*)&ret);
+		pid_write(pid);
+		#ifdef WIN32
+		if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,fd_stdout))
+			error_simple(-1,"Failed to create thread");
+		#else
+		if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,itovp(fd_stdout)))
+			error_simple(-1,"Failed to create thread");
+		#endif
+		pthread_rwlock_rdlock(&mutex_global_variable);
+		error_printf(1,"Tor PID: %d",tor_pid);
+		error_printf(1,"Tor SOCKS Port: %u",tor_socks_port_local);
+		error_printf(3,"Tor Control Port: %u",tor_ctrl_port_local);
+		pthread_rwlock_unlock(&mutex_global_variable);
+		sql_populate_peer();
 	}
-	torx_free((void*)&ret); // we don't use this and it should be null anyway
-	torx_free((void*)&torrc_content_local);
-	pthread_rwlock_wrlock(&mutex_global_variable);
-	tor_fd_stdout = fd_stdout;
-	tor_pid = pid;
-	pthread_rwlock_unlock(&mutex_global_variable);
-	pthread_mutex_unlock(&mutex_tor_pipe);
-	pid_write(pid);
-	#ifdef WIN32
-	if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,fd_stdout))
-		error_simple(-1,"Failed to create thread");
-	#else
-	if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,itovp(fd_stdout)))
-		error_simple(-1,"Failed to create thread");
-	#endif
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	error_printf(1,"Tor PID: %d",tor_pid);
-	error_printf(1,"Tor SOCKS Port: %u",tor_socks_port);
-	error_printf(3,"Tor Control Port: %u",tor_ctrl_port);
-	pthread_rwlock_unlock(&mutex_global_variable);
-	sql_populate_peer();
+	unlock(); // We allow login even in the event of connection failure because it may need to be fixed in UI
 	return 0;
 }
 
@@ -3227,24 +3383,12 @@ void initial_keyed(void)
 	}
 	if(get_file_size(file_db_messages) == 0) // permit recovery after deletion of messages database
 		sql_exec(&db_messages,table_message,NULL,0);
-	pthread_rwlock_rdlock(&mutex_global_variable);
-	const char *tor_location_local_pointer = tor_location;
-	pthread_rwlock_unlock(&mutex_global_variable);
-	if(tor_location_local_pointer == NULL) // Binary locations should have already been set by UI calls to which() or otherwise. Not making a final attempt.
-		error_simple(-1,"Tor could not be located. Please install Tor or report this bug to your UI developer.");
-	/* Start Tor */
-	tor_ctrl_port = randport(0);
-	tor_socks_port = randport(9050);
-	if(tor_socks_port < 1025)
-		tor_socks_port = randport(0);
 	start_tor(); // XXX NOTE: might need to make this independently called by UI because on mobile it might be a problem to exec binaries within native code
-
 	sodium_memzero(broadcasts_queued,sizeof(broadcasts_queued));
 	for(int iter_queue = 0; iter_queue < BROADCAST_QUEUE_SIZE; iter_queue++)
 		for(int iter_peer = 0; iter_peer < BROADCAST_MAX_PEERS; iter_peer++)
 			broadcasts_queued[iter_queue].peers[iter_peer] = -1;
 	broadcast_start();
-
 	keyed = 1; // KEEP THIS AT THE END, after start_tor, etc.
 }
 
@@ -4575,8 +4719,6 @@ void initial(void)
 	}
 	if(!first_run)
 		sql_populate_setting(1); // plaintext settings
-	else // normally this is called in sql_populate_setting
-		hash_password();
 }
 
 static inline int password_verify(const char *password)
@@ -4801,7 +4943,7 @@ static inline void *login_threaded(void *arg)
 
 void login_start(const char *arg)
 { // Immediately attempts to copy and destroy password from UI // XXX Does not need locks
-	if(threadsafe_read_int8(&mutex_global_variable,(int8_t*)&lockout))
+	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
 	{
 		error_simple(0,"Login_start called during lockout. UI bug. Report this to UI dev.");
 		return;
@@ -4850,7 +4992,9 @@ void cleanup_lib(const int sig_num)
 	}
 	pthread_rwlock_wrlock(&mutex_packet); // XXX NOTICE: if it locks up here, its because of mutex_packet wrapping evbuffer_add in send_prep
 	pthread_rwlock_wrlock(&mutex_broadcast);
-	if(tor_pid < 1)
+	pthread_mutex_lock(&mutex_tor_pipe);
+	kill_tor(0);
+/*	if(tor_pid < 1)
 		error_simple(0,"Exiting before Tor started. Goodbye.");
 	else if(!pid_kill(tor_pid,SIGTERM))
 	{ // we don't need to bother waiting for termination, just signal
@@ -4858,7 +5002,7 @@ void cleanup_lib(const int sig_num)
 		error_simple(0,"Exiting normally after killing Tor. Goodbye.");
 	}
 	else
-		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?).");
+		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?)."); */
 	sodium_memzero(control_password_clear,sizeof(control_password_clear));
 	sodium_memzero(control_password_hash,sizeof(control_password_hash));
 	const int highest_ever_o_local = threadsafe_read_int(&mutex_global_variable,&highest_ever_o);
@@ -4916,105 +5060,141 @@ void xstrlwr(char *string)
 			string[i] += 32;
 }
 
+static inline char *tor_call_internal_recv(const evutil_socket_t socket)
+{
+	char *msg_recv = NULL;
+	char rbuff[4096]; // zero'd
+	ssize_t r;
+	size_t current_allocation_size = 0;
+	do
+	{ // Receive response
+		r = recv(SOCKET_CAST_OUT socket,rbuff,sizeof(rbuff),0);
+		if(r > 0)
+		{ // r is safe to cast to size_t after this check
+			if(msg_recv)
+			{ // Subsequent
+				msg_recv = torx_realloc(msg_recv,current_allocation_size + (size_t)r);
+				memcpy(&msg_recv[current_allocation_size-1],rbuff,(size_t)r); // overwrite existing null byte
+				current_allocation_size += (size_t)r;
+			}
+			else
+			{ // First
+				msg_recv = torx_secure_malloc((size_t)r + 1); // include space for one null byte
+				memcpy(&msg_recv[current_allocation_size],rbuff,(size_t)r);
+				current_allocation_size += (size_t)r + 1; // include space for one null byte
+			}
+			msg_recv[current_allocation_size-1] = '\0';
+		}
+	} while(r == sizeof(rbuff));
+	sodium_memzero(rbuff,sizeof(rbuff));
+	return msg_recv;
+}
+
 char *tor_call(const char *msg)
-{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead.
-	if(msg == NULL)
+{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead. (Warning may be depreciated now that we run in a single control connection?)
+	size_t msg_len;
+	if(msg == NULL || !(msg_len = strlen(msg)) || msg[msg_len-1] != '\n')
 	{
-		error_simple(0,"Sanity check fail in tor_call. Coding error. Report this.");
+		error_simple(0,"Sanity check fail in tor_call. Calls must be non-null and end with a newline or recv will hang. Coding error. Report this.");
+		breakpoint();
 		return NULL;
 	}
 	struct sockaddr_in serv_addr = {0};
-	evutil_socket_t sock; 
-	if((sock = SOCKET_CAST_IN socket(AF_INET,SOCK_STREAM,0)) < 0)
-	{
-		error_simple(0,"Socket creation error. Report this.");
-		return NULL;
-	}
 	const uint16_t local_tor_ctrl_port = threadsafe_read_uint16(&mutex_global_variable,&tor_ctrl_port);
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_port = htobe16(local_tor_ctrl_port);
 	if(inet_pton(AF_INET,TOR_CTRL_IP,&serv_addr.sin_addr) <= 0) // Convert IPv4 and IPv6 addresses from text to binary form
 	{
 		error_simple(0,"Invalid address for Tor Control. Coding error. Report this.");
-		if(evutil_closesocket(sock) < 0)
-			error_simple(0,"Unlikely socket failed to close error.2");
 		return NULL;
 	}
 	long int retries = 0;
-	int8_t success = 0;
-	struct timespec req;
-	req.tv_sec = 0; // 0s
-	req.tv_nsec = 50000000; // 50ms
-	while(retries < RETRIES_MAX && !success)
+	pthread_mutex_lock(&mutex_tor_ctrl);
+	if(tor_ctrl_socket < 1)
 	{
-		if(connect(SOCKET_CAST_OUT sock,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) != 0)
+		if((tor_ctrl_socket = SOCKET_CAST_IN socket(AF_INET,SOCK_STREAM,0)) < 0)
 		{
-			if(nanosleep(&req, NULL) == -1)
+			pthread_mutex_unlock(&mutex_tor_ctrl);
+			error_simple(0,"Socket creation error. Report this.");
+			return NULL;
+		}
+		struct timespec req;
+		req.tv_sec = 0; // 0s
+		req.tv_nsec = 50000000; // 50ms
+		while(retries < RETRIES_MAX)
+		{
+			if(connect(SOCKET_CAST_OUT tor_ctrl_socket,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) != 0)
 			{
-				error_simple(0,"nanosleep failed. Falling back to sleep(1). Platform may not support nanosleep?");
-				sleep(1);
-				retries += 1000000000 / req.tv_nsec;
+				if(nanosleep(&req, NULL) == -1)
+				{
+					if(!retries)
+						error_simple(0,"nanosleep failed. Falling back to sleep(1). Platform may not support nanosleep."); // This is fine
+					sleep(1);
+					retries += 1000000000 / req.tv_nsec;
+				}
+				else
+					retries++;
 			}
 			else
-				retries++;
-		}
-		else
-			success = 1;
-	}
-	char *msg_recv = NULL;
-	if(success)
-	{ // Attempt Send
-		error_printf(5,"Tor call SUCCESS after %ld retries: %s",retries,msg);
-		char apibuffer[64]; // Must authenticate
-		snprintf(apibuffer,sizeof(apibuffer),"authenticate \"%s\"\n",control_password_clear);
-		send(SOCKET_CAST_OUT sock,apibuffer,SOCKET_WRITE_SIZE strlen(apibuffer),0);
-		sodium_memzero(apibuffer,sizeof(apibuffer));
-		const ssize_t s = send(SOCKET_CAST_OUT sock,msg,SOCKET_WRITE_SIZE strlen(msg),0);
-		if(s > 0)
-		{ // Sent message
-			char rbuff[4096]; // zero'd
-			ssize_t r;
-			size_t current_allocation_size = 0;
-			do
-			{ // Receive response
-				r = recv(SOCKET_CAST_OUT sock,rbuff,sizeof(rbuff),0);
-				if(r > 0)
-				{ // r is safe to cast to size_t after this check
-					if(msg_recv)
-					{ // Subsequent
-						msg_recv = torx_realloc(msg_recv,current_allocation_size + (size_t)r);
-						memcpy(&msg_recv[current_allocation_size-1],rbuff,(size_t)r); // overwrite existing null byte
-						current_allocation_size += (size_t)r;
-					}
-					else
-					{ // First
-						msg_recv = torx_secure_malloc((size_t)r + 1); // include space for one null byte
-						memcpy(&msg_recv[current_allocation_size],rbuff,(size_t)r);
-						current_allocation_size += (size_t)r + 1; // include space for one null byte
-					}
-					msg_recv[current_allocation_size-1] = '\0';
+			{ // Must authenticate: "To prevent some cross-protocol attacks, the AUTHENTICATE command is still required even if all authentication methods in Tor are disabled."
+				char apibuffer[64];
+				if(is_null(control_password_clear,sizeof(control_password_clear)))
+					snprintf(apibuffer,sizeof(apibuffer),"authenticate\n");
+				else
+					snprintf(apibuffer,sizeof(apibuffer),"authenticate \"%s\"\n",control_password_clear);
+				const size_t len = strlen(apibuffer);
+				const ssize_t s = send(SOCKET_CAST_OUT tor_ctrl_socket,apibuffer,SOCKET_WRITE_SIZE len ,0);
+				sodium_memzero(apibuffer,sizeof(apibuffer));
+				if(s < (ssize_t)len)
+				{
+					pthread_mutex_unlock(&mutex_tor_ctrl);
+					error_simple(0,"Tor call failed. Is Tor not running or is the control port incorrect?");
+					return NULL;
 				}
-			} while(r == sizeof(rbuff));
-			if(msg_recv)
-			{
-				sodium_memzero(rbuff,sizeof(rbuff));
-				pthread_rwlock_wrlock(&mutex_global_variable);
-				tor_running = 1;
-				pthread_rwlock_unlock(&mutex_global_variable);
+				char *ret = tor_call_internal_recv(tor_ctrl_socket);
+				if(!ret || strncmp(ret,"250",3))
+				{ // Check control port password
+					pthread_mutex_unlock(&mutex_tor_ctrl);
+					error_simple(0,"Tor call authentication failed. Check control port password.");
+					if(ret)
+						error_printf(4,"Tor Control Response:\n%s",ret);
+					torx_free((void*)&ret);
+					return NULL;
+				}
+				torx_free((void*)&ret);
+				error_printf(4,"Tor call SUCCESS after %ld retries",retries);
+				break;
 			}
 		}
-		else // Failed to send data, despite connecting to port
-			error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
 	}
-	else // Failed to connect to port
-		error_printf(0,"Tor Control Port not running on %s:%u after %ld tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries); // DO NOT make -1 or a bad forced torrc setting is unrecoverable
-	if(evutil_closesocket(sock) < 0)
-		error_simple(0,"Unlikely socket failed to close error.3");
+	char *msg_recv = NULL;
+	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (msg_recv = tor_call_internal_recv(tor_ctrl_socket)))
+	{ // Attempt Send && Receive
+		pthread_rwlock_wrlock(&mutex_global_variable);
+		tor_running = 1;
+		pthread_rwlock_unlock(&mutex_global_variable);
+	}
+	else
+	{
+		if(retries == RETRIES_MAX) // Failed to connect to port
+			error_printf(0,"Tor Control Port not running on %s:%u after %ld tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries);
+		else
+			error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
+		if(evutil_closesocket(tor_ctrl_socket) < 0)
+			error_simple(0,"Unlikely socket failed to close error.3");
+		tor_ctrl_socket = 0;
+	}
+	pthread_mutex_unlock(&mutex_tor_ctrl);
+	if(torx_debug_level(-1) > 4 || (msg_recv && strncmp(msg_recv,"25",2)))
+	{ // Print unsuccessful. Note: We are ignoring both 250 and 251 because 251 commonly occurs on system Tor when using ONION_CLIENT_AUTH_ADD
+		error_printf(4,"Tor Control Call:\n%s",msg);
+		error_printf(3,"Tor Control Response:\n%s",msg_recv);
+	}
 	return msg_recv;
 }
 
 static inline void *tor_call_async_threaded(void *arg)
-{ // Confirmed working
+{ // Confirmed working, but may no longer be necessary because we are now running in a single control connection.
 	if(!arg)
 	{
 		error_simple(0,"tor_call_async_threaded has null arg. Coding error. Report this.");
@@ -5032,7 +5212,7 @@ static inline void *tor_call_async_threaded(void *arg)
 }
 
 void tor_call_async(void (*callback)(char*),const char *msg)
-{ // This is a UI helper function, especially for making GETINFO calls to determine connectivity status. Ex: "GETINFO network-liveness\r\n" / "GETINFO dormant\r\n" / "GETINFO status/bootstrap-phase\r\n"
+{ // This is a UI helper function, especially for making GETINFO calls to determine connectivity status. Ex: "GETINFO network-liveness\r\n" / "GETINFO dormant\r\n" / "GETINFO status/bootstrap-phase\r\n", but may no longer be necessary because we are now running in a single control connection.
 	if(!msg)
 	{
 		error_simple(0,"No message passed to tor_call_async. Coding error. Report this.");

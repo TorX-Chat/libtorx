@@ -1307,10 +1307,6 @@ int sql_populate_peer(void)
 	}
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 //	pthread_mutex_unlock(&mutex_sql_encrypted);
-	pthread_rwlock_wrlock(&mutex_global_variable);
-	lockout = 0;
-	pthread_rwlock_unlock(&mutex_global_variable);
-	login_cb(0); //.... this check COULD be moved to login_cb itself if we have a reason for it to be
 	pthread_rwlock_rdlock(&mutex_expand_group);
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
 	{
@@ -1648,7 +1644,6 @@ void sql_populate_setting(const int force_plaintext)
 	pthread_mutex_unlock(mutex);
 	if(force_plaintext)
 	{
-		hash_password();
 		pthread_rwlock_rdlock(&mutex_global_variable);
 		const char *tor_location_local_pointer = tor_location;
 		pthread_rwlock_unlock(&mutex_global_variable);
