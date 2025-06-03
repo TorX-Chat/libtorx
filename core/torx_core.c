@@ -3110,39 +3110,40 @@ static inline void *start_tor_threaded(void *arg)
 		{ // Restart an existing Tor process
 			error_simple(0,"Tor is being restarted, or a PID file was found."); // XXX might need to re-randomize socksport and ctrlport, though hopefully not considering wait()
 			kill_tor(1);
-			if(!tor_ctrl_port_local || !randport(tor_ctrl_port_local))
-			{
-				tor_ctrl_port_local = randport(0);
-				error_printf(0,"Changing Tor Control Port to %u",tor_ctrl_port_local);
-				pthread_rwlock_wrlock(&mutex_global_variable);
-				tor_ctrl_port = tor_ctrl_port_local;
-				pthread_rwlock_unlock(&mutex_global_variable);
-			}
-			if(!tor_socks_port_local || !randport(tor_socks_port_local))
-			{
-				tor_socks_port_local = randport(0);
-				error_printf(0,"Changing Tor Socks Port to %u",tor_socks_port_local);
+		}
+		if(!tor_socks_port_local)
+		{ // Only set if UI didn't set it, then try defaults first
+			if((tor_socks_port_local = randport(PORT_DEFAULT_SOCKS)) || (tor_socks_port_local = randport(0)))
+			{ // This WILL succeed
 				pthread_rwlock_wrlock(&mutex_global_variable);
 				tor_socks_port = tor_socks_port_local;
 				pthread_rwlock_unlock(&mutex_global_variable);
 			}
 		}
-		else
-		{ // Tor was not running
-			if(!tor_socks_port_local) // Only set if UI didn't set it, then try defaults first
-				if((tor_socks_port_local = randport(PORT_DEFAULT_SOCKS)) || (tor_socks_port_local = randport(0)))
-				{ // This WILL succeed
-					pthread_rwlock_wrlock(&mutex_global_variable);
-					tor_socks_port = tor_socks_port_local;
-					pthread_rwlock_unlock(&mutex_global_variable);
-				}
-			if(!tor_ctrl_port_local) // Only set if UI didn't set it, then try defaults first
-				if((tor_ctrl_port_local = randport(PORT_DEFAULT_CONTROL)) || (tor_ctrl_port_local = randport(0)))
-				{ // This WILL succeed
-					pthread_rwlock_wrlock(&mutex_global_variable);
-					tor_ctrl_port = tor_ctrl_port_local;
-					pthread_rwlock_unlock(&mutex_global_variable);
-				}
+		else if(!randport(tor_socks_port_local))
+		{
+			tor_socks_port_local = randport(0);
+			error_printf(0,"Changing Tor Socks Port to %u",tor_socks_port_local);
+			pthread_rwlock_wrlock(&mutex_global_variable);
+			tor_socks_port = tor_socks_port_local;
+			pthread_rwlock_unlock(&mutex_global_variable);
+		}
+		if(!tor_ctrl_port_local)
+		{ // Only set if UI didn't set it, then try defaults first
+			if((tor_ctrl_port_local = randport(PORT_DEFAULT_CONTROL)) || (tor_ctrl_port_local = randport(0)))
+			{ // This WILL succeed
+				pthread_rwlock_wrlock(&mutex_global_variable);
+				tor_ctrl_port = tor_ctrl_port_local;
+				pthread_rwlock_unlock(&mutex_global_variable);
+			}
+		}
+		else if(!randport(tor_ctrl_port_local))
+		{
+			tor_ctrl_port_local = randport(0);
+			error_printf(0,"Changing Tor Control Port to %u",tor_ctrl_port_local);
+			pthread_rwlock_wrlock(&mutex_global_variable);
+			tor_ctrl_port = tor_ctrl_port_local;
+			pthread_rwlock_unlock(&mutex_global_variable);
 		}
 		#ifdef WIN32
 		HANDLE fd_stdout = {0};
