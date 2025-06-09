@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 30 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 31 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -93,7 +93,7 @@ char *file_db_plaintext = {0}; // "plaintext.db"; // Do not set as const since p
 char *file_db_encrypted = {0}; // "encrypted.db"; // Do not set as const since particular UIs may want to define this themselves.
 char *file_db_messages = {0}; // "messages.db"; // Do not set as const since particular UIs may want to define this themselves.
 char *file_tor_pid = {0}; // "tor.pid";
-char control_password_clear[32+1] = {0}; // MUST be \0 initialized. Is cleared on shutdown in case it was set by UI to something custom.
+char *control_password_clear = {0};
 char control_password_hash[61+1] = {0}; // MUST be \0 initialized. // does not need rwlock because only modified once // correct length.  Is cleared on shutdown in case it was set by UI to something custom.
 char *torrc_content = {0}; // default is set in initial() or after initial() by UI
 char *default_peernick = {0}; // default is set in initial() or after initial() by UI. Do not null.
@@ -2688,8 +2688,8 @@ static inline int hash_password_internal(const char *password)
 		pthread_rwlock_wrlock(&mutex_global_variable);
 		memcpy(control_password_hash,ret,sizeof(control_password_hash));
 		pthread_rwlock_unlock(&mutex_global_variable);
-		error_printf(3,"Actual Tor Control Password: %s",control_password_clear);
-		error_printf(3,"Hashed Tor Control Password: %s",control_password_hash);
+		error_printf(3,"Actual Tor Control Password: %s",password);
+		error_printf(3,"Hashed Tor Control Password: %s",ret);
 	}
 	else
 		error_printf(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect? Length: %zu Output: %s",len,ret);
@@ -2707,10 +2707,14 @@ static inline void hash_password(void)
 	pthread_rwlock_wrlock(&mutex_global_variable);
 	if(is_null(control_password_hash,sizeof(control_password_hash)))
 	{
-		if(is_null(control_password_clear,sizeof(control_password_clear))) // avoid overwriting if it has been set for some reason (ex: by UI)
-			random_string(control_password_clear,sizeof(control_password_clear));
-		char control_password_clear_local[sizeof(control_password_clear)];
-		memcpy(control_password_clear_local,control_password_clear,sizeof(control_password_clear));
+		if(!control_password_clear) // avoid overwriting if it has been set for some reason (ex: by UI)
+		{
+			control_password_clear = torx_secure_malloc(32+1);
+			random_string(control_password_clear,32+1);
+		}
+		const size_t current_len = strlen(control_password_clear);
+		char control_password_clear_local[current_len+1];
+		memcpy(control_password_clear_local,control_password_clear,sizeof(control_password_clear_local));
 		pthread_rwlock_unlock(&mutex_global_variable);
 		if(hash_password_internal(control_password_clear_local) != 61)
 		{
@@ -2753,7 +2757,11 @@ static inline int get_tor_version(void)
 	uint8_t using_system_tor_local = (tor_ctrl_port && !tor_pid);
 	pthread_rwlock_unlock(&mutex_global_variable);
 	if(using_system_tor_local)
+	{
+		ret = tor_call("Known bug: After authenticating, our first command to tor_call fails with 510 Unrecognized command \"\"\n"); // XXX TWO PLACES
+		torx_free((void*)&ret);
 		ret = tor_call("getinfo version\n");
+	}
 	if(!ret && tor_location_local[0] != '\0') // NOT else
 	{ // Unless using system Tor, prefer to make a binary call if the binary is available so that this function can be called successfully before Tor is started.
 		if(using_system_tor_local)
@@ -2807,6 +2815,8 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 	uint16_t port = 0;
 	evutil_socket_t socket_rand;
 	struct sockaddr_in serv_addr = {0};
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	pthread_mutex_lock(&mutex_socket_rand);
 	while(1)
 	{
@@ -2819,8 +2829,6 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 			error_simple(0,"Unlikely socket creation error");
 			continue;
 		}
-		serv_addr.sin_family = AF_INET;
-		serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 		serv_addr.sin_port = htobe16(port);
 		if(bind(SOCKET_CAST_OUT socket_rand,(struct sockaddr *) &serv_addr, sizeof(serv_addr)) == 0)
 		{
@@ -2943,7 +2951,7 @@ static inline void *tor_log_reader(void *arg)
 	#else
 	close(fd_stdout);
 	#endif
-	error_simple(0,"Exiting Tor log reader, probably because Tor died or was restarted.");
+	error_simple(0,"Exiting Tor log reader, probably because Tor died or was restarted. Is Tor already running?");
 	return 0;
 }
 
@@ -3216,6 +3224,8 @@ static inline void *start_tor_threaded(void *arg)
 		tor_pid = pid;
 		pthread_rwlock_unlock(&mutex_global_variable);
 		pthread_mutex_unlock(&mutex_tor_pipe);
+		ret = tor_call("Known bug: After authenticating, our first command to tor_call fails with 510 Unrecognized command \"\"\n"); // XXX TWO PLACES
+		torx_free((void*)&ret);
 		ret = tor_call("TAKEOWNERSHIP\n"); // We place this here rather than after authenticating in tor_call because we do need to run sql_populate_peer again
 		torx_free((void*)&ret);
 		pid_write(pid);
@@ -5004,7 +5014,7 @@ void cleanup_lib(const int sig_num)
 	}
 	else
 		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?)."); */
-	sodium_memzero(control_password_clear,sizeof(control_password_clear));
+	torx_free((void*)&control_password_clear);
 	sodium_memzero(control_password_hash,sizeof(control_password_hash));
 	const int highest_ever_o_local = threadsafe_read_int(&mutex_global_variable,&highest_ever_o);
 	if(highest_ever_o_local > 0) // this does not mean file transfers occured, i think
@@ -5094,7 +5104,7 @@ static inline char *tor_call_internal_recv(const evutil_socket_t socket)
 char *tor_call(const char *msg)
 { // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead. (Warning may be depreciated now that we run in a single control connection?)
 	size_t msg_len;
-	if(msg == NULL || !(msg_len = strlen(msg)) || msg[msg_len-1] != '\n')
+	if(msg == NULL || !(msg_len = strlen(msg)) || msg_len < 2 || msg[msg_len-1] != '\n')
 	{
 		error_simple(0,"Sanity check fail in tor_call. Calls must be non-null and end with a newline or recv will hang. Coding error. Report this.");
 		breakpoint();
@@ -5138,16 +5148,19 @@ char *tor_call(const char *msg)
 			}
 			else
 			{ // Must authenticate: "To prevent some cross-protocol attacks, the AUTHENTICATE command is still required even if all authentication methods in Tor are disabled."
-				char apibuffer[64];
-				if(is_null(control_password_clear,sizeof(control_password_clear)))
-					snprintf(apibuffer,sizeof(apibuffer),"authenticate\n");
-				else
+				const size_t len = control_password_clear ? 17 + strlen(control_password_clear) : 14;
+				char apibuffer[len+1]; // TODO arbitary maximum length, needs to be 17+strlen(control_password_clear)
+				if(control_password_clear)
 					snprintf(apibuffer,sizeof(apibuffer),"authenticate \"%s\"\n",control_password_clear);
-				const size_t len = strlen(apibuffer);
+				else
+					snprintf(apibuffer,sizeof(apibuffer),"authenticate\n");
 				const ssize_t s = send(SOCKET_CAST_OUT tor_ctrl_socket,apibuffer,SOCKET_WRITE_SIZE len ,0);
 				sodium_memzero(apibuffer,sizeof(apibuffer));
 				if(s < (ssize_t)len)
 				{
+					if(evutil_closesocket(tor_ctrl_socket) < 0)
+						error_simple(0,"Unlikely socket failed to close error.33");
+					tor_ctrl_socket = 0;
 					pthread_mutex_unlock(&mutex_tor_ctrl);
 					error_simple(0,"Tor call failed. Is Tor not running or is the control port incorrect?");
 					return NULL;
@@ -5155,6 +5168,9 @@ char *tor_call(const char *msg)
 				char *ret = tor_call_internal_recv(tor_ctrl_socket);
 				if(!ret || strncmp(ret,"250",3))
 				{ // Check control port password
+					if(evutil_closesocket(tor_ctrl_socket) < 0)
+						error_simple(0,"Unlikely socket failed to close error.333");
+					tor_ctrl_socket = 0;
 					pthread_mutex_unlock(&mutex_tor_ctrl);
 					error_simple(0,"Tor call authentication failed. Check control port password.");
 					if(ret)

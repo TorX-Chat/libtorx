@@ -1618,6 +1618,17 @@ void sql_populate_setting(const int force_plaintext)
 				//	printf("Checkpoint sql_populate_setting g==%d peercount==%u\n",g,group[g].peercount);
 					pthread_rwlock_unlock(&mutex_expand_group); // XXX
 				}
+				else if(!strncmp(setting_name,"tor_socks_port",14))
+					tor_socks_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				else if(!strncmp(setting_name,"tor_ctrl_port",13))
+					tor_ctrl_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				else if(!strncmp(setting_name,"control_password_clear",22))
+				{
+					torx_free((void*)&control_password_clear);
+					control_password_clear = torx_secure_malloc(setting_value_len+1);
+					memcpy(control_password_clear,setting_value,setting_value_len);
+					control_password_clear[setting_value_len] = '\0';
+				}
 				else
 				{ // Send unrecognized settings to UI
 					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
