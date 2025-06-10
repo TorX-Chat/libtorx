@@ -68,11 +68,11 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		return -1;
 	}
 	int f = -1, i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const char *name = protocols[p_iter].name;
 	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(owner != ENUM_OWNER_GROUP_PEER && owner != ENUM_OWNER_CTRL)
 	{
@@ -106,9 +106,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				error_printf(0,"Message deleted: %s. Cannot send_prep. Coding error. Report this.",name);
 				goto error;
 			}
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const char *true_name = protocols[true_p_iter].name;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			error_printf(-1,"Sanity check fail in send_prep. %s != %s. Coding error. Report this.",name,true_name); // 2024/09/30 Occurred after a possible GTK issue. Sticker Request != Propose Upgrade
 		}
 		if((start = getter_uint32(n,i,-1,offsetof(struct message_list,pos))) == 0)
@@ -183,12 +183,12 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			if(r < 0) // probably .request is NULL
 				goto error;
 			uint16_t data_size = PACKET_SIZE_MAX-16;
-			torx_fd_lock(file_n,f) // XXX
+			torx_fd_lock(file_n,f) // 🟥🟥🟥🟥
 			torx_read(file_n) // 🟧🟧🟧
 			if(peer[file_n].file[f].request == NULL)
 			{ // Necessary sanity check to avoid race conditions
 				torx_unlock(file_n) // 🟩🟩🟩
-				torx_fd_unlock(file_n,f) // XXX
+				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 				error_simple(0,"Send_prep sanity check failure. Something is NULL. File may be cancelled. Possible coding error. Report this.");
 				goto error;
 			}
@@ -203,7 +203,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 				if((fd_active = fopen(file_path, "r")) == NULL)
 				{
-					torx_fd_unlock(file_n,f) // XXX
+					torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 					error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
 					torx_free((void*)&file_path);
 					goto error;
@@ -215,7 +215,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_write(file_n) // 🟥🟥🟥
 			peer[file_n].file[f].fd = fd_active;
 			torx_unlock(file_n) // 🟩🟩🟩
-			torx_fd_unlock(file_n,f) // XXX
+			torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 			if(bytes > 0)
 			{ // Handle bytes read from file
 				packet_len = 2+2+4+8+(uint16_t)bytes; //  packet len, protocool, truncated file checksum, start position, data itself
@@ -241,9 +241,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		else
 		{ // only i is initialized
 			// printf(YELLOW"Checkpoint send_prep: n=%d i=%d\n"RESET,n,i); // FSojoasfoSO
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if(owner != ENUM_OWNER_GROUP_PEER && group_mechanics)
 			{ // these messages can only go out to ENUM_OWNER_GROUP_PEER
 				error_simple(0,"owner != ENUM_OWNER_GROUP_PEER && group_mechanics. Coding error. Report this.");
@@ -302,18 +302,18 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		{
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
-			pthread_rwlock_wrlock(&mutex_packet); // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where packet_removal can (and will on some devices) trigger before we register packet
+			pthread_rwlock_wrlock(&mutex_packet); // 🟥 // TODO XXX CAN BLOCK in rare circumstances (ex: receiving a bunch of STICKER_REQUEST concurrently), yet... highly necessary to wrap evbuffer_add, do not move, otherwise race condition occurs where packet_removal can (and will on some devices) trigger before we register packet
 			while(o < SIZE_PACKET_STRC && packet[o].n != -1) // find first re-usable or empty iter
 				o++;
 			if(o > threadsafe_read_int(&mutex_global_variable,&highest_ever_o))
 			{
-				pthread_rwlock_wrlock(&mutex_global_variable);
+				pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				highest_ever_o = o;
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 			if(o >= SIZE_PACKET_STRC)
 			{
-				pthread_rwlock_unlock(&mutex_packet);
+				pthread_rwlock_unlock(&mutex_packet); // 🟩
 				evbuffer_unlock(output); // XXX
 				sodium_memzero(send_buffer,(size_t)packet_len);
 				error_simple(-1,"Fatal error. Exceeded size of SIZE_PACKET_STRC. Report this.");
@@ -330,7 +330,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				send_buffer,
 				(size_t)packet_len); // TODO does this have a size limit?
 		//	total_packets_added++; // TODO remove
-			pthread_rwlock_unlock(&mutex_packet);
+			pthread_rwlock_unlock(&mutex_packet); // 🟩
 		//	bufferevent_flush(bev,EV_WRITE,BEV_FLUSH); // TODO 2024/12/30 TESTING
 			evbuffer_unlock(output); // XXX
 			sodium_memzero(send_buffer,(size_t)packet_len);

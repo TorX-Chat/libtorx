@@ -110,9 +110,9 @@ void message_offload(const int n)
 		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int peer_n = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 			const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 			for(uint8_t cycle = 0; cycle < 2; cycle++)
@@ -121,10 +121,10 @@ void message_offload(const int n)
 					const int p_iter = getter_int(peer_n,i,-1,offsetof(struct message_list,p_iter));
 					if(p_iter > -1) // snuff out deleted messages
 					{
-						pthread_rwlock_rdlock(&mutex_protocols);
+						pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 						const uint8_t group_msg = protocols[p_iter].group_msg;
 						const uint8_t group_pm = protocols[p_iter].group_pm;
-						pthread_rwlock_unlock(&mutex_protocols);
+						pthread_rwlock_unlock(&mutex_protocols); // 🟩
 						const uint8_t stat = getter_uint8(peer_n,i,-1,offsetof(struct message_list,stat));
 						if((stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm)) // XXX VERY IMPORTANT / COMPLEX if statement, do not change
 							message_remove(g,peer_n,i); // do not remove (segfaults will happen). Conditions are to avoid sanity check errors.
@@ -174,10 +174,10 @@ int message_edit(const int n,const int i,const char *message)
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const int protocol = protocols[p_iter].protocol;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
@@ -222,9 +222,9 @@ int message_edit(const int n,const int i,const char *message)
 				const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 				for(uint32_t p = 0; p < g_peercount; p++)
 				{
-					pthread_rwlock_rdlock(&mutex_expand_group);
+					pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 					const int peer_n = group[g].peerlist[p];
-					pthread_rwlock_unlock(&mutex_expand_group);
+					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 					const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 					for(int ii = max_i ; ii >= min_i ; ii--)
@@ -270,9 +270,9 @@ int message_edit(const int n,const int i,const char *message)
 	}
 	else
 	{ // Example: inbound signed messages cannot be modified, only deleted.
-		pthread_rwlock_rdlock(&mutex_protocols);
+		pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 		const char *name = protocols[p_iter].name;
-		pthread_rwlock_unlock(&mutex_protocols);
+		pthread_rwlock_unlock(&mutex_protocols); // 🟩
 		error_printf(0,"Editing for this message type is unsupported: %s",name);
 		return -1;
 	}
@@ -302,29 +302,29 @@ int sql_exec(sqlite3** db,const char *command,const char *setting_value,const si
 	}
 	sqlite3_stmt *stmt;
 	int val;
-	pthread_mutex_lock(mutex); // Prepare the statement with a parameterized query
+	pthread_mutex_lock(mutex); // 🟥🟥 // Prepare the statement with a parameterized query
 	if((val = sqlite3_prepare_v2(*db, command, (int)strlen(command), &stmt, NULL)) != SQLITE_OK) // XXX passing length + null terminator for testing because sqlite is weird 
 	{
 		error_printf(0,"Cannot prepare statement: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
-		pthread_mutex_unlock(mutex);
+		pthread_mutex_unlock(mutex); // 🟩🟩
 		return val;
 	}
 	if(setting_value != NULL && setting_value_len && (val = sqlite3_bind_blob(stmt, 1, setting_value,(int)setting_value_len, SQLITE_TRANSIENT)) != SQLITE_OK) // Bind the parameter, if passed
 	{
 		error_printf(0, "Cannot bind value to parameter: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
 		sqlite3_finalize(stmt);
-		pthread_mutex_unlock(mutex);
+		pthread_mutex_unlock(mutex); // 🟩🟩
 		return val;
 	}
 	if((val = sqlite3_step(stmt)) != SQLITE_DONE) // Execute the statement
 	{ // Occurs whenever already exists
 		error_printf(4, "Cannot execute statement: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
 		sqlite3_finalize(stmt);
-		pthread_mutex_unlock(mutex);
+		pthread_mutex_unlock(mutex); // 🟩🟩
 		return val;
 	}
 	sqlite3_finalize(stmt);	// XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-	pthread_mutex_unlock(mutex);
+	pthread_mutex_unlock(mutex); // 🟩🟩
 	return SQLITE_OK; // == 0
 }
 
@@ -351,25 +351,25 @@ static inline int sql_insert_setting(const int force_plaintext,const int peer_in
 	{ // For plaintext we have a unqiue setting_name, so we don't need to check first with a select whether it exists (find row)
 		sqlite3_stmt *stmt;
 		table_sql = sqlite3_mprintf("SELECT *FROM setting_peer WHERE peer_index = %d AND setting_name = '%s';",peer_index,setting_name);
-		pthread_mutex_lock(&mutex_sql_encrypted);
+		pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
 		if(sqlite3_prepare_v2(db_encrypted,table_sql, -1, &stmt, NULL) != SQLITE_OK) // XXX passing length + null terminator for testing because sqlite is weird
 		{
 			error_printf(0, "Can't prepare setting statement: %s",sqlite3_errmsg(db_encrypted)); // return value is const, cannot be freed, so leave it as is
-			pthread_mutex_unlock(&mutex_sql_encrypted);
+			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 			sqlite3_free(table_sql);
 			return -1;
 		}
 		if(sqlite3_step(stmt) == SQLITE_ROW)
 		{
 			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-			pthread_mutex_unlock(&mutex_sql_encrypted);
+			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 			sqlite3_free(table_sql);
 			return SQLITE_CONSTRAINT; // unique failure, same as would be returned by force_plaintext == 1 unique failure
 		}
 		else 
 		{
 			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-			pthread_mutex_unlock(&mutex_sql_encrypted);
+			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 			sqlite3_free(table_sql);
 			table_sql = sqlite3_mprintf("INSERT OR ABORT INTO setting_peer (peer_index,setting_name,setting_value) VALUES (%d,'%s',?);",peer_index,setting_name);
 		}
@@ -433,9 +433,9 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		char *name = NULL;
 		if(p_iter > -1)
 		{
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			name = protocols[p_iter].name;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 		}
 		if(message)
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d has message",n,p_iter);
@@ -444,14 +444,14 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		return INT_MIN;
 	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint8_t file_offer = protocols[p_iter].file_offer;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	uint32_t message_len;
 	char *tmp_message;
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
@@ -626,24 +626,24 @@ int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peer
 	int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
 	sqlite3_stmt *stmt;
 	int len = snprintf(command,sizeof(command),"SELECT peer_index FROM peer WHERE privkey = '%s';",privkey);
-	pthread_mutex_lock(&mutex_sql_encrypted);
+	pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
 	val = sqlite3_prepare_v2(db_encrypted,command,len, &stmt,NULL); // XXX passing length + null terminator for testing because sqlite is weird
 	sodium_memzero(command,sizeof(command));
 	if(val != SQLITE_OK)
 	{
 		error_printf(0, "Can't prepare peer statement: %s",sqlite3_errmsg(db_encrypted));
-		pthread_mutex_unlock(&mutex_sql_encrypted);
+		pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 		return -1;
 	}
 	else if((val = sqlite3_step(stmt)) == SQLITE_ROW)
 	{ // Retrieve and return new peer_index
 		const int peer_index = sqlite3_column_int(stmt, 0);
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-		pthread_mutex_unlock(&mutex_sql_encrypted);
+		pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 		return peer_index;
 	}
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-	pthread_mutex_unlock(&mutex_sql_encrypted);
+	pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 	error_simple(0, "Can't insert peer to DB. Report this.");
 	return -1;
 }
@@ -671,12 +671,12 @@ static int sql_update_blob(sqlite3** db,const char* table_name,const char* colum
 		table_sql = sqlite3_mprintf("UPDATE OR ABORT '%s' SET ('%s') = (?) WHERE peer_index = %d;", table_name, column_name, peer_index);
 	else // coding error
 		return -1;
-	pthread_mutex_lock(mutex);
+	pthread_mutex_lock(mutex); // 🟥🟥
 	int result = sqlite3_prepare_v2(*db, table_sql, -1, &stmt, NULL);
 	if(result != SQLITE_OK)
 	{
 		error_printf(0, "Error preparing statement: %s",sqlite3_errmsg(*db));
-		pthread_mutex_unlock(mutex);
+		pthread_mutex_unlock(mutex); // 🟩🟩
 		sqlite3_free(table_sql);
 		return result;
 	}
@@ -699,7 +699,7 @@ static int sql_update_blob(sqlite3** db,const char* table_name,const char* colum
 		break;
 	}
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-	pthread_mutex_unlock(mutex);
+	pthread_mutex_unlock(mutex); // 🟩🟩
 	sqlite3_free(table_sql);
 	return result;
 }
@@ -713,13 +713,13 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
@@ -796,14 +796,14 @@ int sql_insert_message(const int n,const int i)
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t logged = protocols[p_iter].logged;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(logged == 0 || !log_check(n,group_pm,protocol))
 		return 0; // do not log these.
 	uint32_t message_len;
@@ -848,13 +848,13 @@ int sql_update_message(const int n,const int i)
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t logged = protocols[p_iter].logged;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(logged == 0 || !log_check(n,group_pm,protocol))
 		return 0; // do not log these.
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
@@ -922,7 +922,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		return 0;
 	}
 	const int n = set_n(peer_index,NULL);
-	pthread_mutex_lock(&mutex_sql_messages); // better to put this before we get the earliest_time
+	pthread_mutex_lock(&mutex_sql_messages); // 🟥🟥 // better to put this before we get the earliest_time
 	torx_read(n) // 🟧🟧🟧
 	const uint8_t owner = peer[n].owner;
 	const int min_i = peer[n].min_i;
@@ -937,7 +937,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	if(since > earliest_time || ((messages || days) && owner != ENUM_OWNER_CTRL))
 	{ // We've already loaded this far back or further, or we're trying to load group/group peer messages in a bad way
 		error_simple(0,"Sanity check fail in sql_populate_message at point two. Bailing out. Report this.");
-		pthread_mutex_unlock(&mutex_sql_messages);
+		pthread_mutex_unlock(&mutex_sql_messages); // 🟩🟩
 		return 0; // no messages to retrieve
 	}
 	sqlite3_stmt *stmt;
@@ -969,7 +969,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	if(val != SQLITE_OK)
 	{
 		error_printf(0, "Can't prepare message statement: %s. Not loading messages. Report this.",sqlite3_errmsg(db_messages));
-		pthread_mutex_unlock(&mutex_sql_messages);
+		pthread_mutex_unlock(&mutex_sql_messages); // 🟩🟩
 		return 0;
 	}
 	int offset = 0;
@@ -1011,13 +1011,13 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			error_printf(0,"Unrecognized protocol not loaded: %u",protocol);
 			continue;
 		}
-		pthread_rwlock_rdlock(&mutex_protocols);
+		pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 		const uint8_t logged = protocols[p_iter].logged;
 		const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 		const uint8_t file_offer = protocols[p_iter].file_offer;
 		const uint8_t file_checksum = protocols[p_iter].file_checksum;
 		const uint8_t group_msg = protocols[p_iter].group_msg;
-		pthread_rwlock_unlock(&mutex_protocols);
+		pthread_rwlock_unlock(&mutex_protocols); // 🟩
 		if(null_terminated_len == 0 && logged)
 			column = 6;
 		else
@@ -1142,7 +1142,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 	if(val != SQLITE_DONE/* && val != SQLITE_ROW*/) // SQLITE_ROW can occur when we broke the loop above because message arg was passed
 		error_printf(0, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-	pthread_mutex_unlock(&mutex_sql_messages);
+	pthread_mutex_unlock(&mutex_sql_messages); // 🟩🟩
 	return (int)loaded;
 }
 
@@ -1176,10 +1176,10 @@ static inline void inline_load_messages(const uint8_t owner,const int peer_index
 
 int sql_populate_peer(void)
 { // "load_onions"
-	pthread_mutex_lock(&mutex_message_loading); // must be BEFORE messages_loaded != 0
+	pthread_mutex_lock(&mutex_message_loading); // 🟥🟥 // must be BEFORE messages_loaded != 0
 	if(messages_loaded != 0)
 	{ // This occurs after restarting Tor. We don't necessarily need to load from disk.
-		pthread_mutex_unlock(&mutex_message_loading);
+		pthread_mutex_unlock(&mutex_message_loading); // 🟩🟩
 		error_simple(0,"NOTICE: sql_populate_peer is being called despite messages already being loaded.");
 		int n = 0;
 		torx_read(n) // 🟧🟧🟧
@@ -1202,7 +1202,7 @@ int sql_populate_peer(void)
 	if(val != SQLITE_OK)
 	{
 //		pthread_mutex_unlock(&mutex_sql_encrypted);
-		pthread_mutex_unlock(&mutex_message_loading);
+		pthread_mutex_unlock(&mutex_message_loading); // 🟩🟩
 		error_printf(0, "Can't prepare populate peer statement: %s",sqlite3_errmsg(db_messages));
 		return -1;
 	}
@@ -1297,22 +1297,22 @@ int sql_populate_peer(void)
 	{
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 //		pthread_mutex_unlock(&mutex_sql_encrypted);
-		pthread_mutex_unlock(&mutex_message_loading);
+		pthread_mutex_unlock(&mutex_message_loading); // 🟩🟩
 		error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(db_messages));
 		return -1;
 	}
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 //	pthread_mutex_unlock(&mutex_sql_encrypted);
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
 	{
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		message_sort(g);
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	}
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	messages_loaded = 1; // must be at the end
-	pthread_mutex_unlock(&mutex_message_loading); // must be AFTER messages_loaded = 1;
+	pthread_mutex_unlock(&mutex_message_loading); // 🟩🟩 // must be AFTER messages_loaded = 1;
 	return 0;
 }
 
@@ -1337,7 +1337,7 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 		mutex = &mutex_sql_encrypted;
 	}
 	sqlite3_stmt *stmt;
-	pthread_mutex_lock(mutex);
+	pthread_mutex_lock(mutex); // 🟥🟥
 	while(cycles--)
 	{
 		const size_t allocated = strlen(query) + 64;
@@ -1353,11 +1353,10 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 		if(val != SQLITE_OK)
 		{
 			error_printf(0, "Can't prepare populate setting statement: %s",sqlite3_errmsg(*db));
-			pthread_mutex_unlock(mutex);
+			pthread_mutex_unlock(mutex); // 🟩🟩
 			goto fail;
 		}
 		const char *setting_value = NULL;
-
 		if((val = sqlite3_step(stmt)) == SQLITE_ROW)
 		{ // Retrieve data here using sqlite3_column_* functions,
 			if(force_plaintext || cycles) // (force_plaintext)
@@ -1381,7 +1380,7 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 		}
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
-	pthread_mutex_unlock(mutex);
+	pthread_mutex_unlock(mutex); // 🟩🟩
 	fail: {}
 	if(data_len)
 		*data_len = setting_value_len;
@@ -1411,8 +1410,8 @@ void sql_populate_setting(const int force_plaintext)
 		mutex = &mutex_sql_encrypted;
 	}
 	sqlite3_stmt *stmt;
-	pthread_mutex_lock(mutex);
 	uint8_t attempt_login = 0;
+	pthread_mutex_lock(mutex); // 🟥🟥
 	while(cycles--)
 	{
 		const char *command;
@@ -1426,7 +1425,7 @@ void sql_populate_setting(const int force_plaintext)
 		if(val != SQLITE_OK)
 		{
 			error_printf(0, "Can't prepare populate setting statement: %s",sqlite3_errmsg(*db));
-			pthread_mutex_unlock(mutex);
+			pthread_mutex_unlock(mutex); // 🟩🟩
 			return;
 		}
 		while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
@@ -1452,7 +1451,7 @@ void sql_populate_setting(const int force_plaintext)
 			if(force_plaintext)
 			{
 				error_printf(2,"Plaintext Setting: %s",setting_name);
-				pthread_rwlock_wrlock(&mutex_global_variable);
+				pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				if(!strncmp(setting_name,"salt",4) && setting_value_len == sizeof(saltbuffer))
 					memcpy(saltbuffer,setting_value,sizeof(saltbuffer));
 				else if(!strncmp(setting_name,"crypto_pwhash_OPSLIMIT",22))
@@ -1501,7 +1500,7 @@ void sql_populate_setting(const int force_plaintext)
 				}
 				else
 				{
-					pthread_rwlock_unlock(&mutex_global_variable);
+					pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const size_t len = strlen(setting_name);
 					char *setting_name_allocated = torx_secure_malloc(len+1);
 					snprintf(setting_name_allocated,len+1,"%s",setting_name);
@@ -1509,15 +1508,15 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(peer_index,setting_name_allocated,setting_value_allocated,setting_value_len,1);
-					pthread_rwlock_rdlock(&mutex_global_variable); // yes rdlock is correct here, because we have no more actions upon it
+					pthread_rwlock_rdlock(&mutex_global_variable); // 🟧 // yes rdlock is correct here, because we have no more actions upon it
 				}
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 			else /* encrypted */
 			{
 				error_printf(3,"Encrypted Setting: peer_index=%d %s",peer_index,setting_name);
 				if(peer_index < 0) // global variable
-					pthread_rwlock_wrlock(&mutex_global_variable);
+					pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				if(!strncmp(setting_name,"download_dir",12))
 				{
 					torx_free((void*)&download_dir);
@@ -1604,7 +1603,7 @@ void sql_populate_setting(const int force_plaintext)
 					const int g = set_g(ctrl_n,NULL); // reserved
 					const int stripped_peer_index = (int)strtoull(&setting_name[10], NULL, 10);
 					const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
-					pthread_rwlock_wrlock(&mutex_expand_group); // XXX
+					pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 					if(group[g].peerlist)
 						group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)group[g].peercount+1)*sizeof(int));
 					else
@@ -1612,7 +1611,7 @@ void sql_populate_setting(const int force_plaintext)
 					group[g].peerlist[group[g].peercount] = peer_n;
 					group[g].peercount++; // so, this grows as we load more
 				//	printf("Checkpoint sql_populate_setting g==%d peercount==%u\n",g,group[g].peercount);
-					pthread_rwlock_unlock(&mutex_expand_group); // XXX
+					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 				}
 				else if(!strncmp(setting_name,"tor_socks_port",14))
 					tor_socks_port = (uint16_t)strtoull(setting_value, NULL, 10);
@@ -1628,7 +1627,7 @@ void sql_populate_setting(const int force_plaintext)
 				else
 				{ // Send unrecognized settings to UI
 					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
-						pthread_rwlock_unlock(&mutex_global_variable);
+						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const int n = set_n(peer_index,NULL); // XXX WARNING: N could be negative, indicating a global value
 					const size_t len = strlen(setting_name);
 					char *setting_name_allocated = torx_secure_malloc(len+1);
@@ -1638,22 +1637,22 @@ void sql_populate_setting(const int force_plaintext)
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(n,setting_name_allocated,setting_value_allocated,setting_value_len,0);
 					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
-						pthread_rwlock_rdlock(&mutex_global_variable); // yes rdlock is correct here, because we have no more actions upon it
+						pthread_rwlock_rdlock(&mutex_global_variable); // 🟧 // yes rdlock is correct here, because we have no more actions upon it
 				}
 				if(peer_index < 0) // global variable
-					pthread_rwlock_unlock(&mutex_global_variable);
+					pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 		}
 		if(val != SQLITE_DONE)
 			error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(*db));
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
-	pthread_mutex_unlock(mutex);
+	pthread_mutex_unlock(mutex); // 🟩🟩
 	if(force_plaintext)
 	{
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		const char *tor_location_local_pointer = tor_location;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		if(tor_location_local_pointer && attempt_login)
 			login_start("");
 	}
@@ -1700,9 +1699,9 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int specific_peer = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index_other,(long long)time,(long long)nstime);
 			sql_exec(&db_messages,command,NULL,0);
@@ -1729,9 +1728,9 @@ int sql_delete_history(const int peer_index)
 		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int specific_peer = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index_other);
 			sql_exec(&db_messages,command,NULL,0);

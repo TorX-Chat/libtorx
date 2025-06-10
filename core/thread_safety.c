@@ -335,9 +335,9 @@ unsigned char *getter_group_id(const int g)
 	if(g < 0)
 		error_simple(-1,"Negative g passed to group_access. Coding error. Report this.");
 	unsigned char *id = torx_secure_malloc(GROUP_ID_SIZE);
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	memcpy(id,group[g].id,GROUP_ID_SIZE);
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return id;
 }
 
@@ -345,9 +345,9 @@ void *group_access(const int g,const size_t offset)
 {
 	if(g < 0)
 		error_simple(-1,"Negative g passed to group_access. Coding error. Report this.");
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	void *ret = (char*)&group[g] + offset;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return ret;
 }
 
@@ -356,11 +356,11 @@ void *group_get_next(int *n,int *i,const void *arg)
 	if(!n || !i || arg == NULL)
 		return NULL;
 	const struct msg_list *page = (const struct msg_list *) arg;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	*n = page->n;
 	*i = page->i;
 	void *next = page->message_next;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return next;
 }
 
@@ -369,11 +369,11 @@ void *group_get_prior(int *n,int *i,const void *arg)
 	if(!n || !i || arg == NULL)
 		return NULL;
 	const struct msg_list *page = (const struct msg_list *) arg;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	*n = page->n;
 	*i = page->i;
 	void *prior = page->message_prior;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return prior;
 }
 
@@ -382,7 +382,7 @@ void group_get_index(int *n,int *i,const int g,const uint32_t index)
 	if(!n || !i || g < 0)
 		error_simple(-1,"group_get_index failed sanity check. Coding error. Report this.");
 	struct msg_list *current_page = NULL;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const uint32_t diff_msg_count = (const uint32_t)labs((long int)index - (long int)group[g].msg_count-1);
 	const uint32_t diff_msg_index_iter = (const uint32_t)labs((long int)index - (long int)group[g].msg_index_iter);
 	if(index <= diff_msg_count && index <= diff_msg_index_iter)
@@ -417,7 +417,7 @@ void group_get_index(int *n,int *i,const int g,const uint32_t index)
 		error_simple(0,"A non-existant index was requested from group_get_index. Possible coding error. Report this.");
 		*n = *i = 0;
 	}
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 }
 
 void *protocol_access(const int p_iter,const size_t offset)
@@ -841,9 +841,9 @@ void setter_group(const int g,const size_t offset,const void *value,const size_t
 	else if(!group) // can occur during shutdown
 		return;
 	getter_group_array_sanity_check(offsets_group)
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	memcpy((char*)&group[g] + offset,value,size);
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 }
 
 /* XXX The following are ONLY SAFE ON packet struct and global variables because of their fixed size / location XXX */
@@ -921,8 +921,8 @@ void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *sour
 		breakpoint();
 		return;
 	}
-	pthread_rwlock_wrlock(mutex);
+	pthread_rwlock_wrlock(mutex); // 🟥
 	memcpy(destination,source,len);
-	pthread_rwlock_unlock(mutex);
+	pthread_rwlock_unlock(mutex); // 🟩
 }
 

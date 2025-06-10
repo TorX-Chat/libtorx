@@ -160,7 +160,7 @@ static void *generate_suffix_ed25519(void *arg)
 		}
 	}
 	while(len != 56 || strncmp(&ed25519_pk_b32[52-suffix_length_local],"QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",suffix_length_local));
-	pthread_mutex_lock(&mutex_onion);
+	pthread_mutex_lock(&mutex_onion); // 🟥🟥
 	if(*thread_data->winner == 0)
 	{
 		crypto_hash_sha512(expanded_sk,ed25519_sk,32);
@@ -174,7 +174,7 @@ static void *generate_suffix_ed25519(void *arg)
 //		printf("Checkpoint %d in %ld cycles in %ld seconds\n",suffix_length_local,cycles,time(NULL)-time_start); // TODO cycles remove
 		error_printf(5,"Generated: %s",ed25519_pk_b32);
 	}
-	pthread_mutex_unlock(&mutex_onion);
+	pthread_mutex_unlock(&mutex_onion); // 🟩🟩
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 	sodium_memzero(expanded_sk,sizeof(expanded_sk));
@@ -207,15 +207,15 @@ static void *onion_gen(void *arg)
 		torx_free((void*)&serv_strc->peernick);
 		if(default_peernick == NULL)
 			error_simple(-1,"Default peernick is null. Coding error. Report this.");
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		serv_strc->peernick = torx_copy(NULL,default_peernick);
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	size_t suffix_length_local = (size_t)suffix_length;
 	const uint8_t local_shorten_torxids = shorten_torxids;
 	const uint32_t local_global_threads = global_threads;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(serv_strc->owner == ENUM_OWNER_CTRL || serv_strc->owner == ENUM_OWNER_GROUP_CTRL || local_shorten_torxids == 0) // TODO consider utilizing in_pthread
 		suffix_length_local = 0; // this should cause quick returns for CTRL, which we require
 
@@ -344,12 +344,12 @@ static void *onion_gen(void *arg)
 	if(serv_strc->owner == ENUM_OWNER_SING || serv_strc->owner == ENUM_OWNER_MULT || serv_strc->owner == ENUM_OWNER_GROUP_CTRL || serv_strc->owner == ENUM_OWNER_GROUP_PEER)
 	{ // We don't automatically load ctrl. We will probably work that in, in the future. We would have to make sure that automatically_accept_mult is on.
 		time_t expiration = 0;
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		if(serv_strc->owner == ENUM_OWNER_SING && sing_expiration_days > 0)
 			expiration = (60*60*24*sing_expiration_days+time(NULL));
 		else if(serv_strc->owner == ENUM_OWNER_MULT && mult_expiration_days > 0)
 			expiration = (60*60*24*mult_expiration_days+time(NULL));
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		int peer_index = sql_insert_peer(serv_strc->owner,ENUM_STATUS_FRIEND,99,serv_strc->privkey,serv_strc->onion,serv_strc->peernick,(int)expiration);
 		int n;
 		if(serv_strc->owner == ENUM_OWNER_GROUP_CTRL)

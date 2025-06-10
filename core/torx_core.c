@@ -273,14 +273,14 @@ const char *table_message = /* Messages can be null (ex: GROUP_PEER). Message mu
 
 int protocol_lookup(const uint16_t protocol)
 { // Check if a protocol is within an array, return p_iter
-	pthread_rwlock_rdlock(&mutex_protocols); // this operates recursively, is typically redundant. Just leave it as redundant.
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧 // this operates recursively, is typically redundant. Just leave it as redundant.
 	for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
 		if(protocols[p_iter].protocol == protocol)
 		{
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			return p_iter;
 		}
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 //	error_printf(0,"Protocol not found: %u. Be sure to catch this.",protocol);
 	return -1; // protocol not found. be sure to catch this.
 }
@@ -301,7 +301,7 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 		group_msg = 1;
 	else if(exclusive_type == ENUM_EXCLUSIVE_GROUP_MECHANICS)
 		group_mechanics = 1;
-	pthread_rwlock_wrlock(&mutex_protocols);
+	pthread_rwlock_wrlock(&mutex_protocols); // 🟥
 	for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
 		if(protocols[p_iter].protocol == 0)
 		{ // set stuff in an unused p_iter
@@ -323,10 +323,10 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 			protocols[p_iter].utf8 = utf8;
 			protocols[p_iter].socket_swappable = socket_swappable;
 			protocols[p_iter].stream = stream;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			return p_iter;
 		}
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	error_simple(0,"Cannot register protocol. Hit PROTOCOL_LIST_SIZE."); // so increase it!
 	breakpoint();
 	return -1;
@@ -356,7 +356,7 @@ static inline int torx_close_socket(pthread_rwlock_t *mutex,evutil_socket_t *soc
 	if(!socket)
 		return -1; // Sanity check
 	if(mutex)
-		pthread_rwlock_wrlock(mutex);
+		pthread_rwlock_wrlock(mutex); // 🟥
 	int ret = 0;
 	if(*socket > 0 && (ret = evutil_closesocket(*socket)) < 0)
 	{
@@ -365,7 +365,7 @@ static inline int torx_close_socket(pthread_rwlock_t *mutex,evutil_socket_t *soc
 	}
 	*socket = 0;
 	if(mutex)
-		pthread_rwlock_wrlock(mutex);
+		pthread_rwlock_unlock(mutex); // 🟩
 	return ret; // 0 on success or non-op
 }
 
@@ -873,16 +873,16 @@ int8_t torx_debug_level(const int8_t level)
 { // sets or gets (-1)
 	if(level > -1)
 	{ // set
-		pthread_rwlock_wrlock(&mutex_debug_level);
+		pthread_rwlock_wrlock(&mutex_debug_level); // 🟥
 		debug = level;
-		pthread_rwlock_unlock(&mutex_debug_level);
+		pthread_rwlock_unlock(&mutex_debug_level); // 🟩
 		return level;
 	}
 	else
 	{ // get
-		pthread_rwlock_rdlock(&mutex_debug_level);
+		pthread_rwlock_rdlock(&mutex_debug_level); // 🟧
 		const int8_t current_level = debug;
-		pthread_rwlock_unlock(&mutex_debug_level);
+		pthread_rwlock_unlock(&mutex_debug_level); // 🟩
 		return current_level;
 	}
 }
@@ -1119,9 +1119,9 @@ int message_insert(const int g,const int n,const int i)
 	page->i = i;
 	page->time = time;
 	page->nstime = nstime;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	struct msg_list *current_page = group[g].msg_first;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(current_page)
 	{ // Not first message
 		while(current_page->time < time || (current_page->time == time && current_page->nstime < nstime))
@@ -1140,9 +1140,9 @@ int message_insert(const int g,const int n,const int i)
 		{ // End of messages, ours is newest, insert infront
 			page->message_prior = current_page;
 			page->message_next = NULL;
-			pthread_rwlock_wrlock(&mutex_expand_group);
+			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 			group[g].msg_last = current_page->message_next = page;
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		}
 		else
 		{ // Current_page is newer than ours, insert behind
@@ -1152,9 +1152,9 @@ int message_insert(const int g,const int n,const int i)
 				current_page->message_prior->message_next = page;
 			else
 			{
-				pthread_rwlock_wrlock(&mutex_expand_group);
+				pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 				group[g].msg_first = page;
-				pthread_rwlock_unlock(&mutex_expand_group);
+				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			}
 			current_page->message_prior = page; // do last
 		}
@@ -1163,13 +1163,13 @@ int message_insert(const int g,const int n,const int i)
 	{ // First message
 		page->message_prior = NULL;
 		page->message_next = NULL;
-		pthread_rwlock_wrlock(&mutex_expand_group);
+		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		group[g].msg_last = group[g].msg_first = page;
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	}
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	group[g].msg_count++;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return 0;
 }
 
@@ -1177,9 +1177,9 @@ void message_remove(const int g,const int n,const int i)
 { // Remove message between two messages in our linked list
 	if(g < 0 || n < 0)
 		error_simple(-1,"Message_remove sanity check failed.");
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	struct msg_list *current_page = group[g].msg_first;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	while(current_page && (n != current_page->n || i != current_page->i))
 		current_page = current_page->message_next;
 	if(current_page && n == current_page->n && i == current_page->i)
@@ -1188,26 +1188,26 @@ void message_remove(const int g,const int n,const int i)
 			current_page->message_prior->message_next = current_page->message_next; // might be NULL, is fine
 		else
 		{ // removing first
-			pthread_rwlock_wrlock(&mutex_expand_group);
+			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 			group[g].msg_first = current_page->message_next; // might be NULL, is fine
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		}
 		if(current_page->message_next) // removing non-latest
 			current_page->message_next->message_prior = current_page->message_prior; // might be NULL, is fine
 		else
 		{ // removing latest
-			pthread_rwlock_wrlock(&mutex_expand_group);
+			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 			group[g].msg_last = current_page->message_prior; // might be NULL, is fine
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		}
-		pthread_rwlock_wrlock(&mutex_expand_group);
+		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		if(current_page == group[g].msg_index)
 		{ // MUST NULL msg_index if it is message_remove'd, to prevent undefined behaviour
 			group[g].msg_index = NULL;
 			group[g].msg_index_iter = 0;
 		}
 		group[g].msg_count--;
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		torx_free((void*)&current_page);
 	}
 	else
@@ -1217,9 +1217,9 @@ void message_remove(const int g,const int n,const int i)
 			error_printf(0,"Sanity message_remove called on non-existant message. Coding error. Report this.");
 		else
 		{
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const char *name = protocols[p_iter].name;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			error_printf(0,"Sanity message_remove called on non-existant message of protocol: %s. Coding error. Report this.",name);
 		}
 	//	breakpoint();
@@ -1232,21 +1232,21 @@ void message_sort(const int g)
 	if(g < 0)
 		error_simple(-1,"Message_sort sanity check failed.");
 	const uint8_t hide_blocked_group_peer_messages_local = threadsafe_read_uint8(&mutex_global_variable,&hide_blocked_group_peer_messages);
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int group_n = group[g].n;
 	const uint32_t peercount = group[g].peercount;
 	const int *peerlist = group[g].peerlist;
 	struct msg_list *msg_list = group[g].msg_first;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(msg_list != NULL || group_n < 0)
 	{ // Do not check peercount >0 because we might have messages to no-one on a new group (which are pointless but nevertheless permitted)
 		error_printf(0,"Message_sort has been called twice (please use message_insert instead) or upon a deleted group: %d",group_n);
 	//	breakpoint();
 		return;
 	}
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	group[g].msg_count = 0;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	struct msg_list *message_prior = NULL; // NOTE: this will change
 	const int group_n_max_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	time_t time_last = 0;
@@ -1262,9 +1262,9 @@ void message_sort(const int g)
 		torx_unlock(group_n) // 🟩🟩🟩
 		if(p_iter > -1)
 		{
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint16_t protocol = protocols[p_iter].protocol;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if(stat == ENUM_MESSAGE_FAIL || stat == ENUM_MESSAGE_SENT)
 			{ // Do outbound messages on group_n. NOTE: For speed of insertion, since this is the first N, it should be in order and therefore there is no need to check time/nstime, we assume they are sequential.
 				if(time_last < time || (time_last == time && nstime_last < nstime))
@@ -1280,23 +1280,23 @@ void message_sort(const int g)
 						message_prior->message_next = page;
 					else
 					{ // First message
-						pthread_rwlock_wrlock(&mutex_expand_group);
+						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 						group[g].msg_first = page;
-						pthread_rwlock_unlock(&mutex_expand_group);
+						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					}
 					if(i == group_n_max_i)
 					{ // Potentiallly last (can be overruled by message_insert later)
-						pthread_rwlock_wrlock(&mutex_expand_group);
+						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 						group[g].msg_last = page;
-						pthread_rwlock_unlock(&mutex_expand_group);
+						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					}
 					else
 						message_prior = page; // for the next one
 					time_last = time;
 					nstime_last = nstime;
-					pthread_rwlock_wrlock(&mutex_expand_group);
+					pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 					group[g].msg_count++;
-					pthread_rwlock_unlock(&mutex_expand_group);
+					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 				}
 				else // If that assumption is wrong, *MUST USE* message_insert instead.
 					message_insert(g,group_n,i);
@@ -1313,9 +1313,9 @@ void message_sort(const int g)
 	if(peerlist && peercount > 0)
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{ // Warning: use peer_n not nn
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			torx_read(peer_n) // 🟧🟧🟧
 			const uint8_t status = peer[peer_n].status;
 			const int max_i = peer[peer_n].max_i;
@@ -1331,9 +1331,9 @@ void message_sort(const int g)
 				torx_unlock(peer_n) // 🟩🟩🟩
 				if(p_iter > -1)
 				{
-					pthread_rwlock_rdlock(&mutex_protocols);
+					pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 					const uint8_t group_pm = protocols[p_iter].group_pm;
-					pthread_rwlock_unlock(&mutex_protocols);
+					pthread_rwlock_unlock(&mutex_protocols); // 🟩
 					if(stat == ENUM_MESSAGE_RECV || group_pm)
 						message_insert(g,peer_n,i);
 				}
@@ -1357,10 +1357,10 @@ time_t message_find_since(const int n)
 			const int p_iter = peer[n].message[tmp_i].p_iter;
 			if(p_iter < 0)
 				continue;
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_pm = protocols[p_iter].group_pm;
 			const uint8_t group_msg = protocols[p_iter].group_msg;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if((owner == ENUM_OWNER_GROUP_PEER && group_pm) || (owner == ENUM_OWNER_GROUP_CTRL && group_msg))
 			{
 				earliest_time = peer[n].message[tmp_i].time;
@@ -1373,11 +1373,11 @@ time_t message_find_since(const int n)
 		int group_pm_count = 0,group_msg_count = 0;
 		for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
 		{
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_pm = protocols[p_iter].group_pm;
 			const uint8_t group_msg = protocols[p_iter].group_msg;
 			const uint16_t protocol = protocols[p_iter].protocol;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if((owner == ENUM_OWNER_GROUP_PEER && group_pm) || (owner == ENUM_OWNER_GROUP_CTRL && group_msg))
 			{
 				if((owner == ENUM_OWNER_GROUP_PEER && !group_pm_count) || (owner == ENUM_OWNER_GROUP_CTRL && !group_msg_count))
@@ -1469,9 +1469,9 @@ static inline int inline_load_array(const int g,const int n,int *loaded_array_n,
 		{
 			const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)); // do not pass this without thinking
 			const uint8_t message_stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_msg = protocols[p_iter].group_msg;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if(!(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
 			{ // XXX j2fjq0fiofg WARNING: This MUST be the same as in sql_populate_message
 				loaded_array_n[loaded + discovered] = n;
@@ -1511,9 +1511,9 @@ int message_load_more(const int n)
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			if((freshly_loaded = sql_populate_message(peer_n_peer_index,0,0,since)))
 			{ // Do each GROUP_PEER
@@ -1775,9 +1775,9 @@ void set_time(time_t *time,time_t *nstime)
 		return;
 	}
 	struct timespec ts;
-	pthread_mutex_lock(&mutex_clock);
+	pthread_mutex_lock(&mutex_clock); // 🟥🟥
 	clock_gettime(CLOCK_REALTIME, &ts);
-	pthread_mutex_unlock(&mutex_clock);
+	pthread_mutex_unlock(&mutex_clock); // 🟩🟩
 	*time = ts.tv_sec;
 	*nstime = ts.tv_nsec;
 }
@@ -1946,12 +1946,12 @@ char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,cons
 
 char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)
 { // Audited 2024/02/18 // Message + '\0' + [Time] + [NSTime] + Protocol + Signature Note: should theoretically work with unsigned too (but no value in using it as such)
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(!protocol || (signature_len && sign_sk == NULL) || (date_len && time == 0) || (message_unsigned && base_message_len == 0) || (message_unsigned == NULL && base_message_len))
 	{ // Note: we don't sanity check message_unsigned or base_message_len because they could be NULL/0 for some protocols.
 		error_simple(0,"Failure of sanity check in message_sign.");
@@ -2199,10 +2199,10 @@ void torrc_save(const char *torrc_content_local)
 	if(!torrc_content_local || (len = strlen(torrc_content_local)) == 0)
 	{ // Setting to defaults
 		set_default = 1;
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		if(censored_region == 1 && snowflake_location)
 		{
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			const size_t len_part1 = strlen(torrc_content_default_censored_region_part1);
 			const size_t len_snowflake = strlen(snowflake_location);
 			const size_t len_part2 = strlen(torrc_content_default_censored_region_part2);
@@ -2212,7 +2212,7 @@ void torrc_save(const char *torrc_content_local)
 		}
 		else
 		{
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			len = strlen(torrc_content_default); // 22 is for ConstrainedSockSize + newline
 			torrc_content_final = torx_secure_malloc(len + 1);
 			snprintf(torrc_content_final,len + 1,"%s",torrc_content_default);
@@ -2223,10 +2223,10 @@ void torrc_save(const char *torrc_content_local)
 		torrc_content_final = torx_secure_malloc(len+1);
 		memcpy(torrc_content_final,torrc_content_local,len+1);
 	}
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	torx_free((void*)&torrc_content);
 	torrc_content = torrc_content_final;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(threadsafe_read_uint8(&mutex_global_variable,&keyed))
 	{ // checking if this was called as startup (unkeyed) or manually (keyed)
 		if(set_default)
@@ -2248,11 +2248,11 @@ char *torrc_verify(const char *torrc_content_local)
 	char tor_location_local[PATH_MAX];
 	char tor_data_directory_local[PATH_MAX];
 	int tdd_len = 0;
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
 	if(tor_data_directory)
 		tdd_len = snprintf(tor_data_directory_local,sizeof(tor_data_directory_local),"%s",tor_data_directory);
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(tdd_len)
 	{
 		char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,tor_data_directory_local,NULL};
@@ -2318,9 +2318,9 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	if(peer[n].message[i].p_iter == -1)
 		return 0; // already deleted
 	const int p_iter = peer[n].message[i].p_iter;
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint8_t group_msg = protocols[p_iter].group_msg;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(group_msg && peer[n].owner == ENUM_OWNER_GROUP_PEER)
 		peer[n].message[i].message = NULL; // will be freed in group CTRL
 	else
@@ -2443,7 +2443,7 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 void zero_g(const int g)
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
 //	printf("Checkpoint zeroing g==%d\n",g);
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	memset(group[g].id,'0',GROUP_ID_SIZE);
 	group[g].n = -1;
 	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
@@ -2468,7 +2468,7 @@ void zero_g(const int g)
 	}
 	group[g].msg_first = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
 	group[g].msg_last = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 // TODO probably need a callback to UI ( for what ? )
 }
 
@@ -2483,13 +2483,13 @@ static inline void sort_n(int sorted_n[],const int size)
 		if(owner == ENUM_OWNER_GROUP_CTRL)
 		{
 			const int g = set_g(nn,NULL);
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			struct msg_list *page = group[g].msg_last;
 			if(page)
 				last_time[nn] = group[g].msg_last->time;
 			else
 				last_time[nn] = 0;
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		}
 		/* else if(owner == ENUM_OWNER_GROUP_PEER) */
 			// TODO Consider: If GROUP_PEER, we should sort by last private message time. This would add (potentially lots of) CPU cycles though and would only be useful if we have a UI developer who wants to seperate private chats into a seperate sorted list.
@@ -2529,7 +2529,7 @@ static inline void sort_n(int sorted_n[],const int size)
 void invitee_add(const int g,const int n)
 {
 	int invitee = 0;
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	for(int first_negative_one = -1; invitee < MAX_INVITEES ; invitee++)
 	{
 		if(group[g].invitees[invitee] == -1 && first_negative_one < 0)
@@ -2545,22 +2545,22 @@ void invitee_add(const int g,const int n)
 			break;
 		}
 	}
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(invitee == MAX_INVITEES)
 		error_simple(0,"Hit MAX_INVITEES in invitee_add. Report this.");
 }
 
 int invitee_remove(const int g,const int n)
 {
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	for(int invitee = 0; invitee < MAX_INVITEES && group[g].invitees[invitee] != -2 ; invitee++)
 		if(group[g].invitees[invitee] == n)
 		{
 			group[g].invitees[invitee] = -1;
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			return 0;
 		}
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return -1;
 }
 
@@ -2693,9 +2693,9 @@ size_t stripbuffer(char *buffer)
 
 static inline int hash_password_internal(const char *password)
 { // Hashes the Tor control port password by making a call to the Tor binary
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	const char *tor_location_local_pointer = tor_location;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(!tor_location_local_pointer || !password)
 		return 0;
 	char arg1[] = "--quiet";
@@ -2708,9 +2708,9 @@ static inline int hash_password_internal(const char *password)
 	char *arg5 = torx_secure_malloc(password_len+1);
 	memcpy(arg5,password,password_len+1);
 	char tor_location_local[PATH_MAX];
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,NULL};
 	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
 	torx_free((void*)&arg5);
@@ -2719,9 +2719,9 @@ static inline int hash_password_internal(const char *password)
 		len = strlen(ret);
 	if(len == 61)
 	{
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		memcpy(control_password_hash,ret,sizeof(control_password_hash));
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		error_printf(3,"Actual Tor Control Password: %s",password);
 		error_printf(3,"Hashed Tor Control Password: %s",ret);
 	}
@@ -2738,7 +2738,7 @@ static inline void hash_password(void)
 		error_simple(0,"Hash password cannot be called while running system Tor because it could overwrite a control_password_clear. Coding error. Report this.");
 		return;
 	}
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	if(is_null(control_password_hash,sizeof(control_password_hash)))
 	{
 		if(!control_password_clear) // avoid overwriting if it has been set for some reason (ex: by UI)
@@ -2749,17 +2749,17 @@ static inline void hash_password(void)
 		const size_t current_len = strlen(control_password_clear);
 		char control_password_clear_local[current_len+1];
 		memcpy(control_password_clear_local,control_password_clear,sizeof(control_password_clear_local));
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		if(hash_password_internal(control_password_clear_local) != 61)
 		{
-			pthread_rwlock_wrlock(&mutex_global_variable);
+			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			torx_free((void*)&tor_location);
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 		sodium_memzero(control_password_clear_local,sizeof(control_password_clear_local));
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	}
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 }
 
 static inline int extract_version(uint32_t output[4],const char *input)
@@ -2786,10 +2786,10 @@ static inline int get_tor_version(void)
 { // Sets the tor_version, decides v3auth_enabled. Utilizes run_binary or tor_call, as appropriate.
 	char *ret = NULL;
 	char tor_location_local[PATH_MAX]; // not sensitive
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
 	uint8_t using_system_tor_local = (tor_ctrl_port && !tor_pid);
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(using_system_tor_local)
 		ret = tor_call("getinfo version\n");
 	if(!ret && tor_location_local[0] != '\0') // NOT else
@@ -2809,9 +2809,9 @@ static inline int get_tor_version(void)
 		error_simple(0,"No system Tor functioning and no binary available.");
 		return -1;
 	}
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	using_system_tor = using_system_tor_local;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	const int failed = extract_version(tor_version,ret);
 	torx_free((void*)&ret);
 	if(failed)
@@ -2819,9 +2819,9 @@ static inline int get_tor_version(void)
 		if(!using_system_tor_local && tor_location_local[0] != '\0')
 		{
 			error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
-			pthread_rwlock_wrlock(&mutex_global_variable);
+			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			torx_free((void*)&tor_location);
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 	}
 	else
@@ -2833,9 +2833,9 @@ static inline int get_tor_version(void)
 		else // Disable v3auth if tor version <0.4.6.1
 			local_v3auth_enabled = 0;
 		error_simple(0,local_v3auth_enabled ? "V3Auth is enabled by default." : "V3Auth is disabled by default. Recommended to upgrade Tor to a version >0.4.6.1");
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		v3auth_enabled = local_v3auth_enabled;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 	return failed;
 }
@@ -2847,7 +2847,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 	struct sockaddr_in serv_addr = {0};
 	serv_addr.sin_family = AF_INET;
 	serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	pthread_mutex_lock(&mutex_socket_rand);
+	pthread_mutex_lock(&mutex_socket_rand); // 🟥🟥
 	while(1)
 	{
 		if(arg)
@@ -2884,7 +2884,7 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 				error_simple(0,"Unlikely socket failed to close error.3");
 		}
 	}
-	pthread_mutex_unlock(&mutex_socket_rand);
+	pthread_mutex_unlock(&mutex_socket_rand); // 🟩🟩
 	return port;
 }
 
@@ -2935,7 +2935,7 @@ static inline void *tor_log_reader(void *arg)
 	{ // Casting as size_t is safe because > 0
 		data[len] = '\0'; // Ensure null termination. This is necessary. If issues continue, utilize utf8_valid too.
 		char *msg = NULL;
-		pthread_mutex_lock(&mutex_tor_pipe);
+		pthread_mutex_lock(&mutex_tor_pipe); // 🟥🟥
 		if(read_tor_pipe_cache)
 		{
 			const uint32_t current_size = torx_allocation_len(read_tor_pipe_cache);
@@ -2955,7 +2955,7 @@ static inline void *tor_log_reader(void *arg)
 				memcpy(msg,data,(size_t)len+1); // includes copying null terminator
 			}
 			remove_lines_with_suffix(msg);
-			pthread_mutex_unlock(&mutex_tor_pipe);
+			pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 			const size_t remaining_len = strlen(msg);
 			if(remaining_len && utf8_valid(msg,remaining_len))
 				tor_log_cb(msg);
@@ -2970,10 +2970,10 @@ static inline void *tor_log_reader(void *arg)
 		{ // incomplete, no existing cache
 			read_tor_pipe_cache = torx_secure_malloc((size_t)len+1);
 			memcpy(read_tor_pipe_cache,data,(size_t)len+1); // includes copying null terminator
-			pthread_mutex_unlock(&mutex_tor_pipe);
+			pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 		}
 		else // incomplete, existing cache
-			pthread_mutex_unlock(&mutex_tor_pipe);
+			pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 		sodium_memzero(data,(size_t)len);
 	}
 	#ifdef WIN32
@@ -3049,15 +3049,15 @@ static inline void unlock(void)
 {
 	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
 	{
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		lockout = 0;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		login_cb(0);
 	}
 }
 
 static inline void kill_tor(const uint8_t wait_to_reap)
-{ // Note: should be called from within mutex_tor_pipe locks
+{ // XXX Note: should be called from within mutex_tor_pipe locks XXX
 	if(tor_pid > 0) // Necessary sanity check
 	{
 		if(tor_ctrl_socket < 1)
@@ -3075,10 +3075,10 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 			error_simple(0,"Tor is probably already dead.");
 	//	while(!randport(tor_ctrl_port) || !randport(tor_socks_port)) // does not work because tor is not deregistering these ports properly on shutdown, it seems.
 	//		fprintf(stderr,"not ready yet. TODO REMOVE???\n");
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		tor_running = 0;
 		tor_pid = 0;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		pid_write(tor_pid);
 	}
 }
@@ -3088,12 +3088,12 @@ static inline void *start_tor_threaded(void *arg)
 	(void) arg;
 	pusher(zero_pthread,(void*)&thrd_start_tor)
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	uint16_t tor_ctrl_port_local = tor_ctrl_port;
 	uint16_t tor_socks_port_local = tor_socks_port;
 	const uint8_t already_using_system_tor = using_system_tor;
 	const uint8_t already_running = tor_running;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(already_running && already_using_system_tor) // Must do this before calling get_tor_version in case we are changing tor_ctrl_port
 		torx_close_socket(&mutex_global_variable,&tor_ctrl_socket);
 	if(get_tor_version())
@@ -3102,9 +3102,9 @@ static inline void *start_tor_threaded(void *arg)
 	{ // System Tor is to be utilized
 		if(already_running && !already_using_system_tor)
 		{
-			pthread_mutex_lock(&mutex_tor_pipe);
+			pthread_mutex_lock(&mutex_tor_pipe); // 🟥🟥
 			kill_tor(1);
-			pthread_mutex_unlock(&mutex_tor_pipe);
+			pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 		}
 		char *ret = tor_call("getinfo config-text\n");
 		if(tor_socks_port_local || (tor_socks_port_local = extract_port(ret,"SocksPort")))
@@ -3122,11 +3122,11 @@ static inline void *start_tor_threaded(void *arg)
 			}
 			else
 				system_tor_torrc_content = NULL;
-			pthread_rwlock_wrlock(&mutex_global_variable);
+			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			tor_socks_port = tor_socks_port_local;
 			torx_free((void*)&torrc_content);
 			torrc_content = system_tor_torrc_content;
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			sql_populate_peer();
 		}
 		else // Bad password or bad control port
@@ -3136,7 +3136,7 @@ static inline void *start_tor_threaded(void *arg)
 	else
 	{ // Binary Tor is to be utilized
 		error_simple(2,"Running binary Tor.");
-		pthread_mutex_lock(&mutex_tor_pipe);
+		pthread_mutex_lock(&mutex_tor_pipe); // 🟥🟥
 		if(!tor_pid) // If Tor is not running in this runtime, check for an abandoned Tor progess.
 			tor_pid = pid_read();
 		hash_password(); // MUST NOT TRIGGER IF USING SYSTEM TOR because system Tor allows empty control_password_clear
@@ -3149,35 +3149,35 @@ static inline void *start_tor_threaded(void *arg)
 		{ // Only set if UI didn't set it, then try defaults first
 			if((tor_socks_port_local = randport(PORT_DEFAULT_SOCKS)) || (tor_socks_port_local = randport(0)))
 			{ // This WILL succeed
-				pthread_rwlock_wrlock(&mutex_global_variable);
+				pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				tor_socks_port = tor_socks_port_local;
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 		}
 		else if(!randport(tor_socks_port_local))
 		{
 			tor_socks_port_local = randport(0);
 			error_printf(0,"Changing Tor Socks Port to %u",tor_socks_port_local);
-			pthread_rwlock_wrlock(&mutex_global_variable);
+			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			tor_socks_port = tor_socks_port_local;
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 		if(!tor_ctrl_port_local)
 		{ // Only set if UI didn't set it, then try defaults first
 			if((tor_ctrl_port_local = randport(PORT_DEFAULT_CONTROL)) || (tor_ctrl_port_local = randport(0)))
 			{ // This WILL succeed
-				pthread_rwlock_wrlock(&mutex_global_variable);
+				pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				tor_ctrl_port = tor_ctrl_port_local;
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 		}
 		else if(!randport(tor_ctrl_port_local))
 		{
 			tor_ctrl_port_local = randport(0);
 			error_printf(0,"Changing Tor Control Port to %u",tor_ctrl_port_local);
-			pthread_rwlock_wrlock(&mutex_global_variable);
+			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			tor_ctrl_port = tor_ctrl_port_local;
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 		#ifdef WIN32
 		HANDLE fd_stdout = {0};
@@ -3196,7 +3196,7 @@ static inline void *start_tor_threaded(void *arg)
 		char arg9[] = "--LongLivedPorts"; // p4
 		char arg10[] = "--DataDirectory"; // tor_data_directory
 		char p1[21],p2[21],p3[21],p4[21];
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		snprintf(p1,sizeof(p1),"%u",tor_socks_port_local);
 		snprintf(p2,sizeof(p2),"%u",tor_ctrl_port_local);
 		snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
@@ -3212,13 +3212,13 @@ static inline void *start_tor_threaded(void *arg)
 			if(tor_data_directory)
 			{
 				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,arg10,tor_data_directory,NULL};
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			}
 			else
 			{
 				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg6,arg7,arg8,p3,arg9,p4,NULL};
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			}
 		}
@@ -3227,22 +3227,22 @@ static inline void *start_tor_threaded(void *arg)
 			if(tor_data_directory)
 			{
 				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,arg10,tor_data_directory,NULL};
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			}
 			else
 			{
 				char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,p1,arg4,p2,arg5,control_password_hash,arg9,p4,NULL};
-				pthread_rwlock_unlock(&mutex_global_variable);
+				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			}
 		}
 		torx_free((void*)&ret); // we don't use this and it should be null anyway
 		torx_free((void*)&torrc_content_local);
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		tor_pid = pid;
-		pthread_rwlock_unlock(&mutex_global_variable);
-		pthread_mutex_unlock(&mutex_tor_pipe);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+		pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 		ret = tor_call("TAKEOWNERSHIP\n"); // We place this here rather than after authenticating in tor_call because we do need to run sql_populate_peer again
 		torx_free((void*)&ret);
 		pid_write(pid);
@@ -3253,11 +3253,11 @@ static inline void *start_tor_threaded(void *arg)
 		if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,itovp(fd_stdout)))
 			error_simple(-1,"Failed to create thread");
 		#endif
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		error_printf(1,"Tor PID: %d",tor_pid);
 		error_printf(1,"Tor SOCKS Port: %u",tor_socks_port_local);
 		error_printf(3,"Tor Control Port: %u",tor_ctrl_port_local);
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		sql_populate_peer();
 	}
 	unlock(); // We allow login even in the event of connection failure because it may need to be fixed in UI
@@ -3524,9 +3524,9 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].file = torx_secure_malloc(sizeof(struct file_list) *11);
 	for(int j = 0; j < 11; j++)
 		initialize_f(n,j);
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	max_peer++;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 //	initialize_o(n); // depreciate, do not place here
 }
 
@@ -3545,12 +3545,12 @@ static void initialize_g(const int g) // XXX do not put locks in here
 	group[g].msg_index = NULL;
 	group[g].msg_first = NULL;
 	group[g].msg_last = NULL;
-	pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // XXX DANGER, WE ASSUME LOCKS XXX
 	initialize_g_cb(g);
-	pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DANGER, WE ASSUME LOCKS XXX
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	max_group++;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 }
 
 void re_expand_callbacks(void)
@@ -3714,12 +3714,12 @@ static inline void expand_peer_struc(const int n)
 	getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
 	if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n && n % 10 == 0 && n + 10 > threadsafe_read_int(&mutex_global_variable,&max_peer))
 	{ // Safe to cast n as size_t because > -1
-		pthread_rwlock_wrlock(&mutex_expand);
+		pthread_rwlock_wrlock(&mutex_expand); // 🟥
 		const uint32_t current_allocation_size = torx_allocation_len(peer);
 		peer = torx_realloc(peer,current_allocation_size + sizeof(struct peer_list) *10);
 		for(int j = n + 10; j > n; j--)
 			initialize_n(j);
-		pthread_rwlock_unlock(&mutex_expand);
+		pthread_rwlock_unlock(&mutex_expand); // 🟩
 		expand_peer_struc_cb(n);
 		for(int j = n + 10; j > n; j--)
 		{
@@ -3744,9 +3744,9 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 	{ // Safe to cast g as size_t because > -1
 		const uint32_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
-		pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // XXX DANGER, WE ASSUME LOCKS XXX
 		expand_group_struc_cb(g);
-		pthread_rwlock_wrlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
+		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DANGER, WE ASSUME LOCKS XXX
 		for(int j = g + 10; j > g; j--)
 			initialize_g(j);
 	}
@@ -3821,9 +3821,9 @@ int set_last_message(int *last_message_n,const int n,const int count_back)
 			return INT_MIN;
 		}
 		const int g = set_g(n,NULL);
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		struct msg_list *page = group[g].msg_last;
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		while(page)
 		{
 			const int p_iter = getter_int(page->n,page->i,-1,offsetof(struct message_list,p_iter));
@@ -3940,7 +3940,7 @@ int set_g(const int n,const void *arg)
 	int8_t error = 0;
 	int g = 0;
 	uint8_t owner = 0; // initializing for clang. doesnt need to be.
-	pthread_rwlock_rdlock(&mutex_expand_group); // XXX
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	if(n > -1)
 	{
 		owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -3964,7 +3964,7 @@ int set_g(const int n,const void *arg)
 			}
 		else
 		{ // MUST BE FATAL or it will cause weird problems. Don't call set_g on non-group peer types.
-			pthread_rwlock_unlock(&mutex_expand_group); // XXX
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			error_simple(-1,"set_g called on a non-group peer. Coding error. Report this. (include backtrace in report)"); // NOTE: Highly likely a UI dev error. Get a backtrace.
 		}
 	}
@@ -3984,12 +3984,12 @@ int set_g(const int n,const void *arg)
 		printf("Checkpoint is_null %d\n",is_null(group[g].id,GROUP_ID_SIZE));
 		printf("Checkpoint memcmp %d\n",!memcmp(group[g].id,zero_array,GROUP_ID_SIZE));
 		printf("Checkpoint group_n %d\n",group[g].n);
-		pthread_rwlock_unlock(&mutex_expand_group); // XXX
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		error_printf(-1,"Set_g landed on a blank group g==%d ENUM_OWNER_GROUP_PEER. Report this.",g); // TODO 2024/02/24 happened in a private group when clicking peerlist. Same group has allowed PMing wrong person
 		error = 1;
 	} */
-	pthread_rwlock_unlock(&mutex_expand_group); // XXX
-	pthread_rwlock_wrlock(&mutex_expand_group); // XXX
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	expand_group_struc(g); // Expand struct if necessary
 	if(!error && n > -1)
 		if(owner == ENUM_OWNER_GROUP_CTRL) // necessary check, to ensure we're not setting group_n to GROUP_PEER
@@ -4010,7 +4010,7 @@ int set_g(const int n,const void *arg)
 		printf("Checkpoint set_g by hash\n");
 	else
 		printf("Checkpoint set_g by fresh g==%d\n",g); */
-	pthread_rwlock_unlock(&mutex_expand_group); // XXX
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return g;
 }
 
@@ -4044,9 +4044,9 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(protocol != ENUM_PROTOCOL_GROUP_OFFER && protocol != ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 		return -1;
 	torx_read(n) // 🟧🟧🟧
@@ -4080,10 +4080,10 @@ int set_f_from_i(int *file_n,const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint8_t file_checksum = protocols[p_iter].file_checksum;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(!file_checksum)
 		return -1;
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -4154,17 +4154,17 @@ int set_r(const int n,const int f,const int passed_requester_n)
 int group_online(const int g)
 { // Returns number of online peers
 	int online = 0;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int *peerlist = group[g].peerlist;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(peerlist != NULL)
 	{
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const uint8_t sendfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 			const uint8_t recvfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 			if(sendfd_connected > 0 || recvfd_connected > 0)
@@ -4183,9 +4183,9 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	size_t peeronion_len = 0;
 	if(peeronion_prefix)
 		peeronion_len = strlen(peeronion_prefix);
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int *peerlist = group[g].peerlist;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(g < 0 || sig == NULL || peeronion_len > 56 || message == NULL || message_len < 1)
 	{
 		if(message == NULL || message_len < 1)
@@ -4209,9 +4209,9 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	if(peerlist) // NOTE: peerlist is null when adding first peer, so we skip and check for self-sign
 		for(uint32_t nn = 0; nn != g_peercount; nn++)
 		{
-			pthread_rwlock_wrlock(&mutex_expand_group); // YES this is wrlock
+			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // YES this is wrlock TODO why did we insist on it being wrlock???
 			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			char peeronion[56+1];
 			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
@@ -4279,28 +4279,28 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	char local_group_peeronion[56+1]; // WARNING: group_peeronion is NOT GUARANTEED TO BE A STRING, use local_group_peeronion
 	memcpy(local_group_peeronion,group_peeronion,56);
 	local_group_peeronion[56] = '\0';
-	pthread_mutex_lock(&mutex_group_peer_add);
+	pthread_mutex_lock(&mutex_group_peer_add); // 🟥🟥
 	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 	const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int *peerlist = group[g].peerlist;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(peerlist)
 	{
 		char onion_group_n[56+1];
 		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		for(uint32_t nn = 0 ; nn < g_peercount ; nn++) // check for existing before adding
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			char peeronion[56+1];
 			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			const int ret = memcmp(peeronion,local_group_peeronion,56);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			if(!ret || !memcmp(onion_group_n,local_group_peeronion,56))
 			{
-				pthread_mutex_unlock(&mutex_group_peer_add);
+				pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 				error_simple(2,"Peer already exists in peerlist or as group_n. Not adding."); // was level 4
 				sodium_memzero(local_group_peeronion,sizeof(local_group_peeronion));
 				return -2;
@@ -4312,7 +4312,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	{
 		if(group_peer_ed25519_pk == NULL || inviter_signature == NULL)
 		{
-			pthread_mutex_unlock(&mutex_group_peer_add);
+			pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 			error_simple(0,"Group is invite_required but something is null.");
 			sodium_memzero(local_group_peeronion,sizeof(local_group_peeronion));
 			return -1;
@@ -4324,7 +4324,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 		{ // XXX for testing, allowing pass upon failure if there are no peers (presumably we just got invited) TODO this could have unintended consequences on group creator's side
 			if(peerlist != NULL)
 			{ // Bail out if there is a peerlist with no keys matching sig
-				pthread_mutex_unlock(&mutex_group_peer_add);
+				pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 				error_simple(0,"Group requires invite but peer failed signature check.");
 				sodium_memzero(peer_invite,sizeof(peer_invite));
 				sodium_memzero(local_group_peeronion,sizeof(local_group_peeronion));
@@ -4356,7 +4356,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	sodium_memzero(nick_array,sizeof(nick_array));
 	if(n < 0)
 	{
-		pthread_mutex_unlock(&mutex_group_peer_add);
+		pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 		error_simple(0,"Coding error 57518. Report this.");
 		breakpoint();	
 		return -1;
@@ -4369,7 +4369,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	const int peer_index_group = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index_group,setting_name,"",0);
 	// Add it to our peerlist
-	pthread_rwlock_wrlock(&mutex_expand_group);
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	if(group[g].peerlist)
 		group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)g_peercount+1)*sizeof(int));
 	else
@@ -4377,8 +4377,8 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	group[g].peerlist[group[g].peercount] = n;
 	group[g].peercount++;
 //	printf("Checkpoint group_add_peer g==%d peercount==%u\n",g,group[g].peercount);
-	pthread_rwlock_unlock(&mutex_expand_group);
-	pthread_mutex_unlock(&mutex_group_peer_add);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 	load_onion(n); // connect to their onion with our signed onion, also in sql_populate_peer()
 	peer_new_cb(n);
 	return n;
@@ -4394,7 +4394,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 	}
 	const int g = set_g(-1,group_id); // reserving
 	uint8_t g_invite_required = 0;
-	pthread_mutex_lock(&mutex_group_join);
+	pthread_mutex_lock(&mutex_group_join); // 🟥🟥
 	int group_n = getter_group_int(g,offsetof(struct group_list,n));
 	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount)); // this is CONFIRMED PEERS, not unconfirmed/reported on offer
 	uint8_t responding_to_first_offer = 0;
@@ -4407,8 +4407,8 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 	setter_group(g,offsetof(struct group_list,invite_required),&g_invite_required,sizeof(g_invite_required)); // MUST be before generate_onion
 	if(group_n > -1 && (g_peercount > 0 || inviter_n < 0)) // DO NOT change this logic. its important to prevent trying to join our own public group or invite-only groups with peers already
 	{ // Adding peercount check to enable multiple attempts, as otherwise invite-only group could be unjoinable if a message gets lost
+		pthread_mutex_unlock(&mutex_group_join); // 🟩🟩
 		error_simple(0,"Have already attempted to join or joined this group. Bailing out.");
-		pthread_mutex_unlock(&mutex_group_join);
 		return g;
 	}
 	else if(group_n < 0)
@@ -4423,7 +4423,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 			group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,group_name); // load, save
 		setter_group(g,offsetof(struct group_list,n),&group_n,sizeof(group_n));
 	}
-	pthread_mutex_unlock(&mutex_group_join);
+	pthread_mutex_unlock(&mutex_group_join); // 🟩🟩
 	const int peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(const char*)group_id,GROUP_ID_SIZE); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
 	char p1[21];
@@ -4457,9 +4457,9 @@ int group_join_from_i(const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 		return -1;
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(protocol != ENUM_PROTOCOL_GROUP_OFFER_FIRST && protocol != ENUM_PROTOCOL_GROUP_OFFER)
 		return -1;
 	int g;
@@ -4706,11 +4706,11 @@ void initial(void)
 		if(first_run)
 			sql_exec(&db_plaintext,table_setting_clear,NULL,0);
 		/* Initialize peer struct */
-		pthread_rwlock_wrlock(&mutex_expand); // XXX
+		pthread_rwlock_wrlock(&mutex_expand); // 🟥
 		peer = torx_secure_malloc(sizeof(struct peer_list) *11);
 		for(int j = 0; j < 11; j++)
 			initialize_n(j);
-		pthread_rwlock_unlock(&mutex_expand); // XXX
+		pthread_rwlock_unlock(&mutex_expand); // 🟩
 		for(int j = 0; j < 11; j++)
 		{
 			initialize_n_cb(j);
@@ -4720,15 +4720,15 @@ void initial(void)
 				initialize_f_cb(j,jj);
 		}
 		/* Initialize group struct */
-		pthread_rwlock_wrlock(&mutex_expand_group); // XXX
+		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		group = torx_secure_malloc(sizeof(struct group_list) *11);
 		for(int j = 0; j < 11; j++)
 			initialize_g(j);
-		pthread_rwlock_unlock(&mutex_expand_group); // XXX
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		/* Initalize the packet struc */
 		for(int o = 0; o < SIZE_PACKET_STRC; o++)
 		{
-			pthread_rwlock_wrlock(&mutex_packet);
+			pthread_rwlock_wrlock(&mutex_packet); // 🟥
 			packet[o].n = -1;
 			packet[o].file_n = -1;
 			packet[o].f_i = INT_MIN;
@@ -4737,15 +4737,15 @@ void initial(void)
 			packet[o].fd_type = -1;
 			packet[o].time = 0;
 			packet[o].nstime = 0;
-			pthread_rwlock_unlock(&mutex_packet);
+			pthread_rwlock_unlock(&mutex_packet); // 🟩
 		}
 		const uint32_t count = (uint32_t)cpucount();
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		threads_max = count;
 		if(threads_max > 256 || threads_max < 1) // Triggered if cpucount() returns an obviously bad value, which could occur on mobile or obscure platforms
 			threads_max = 8; // error_simple(0,"Failed to detect CPU count automatically. Defaulting to 8 threads.");
 		global_threads = threads_max; // (can be overwritten by any settings loaded from file subsequently)
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 	if(!first_run)
 		sql_populate_setting(1); // plaintext settings
@@ -4763,12 +4763,12 @@ static inline int password_verify(const char *password)
 	}
 	unsigned char testing_decryption_key[crypto_box_SEEDBYTES];
 	unsigned char salt[crypto_pwhash_SALTBYTES]; // MUST be declared before goto
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	memcpy(salt,saltbuffer,sizeof(salt));
 	const long long unsigned int local_crypto_pwhash_OPSLIMIT = crypto_pwhash_OPSLIMIT;
 	const size_t local_crypto_pwhash_MEMLIMIT = crypto_pwhash_MEMLIMIT;
 	const int local_crypto_pwhash_ALG = crypto_pwhash_ALG;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(crypto_pwhash(testing_decryption_key,sizeof(testing_decryption_key),password,strlen(password),salt,local_crypto_pwhash_OPSLIMIT,local_crypto_pwhash_MEMLIMIT,local_crypto_pwhash_ALG) != 0)
 	{ // XXX if it crashes due to lack of memory, the password might not be removed
 		sodium_memzero(salt,sizeof(salt)); // not important
@@ -4816,12 +4816,12 @@ static inline void *change_password_threaded(void *arg)
 	threadsafe_write(&mutex_global_variable,&currently_changing_pass,&local_currently_changing_pass,sizeof(local_currently_changing_pass));
 
 	unsigned char salt[crypto_pwhash_SALTBYTES]; // MUST be declared before goto
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	memcpy(salt,saltbuffer,sizeof(salt));
 	const long long unsigned int local_crypto_pwhash_OPSLIMIT = crypto_pwhash_OPSLIMIT;
 	const size_t local_crypto_pwhash_MEMLIMIT = crypto_pwhash_MEMLIMIT;
 	const int local_crypto_pwhash_ALG = crypto_pwhash_ALG;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	const size_t password_len = strlen(pass_strc->password_new);
 	if(crypto_pwhash(decryption_key,sizeof(decryption_key),pass_strc->password_new,password_len,salt,local_crypto_pwhash_OPSLIMIT,local_crypto_pwhash_MEMLIMIT,local_crypto_pwhash_ALG) != 0)
 	{ // XXX if it crashes due to lack of memory, the password might not be removed
@@ -4831,22 +4831,22 @@ static inline void *change_password_threaded(void *arg)
 	}
 	sodium_memzero(salt,sizeof(salt)); // not important
 
-	pthread_mutex_lock(&mutex_sql_messages);
+	pthread_mutex_lock(&mutex_sql_messages); // 🟥🟥
 	int val = sqlite3_rekey(db_messages,decryption_key,(int)sizeof(decryption_key));
-	pthread_mutex_unlock(&mutex_sql_messages);
+	pthread_mutex_unlock(&mutex_sql_messages); // 🟩🟩
 	if(val == SQLITE_OK)
 	{ // If our larger database was successful, do the smaller one. WARNING: If this fails, big problems.
-		pthread_mutex_lock(&mutex_sql_encrypted);
+		pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
 		val = sqlite3_rekey(db_encrypted,decryption_key,(int)sizeof(decryption_key));
-		pthread_mutex_unlock(&mutex_sql_encrypted);
+		pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
 	}
 	if(password_len == 0) // DO NOT DELETE THIS, lol. anyone who deletes this conditional is a glowie.
 		sql_setting(1,-1,"decryption_key",(const char *)decryption_key, sizeof(decryption_key));
 	else
 		sql_delete_setting(1,-1,"decryption_key");
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	sodium_memzero(decryption_key,sizeof(decryption_key));
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	local_currently_changing_pass = 0;
 	threadsafe_write(&mutex_global_variable,&currently_changing_pass,&local_currently_changing_pass,sizeof(local_currently_changing_pass));
 	error_simple(0,"Finished changing password.");
@@ -4889,11 +4889,11 @@ static inline void *login_threaded(void *arg)
 	pusher(zero_pthread,(void*)&thrd_login)
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
 	unsigned char salt[crypto_pwhash_SALTBYTES]; // 16
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	long long unsigned int local_crypto_pwhash_OPSLIMIT = crypto_pwhash_OPSLIMIT;
 	size_t local_crypto_pwhash_MEMLIMIT = crypto_pwhash_MEMLIMIT;
 	int local_crypto_pwhash_ALG = crypto_pwhash_ALG;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(first_run == 1 || (!local_crypto_pwhash_OPSLIMIT && !local_crypto_pwhash_MEMLIMIT && !local_crypto_pwhash_ALG))
 	{ // On first run or if login_threaded has never run before
 		first_run = 1; // second point at which we might set first_run (2 of 2) (could combine this with the first one)
@@ -4914,11 +4914,11 @@ static inline void *login_threaded(void *arg)
 			local_crypto_pwhash_OPSLIMIT = crypto_pwhash_OPSLIMIT_INTERACTIVE;
 			local_crypto_pwhash_MEMLIMIT = crypto_pwhash_MEMLIMIT_INTERACTIVE;
 		}
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		crypto_pwhash_OPSLIMIT = local_crypto_pwhash_OPSLIMIT;
 		crypto_pwhash_MEMLIMIT = local_crypto_pwhash_MEMLIMIT;
 		crypto_pwhash_ALG = local_crypto_pwhash_ALG = crypto_pwhash_ALG_DEFAULT;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		sql_setting(1,-1,"salt",(char*)salt,sizeof(salt));
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%llu",local_crypto_pwhash_OPSLIMIT);
@@ -4930,9 +4930,9 @@ static inline void *login_threaded(void *arg)
 	}
 	else
 	{
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		memcpy(salt,saltbuffer,sizeof(salt));
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 /*	printf("OPSLIMIT: %llu\n",crypto_pwhash_OPSLIMIT);
 	printf("MEMLIMIT: %lu\n",crypto_pwhash_MEMLIMIT);
@@ -4962,9 +4962,9 @@ static inline void *login_threaded(void *arg)
 	}
 	else
 	{
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		lockout = 0;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		login_cb(-1);
 	}
 	sodium_memzero(local_decryption_key,sizeof(local_decryption_key));
@@ -4978,9 +4978,9 @@ void login_start(const char *arg)
 		error_simple(0,"Login_start called during lockout. UI bug. Report this to UI dev.");
 		return;
 	}
-	pthread_rwlock_wrlock(&mutex_global_variable);
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	lockout = 1;
-	pthread_rwlock_unlock(&mutex_global_variable);
+	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	char *password = {0};
 	if(arg)
 	{
@@ -5002,7 +5002,7 @@ void cleanup_lib(const int sig_num)
 		breakpoint();
 	error_printf(0,"Cleanup reached. Signal number: %d",sig_num);
 	pthread_attr_destroy(&ATTR_DETACHED); // don't start any threads after this or there will be problems
-	pthread_mutex_lock(&mutex_closing); // Note: do not unlock, ever. Ensures that this doesn't get called multiple times.
+	pthread_mutex_lock(&mutex_closing); // 🟥🟥 // Note: do not unlock, ever. Ensures that this doesn't get called multiple times.
 	if(log_last_seen == 1)
 	{
 		for(int peer_index,n = 0 ; (peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(n,INT_MIN,-1,offsetof(struct peer_list,onion)) != 0 ; n++)
@@ -5020,9 +5020,9 @@ void cleanup_lib(const int sig_num)
 			}
 		}
 	}
-	pthread_rwlock_wrlock(&mutex_packet); // XXX NOTICE: if it locks up here, its because of mutex_packet wrapping evbuffer_add in send_prep
-	pthread_rwlock_wrlock(&mutex_broadcast);
-	pthread_mutex_lock(&mutex_tor_pipe);
+	pthread_rwlock_wrlock(&mutex_packet); // 🟥 // XXX NOTICE: if it locks up here, its because of mutex_packet wrapping evbuffer_add in send_prep
+	pthread_rwlock_wrlock(&mutex_broadcast); // 🟥
+	pthread_mutex_lock(&mutex_tor_pipe); // 🟥🟥
 	kill_tor(0);
 /*	if(tor_pid < 1)
 		error_simple(0,"Exiting before Tor started. Goodbye.");
@@ -5039,17 +5039,17 @@ void cleanup_lib(const int sig_num)
 	if(highest_ever_o_local > 0) // this does not mean file transfers occured, i think
 		error_printf(0,"Highest O level of packet struct reached: %d",highest_ever_o_local);
 	// XXX Most activity should be brought to a halt by the above locks XXX
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	for(int g = 0 ; group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE) ;  g++)
 	{
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		zero_g(g); // XXX INCLUDES LOCKS mutex_expand_group
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	}
-	pthread_rwlock_unlock(&mutex_expand_group);
-	pthread_rwlock_wrlock(&mutex_expand_group); // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
 	torx_free((void*)&group);
-	pthread_rwlock_wrlock(&mutex_expand); // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
+	pthread_rwlock_wrlock(&mutex_expand); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
 	for(int n = 0 ; peer[n].onion[0] != 0 || peer[n].peer_index > -1 ;  n++)
 	{ // DO NOT USE getter_ functions
 		thread_kill(peer[n].thrd_send); // must go before zero_n
@@ -5059,9 +5059,9 @@ void cleanup_lib(const int sig_num)
 		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
 		torx_free((void*)&peer[n].file);
 	}
-	pthread_rwlock_wrlock(&mutex_protocols);
-	pthread_rwlock_wrlock(&mutex_global_variable); // do not use for debug variable
-	pthread_rwlock_wrlock(&mutex_debug_level); // XXX Cannot use error_ll after this
+	pthread_rwlock_wrlock(&mutex_protocols); // 🟥
+	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥 // do not use for debug variable
+	pthread_rwlock_wrlock(&mutex_debug_level); // 🟥 // XXX Cannot use error_ll after this
 	torx_free((void*)&peer);
 	// XXX NOTHING THAT UTILIZES LOCKS CAN COME AFTER THIS POINT (including error_ll) XXX
 	thread_kill(thrd_start_tor); // TODO this is probably already dead but not NULL, we need to NULL it
@@ -5202,7 +5202,7 @@ char *tor_call(const char *msg)
 	}
 	char *msg_recv = NULL;
 	const uint16_t local_tor_ctrl_port = threadsafe_read_uint16(&mutex_global_variable,&tor_ctrl_port);
-	pthread_mutex_lock(&mutex_tor_ctrl);
+	pthread_mutex_lock(&mutex_tor_ctrl); // 🟥🟥
 	const long int retries = tor_call_authenticate(local_tor_ctrl_port);
 	if(retries != RETRIES_MAX && !tor_calls++)
 	{ // TODO Work-around for known bug: After authenticating, our first command to tor_call (both binary Tor and system Tor) fails with 510 Unrecognized command ""
@@ -5214,9 +5214,9 @@ char *tor_call(const char *msg)
 	}
 	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (msg_recv = tor_call_internal_recv(tor_ctrl_socket)))
 	{ // Attempt Send && Receive
-		pthread_rwlock_wrlock(&mutex_global_variable);
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		tor_running = 1;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 	else
 	{
@@ -5226,7 +5226,7 @@ char *tor_call(const char *msg)
 		else
 			error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
 	}
-	pthread_mutex_unlock(&mutex_tor_ctrl);
+	pthread_mutex_unlock(&mutex_tor_ctrl); // 🟩🟩
 	if(torx_debug_level(-1) > 4 || (msg_recv && strncmp(msg_recv,"25",2)))
 	{ // Print unsuccessful. Note: We are ignoring both 250 and 251 because 251 commonly occurs on system Tor when using ONION_CLIENT_AUTH_ADD
 		error_printf(4,"Tor Control Call:\n%s",msg);

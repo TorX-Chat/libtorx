@@ -123,12 +123,12 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 
 static inline char *message_prep(uint32_t *message_len_p,const int target_n,const int16_t section,const uint64_t start,const uint64_t end,const int file_n,const int file_f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
 { // Prepare messages // WARNING: There are no sanity checks. This function can easily de-reference a null pointer if bad/insufficient args are passed.
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	char *base_message = torx_secure_malloc(base_message_len + null_terminated_len);
 	int group_n = -1;
 	uint32_t peercount = 0;
@@ -268,9 +268,9 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 	{ // Audited 2024/02/15 // GROUP_ID[32] + Peercount[4] + invite_required[1] { + GROUP_CTRL's onion + ed25519_pk[32] }
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		memcpy(base_message,group[g].id,GROUP_ID_SIZE); // affix group_id
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		const uint32_t trash = htobe32(peercount);
 		memcpy(&base_message[GROUP_ID_SIZE],&trash,sizeof(uint32_t)); // affix peercount
 		*(uint8_t*)&base_message[GROUP_ID_SIZE+sizeof(uint32_t)] = invite_required; // affix invite_required
@@ -283,9 +283,9 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
 	{ // Audited 2024/02/15 // TODO should probably have some checks here because ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY is automatically sent from libevent and we don't verify that the group and onions exist. should cancel if no.
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		memcpy(base_message,group[g].id,GROUP_ID_SIZE);
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		memcpy(&base_message[GROUP_ID_SIZE],onion_group_n,56);
 		crypto_sign_ed25519_sk_to_pk((unsigned char*)&base_message[GROUP_ID_SIZE+56],sign_sk_group_n);
 		if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
@@ -373,13 +373,13 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 
 static inline int message_distribute(const uint8_t skip_prep,const size_t target_count,const int *target_list,const int p_iter,const void *arg,const uint32_t base_message_len,time_t time,time_t nstime)
 { // TODO WARNING: Sanity checks will interfere with message_resend. Message_send + message_distribute + message_prep are highly functional spagetti.
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint8_t stream = protocols[p_iter].stream;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
 	const uint8_t file_offer = protocols[p_iter].file_offer;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	int8_t fd_type = -1;
 	char *message = NULL; // must initialize as NULL in case of goto error
 	uint32_t message_len;
@@ -511,10 +511,10 @@ static inline int *generate_target_list(uint32_t *target_count,const int n)
 			return NULL;
 		}
 		target_list = torx_insecure_malloc(sizeof(int)*(*target_count));
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		for(uint32_t nn = 0; nn < *target_count; nn++)
 			target_list[nn] = group[g].peerlist[nn];
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	}
 	else
 	{
@@ -535,12 +535,12 @@ int message_resend(const int n,const int i)
 		breakpoint();
 		return -1;
 	}
-	pthread_rwlock_rdlock(&mutex_protocols);
+	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const char *name = protocols[p_iter].name;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(!socket_swappable)
 	{ // We shouldn't (and should have no purpose to) re-send non-swappable messages. Seeing this message likely indicates a UI coding error.
 		error_printf(0,"message_resend cannot process the following message type because it is non-swappable: %s",name);
@@ -1007,20 +1007,20 @@ void file_accept(const int n,const int f)
 		file_offer_internal(n,n,f,1); // DO NOT CALL process_pause_cancel here, do not set _ACCEPTED ; we wait for peer to accept
 	else if(file_status == ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || file_status == ENUM_FILE_INACTIVE_ACCEPTED)
 	{ // Accept, re-accept, or unpause a file
-		pthread_rwlock_rdlock(&mutex_global_variable);
+		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 		const uint8_t download_dir_exists = download_dir ? 1 : 0;
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		torx_read(n) // 🟧🟧🟧
 		const uint8_t file_path_exists = peer[n].file[f].file_path ? 1 : 0;
 		torx_unlock(n) // 🟩🟩🟩
 		if(download_dir_exists && !file_path_exists)
 		{ // Setting file_path to inside download_dir if existing. Client may have already set .file_path, preventing this from occuring.
 			torx_write(n) // 🟥🟥🟥
-			pthread_rwlock_rdlock(&mutex_global_variable);
+			pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 			const size_t allocated_size = strlen(download_dir)+1+strlen(peer[n].file[f].filename)+1;
 			peer[n].file[f].file_path = torx_secure_malloc(allocated_size);
 			snprintf(peer[n].file[f].file_path,allocated_size,"%s%c%s",download_dir,platform_slash,peer[n].file[f].filename);
-			pthread_rwlock_unlock(&mutex_global_variable);
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			torx_unlock(n) // 🟩🟩🟩
 		}
 		else if(!download_dir_exists && !file_path_exists)

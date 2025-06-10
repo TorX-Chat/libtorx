@@ -77,7 +77,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 		}
 	}
 	const uint32_t hash = fnv1a_32_salted(broadcast,GROUP_BROADCAST_LEN);
-	pthread_rwlock_rdlock(&mutex_broadcast);
+	pthread_rwlock_rdlock(&mutex_broadcast); // 🟧
 	for(int iter_hist = 0; iter_hist < BROADCAST_HISTORY_SIZE; iter_hist++)
 	{ // Check history for hash
 		if(broadcast_history[iter_hist] == 0) // Not in history, queue it
@@ -85,8 +85,8 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 			{ // Find an available slot in queue
 				if(broadcasts_queued[iter_queue].hash == 0)
 				{ // Found empty slot
-					pthread_rwlock_unlock(&mutex_broadcast);
-					pthread_rwlock_wrlock(&mutex_broadcast);
+					pthread_rwlock_unlock(&mutex_broadcast); // 🟩
+					pthread_rwlock_wrlock(&mutex_broadcast); // 🟥
 					broadcast_history[iter_hist] = hash; // Put hash in history
 					broadcasts_queued[iter_queue].hash = hash; // Put hash in queue
 					memcpy(broadcasts_queued[iter_queue].broadcast,broadcast,GROUP_BROADCAST_LEN); // Put broadcast in queue
@@ -126,36 +126,36 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 			continue; // Complex logic, do not remove
 		break; // Complex logic, do not remove
 	}
-	pthread_rwlock_unlock(&mutex_broadcast);
+	pthread_rwlock_unlock(&mutex_broadcast); // 🟩
 }
 
 static inline void broadcast_remove(const int g)
 { // Remove hash from queue because we joined the group successfully, or for other reasons
 	if(g < 0)
 		return;
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const uint32_t hash = group[g].hash;
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(!hash)
 		return;
-	pthread_rwlock_rdlock(&mutex_broadcast);
+	pthread_rwlock_rdlock(&mutex_broadcast); // 🟧
 	for(int iter_queue = 0; iter_queue < BROADCAST_QUEUE_SIZE; iter_queue++)
 		if(broadcasts_queued[iter_queue].hash == hash)
 		{ // Found hash in queue, lets remove it.
-			pthread_rwlock_unlock(&mutex_broadcast);
-			pthread_rwlock_wrlock(&mutex_broadcast);
+			pthread_rwlock_unlock(&mutex_broadcast); // 🟩
+			pthread_rwlock_wrlock(&mutex_broadcast); // 🟥
 			broadcasts_queued[iter_queue].hash = 0; // Re-initialize hash
 			sodium_memzero(broadcasts_queued[iter_queue].broadcast,GROUP_BROADCAST_LEN); // Re-initialize broadcast
 			for(int iter_peer = 0; iter_peer < BROADCAST_MAX_PEERS; iter_peer++)
 				broadcasts_queued[iter_queue].peers[iter_peer] = -1; // Re-initialize target peers
-			pthread_rwlock_unlock(&mutex_broadcast);
-			pthread_rwlock_wrlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_broadcast); // 🟩
+			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 			group[g].hash = 0;
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			error_simple(0,PINK"Removed a hash successfully."RESET);
 			return;
 		}
-	pthread_rwlock_unlock(&mutex_broadcast);
+	pthread_rwlock_unlock(&mutex_broadcast); // 🟩
 }
 
 void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
@@ -174,10 +174,13 @@ void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
 	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	crypto_sign_ed25519_sk_to_pk(&message[crypto_pwhash_SALTBYTES+56],sign_sk); // affix the pk of size crypto_box_PUBLICKEYBYTES
 	sodium_memzero(sign_sk,sizeof(sign_sk));
+	unsigned char id[GROUP_ID_SIZE];
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+	memcpy(id,group[g].id,sizeof(id));
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	unsigned char recipient_pk[crypto_box_PUBLICKEYBYTES];
-	pthread_rwlock_rdlock(&mutex_expand_group);
-	crypto_scalarmult_base(recipient_pk, group[g].id); // convert sk_to_pk
-	pthread_rwlock_unlock(&mutex_expand_group);
+	crypto_scalarmult_base(recipient_pk, id); // convert sk_to_pk
+	sodium_memzero(id,sizeof(id));
 	crypto_box_seal(ciphertext, message, sizeof(message), recipient_pk); // add some error checking? is of value or perhaps not?
 	sodium_memzero(message,sizeof(message));
 	sodium_memzero(recipient_pk,sizeof(recipient_pk));
@@ -186,9 +189,9 @@ void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
 	if(!g_peercount)
 	{ // store the hash so that we can broadcast_remove the broadcast from queue after we join the group
 		const uint32_t hash = fnv1a_32_salted(ciphertext,GROUP_BROADCAST_LEN);
-		pthread_rwlock_wrlock(&mutex_expand_group);
+		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		group[g].hash = hash;
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	}
 }
 
@@ -202,13 +205,13 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 	}
 	unsigned char x25519_pk[crypto_box_PUBLICKEYBYTES]; // 32
 	unsigned char x25519_sk[crypto_box_SECRETKEYBYTES]; // 32
-	pthread_rwlock_rdlock(&mutex_expand_group);
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	for(int group_n,g = 0 ; (group_n = group[g].n) > -1 || !is_null(group[g].id,GROUP_ID_SIZE); g++)
 	{ // Attempt decryption of ciphertext, in all circumstances
 		if(group_n < 0 || group[g].invite_required)
 			continue; // this group is deleted or private, skip checking it
 		memcpy(x25519_sk,group[g].id,sizeof(x25519_sk));
-		pthread_rwlock_unlock(&mutex_expand_group);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		crypto_scalarmult_base(x25519_pk, x25519_sk); // convert sk_to_pk
 		unsigned char decrypted[GROUP_BROADCAST_DECRYPTED_LEN];
 		if(crypto_box_seal_open(decrypted,ciphertext,GROUP_BROADCAST_LEN,x25519_pk, x25519_sk) == 0)
@@ -239,9 +242,9 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 			sodium_memzero(x25519_sk,sizeof(x25519_sk));
 			return; // do not rebroadcast, since we have this group
 		}
-		pthread_rwlock_rdlock(&mutex_expand_group);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	} // If getting here, means unable to decrypt ciphertext with any public group ID. Carry on and rebroadcast it.
-	pthread_rwlock_unlock(&mutex_expand_group);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	sodium_memzero(x25519_pk,sizeof(x25519_pk));
 	sodium_memzero(x25519_sk,sizeof(x25519_sk));
 	broadcast_add(origin_n,ciphertext);
@@ -256,7 +259,7 @@ static inline void *broadcast_threaded(void *arg)
 	while(1)
 	{
 		broadcast_delay_local = BROADCAST_DELAY_SLEEP;
-		pthread_rwlock_rdlock(&mutex_broadcast);
+		pthread_rwlock_rdlock(&mutex_broadcast); // 🟧
 		for(int iter_queue = 0,random_start_1 = randombytes_random() % BROADCAST_QUEUE_SIZE; iter_queue < BROADCAST_QUEUE_SIZE ; iter_queue++,random_start_1++)
 		{ // choose a random broadcast by calling randombytes_random() once as the starting position then iterate and wrap around as necessary.
 			int random_broadcast = random_start_1;
@@ -285,8 +288,8 @@ static inline void *broadcast_threaded(void *arg)
 						}
 						error_printf(0,"Broadcast chose ONLINE victim owner=%u",owner);
 						message_send(n,ENUM_PROTOCOL_GROUP_BROADCAST,broadcasts_queued[random_broadcast].broadcast,GROUP_BROADCAST_LEN);
-						pthread_rwlock_unlock(&mutex_broadcast);
-						pthread_rwlock_wrlock(&mutex_broadcast);
+						pthread_rwlock_unlock(&mutex_broadcast); // 🟩
+						pthread_rwlock_wrlock(&mutex_broadcast); // 🟥
 						broadcasts_queued[random_broadcast].peers[random_peer] = -1;
 						int more_peers = -1;
 						for(int iter_peer_check = 0; iter_peer_check < BROADCAST_MAX_PEERS ; iter_peer_check++)
@@ -304,7 +307,7 @@ static inline void *broadcast_threaded(void *arg)
 				break;
 			}
 		}
-		pthread_rwlock_unlock(&mutex_broadcast);
+		pthread_rwlock_unlock(&mutex_broadcast); // 🟩
 		sleep(broadcast_delay_local);
 	}
 	return NULL;

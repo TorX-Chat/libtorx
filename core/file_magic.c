@@ -404,7 +404,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 	const uint8_t utf8 = protocols[p_iter].utf8;
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
-	pthread_rwlock_unlock(&mutex_protocols);
+	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	int f;
 	if(protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE)
 	{ // Receive File offer
@@ -894,17 +894,17 @@ static void set_split_path(const int n,const int f)
 	if(peer[n].file[f].split_path)
 		torx_free((void*)&peer[n].file[f].split_path);
 	size_t allocation_size;
-	pthread_rwlock_rdlock(&mutex_global_variable);
+	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	if(split_folder)
 	{
 		allocation_size = strlen(split_folder) + 1 + strlen(peer[n].file[f].filename) + 6 + 1;
 		peer[n].file[f].split_path = torx_secure_malloc(allocation_size);
 		snprintf(peer[n].file[f].split_path,allocation_size,"%s%c%s.split",split_folder,platform_slash,peer[n].file[f].filename);
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 	else
 	{
-		pthread_rwlock_unlock(&mutex_global_variable);
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		allocation_size = strlen(peer[n].file[f].file_path) + 6 + 1;
 		peer[n].file[f].split_path = torx_secure_malloc(allocation_size);
 		snprintf(peer[n].file[f].split_path,allocation_size,"%s.split",peer[n].file[f].file_path);
@@ -1226,9 +1226,9 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		while(count < g_peercount)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group);
+			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 			const int specific_peer = group[g].peerlist[count++];
-			pthread_rwlock_unlock(&mutex_expand_group);
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete);
 		}
 		error_printf(0,"Took down %u GROUP_PEER associated with group.",count); // TODO increase debug level after confirming this works

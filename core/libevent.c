@@ -217,11 +217,11 @@ static inline void peer_offline(struct event_strc *event_strc)
 			const int p_iter = getter_int(event_strc->n,i,-1,offsetof(struct message_list,p_iter));
 			if(p_iter > -1)
 			{
-				pthread_rwlock_rdlock(&mutex_protocols);
+				pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 				const uint8_t logged = protocols[p_iter].logged;
 				const uint8_t socket_swappable = protocols[p_iter].socket_swappable;
 				const uint8_t stream = protocols[p_iter].stream;
-				pthread_rwlock_unlock(&mutex_protocols);
+				pthread_rwlock_unlock(&mutex_protocols); // 🟩
 				if(stream)
 				{
 					const int8_t fd_type = getter_int8(event_strc->n,i,-1,offsetof(struct message_list,fd_type));
@@ -303,9 +303,9 @@ static inline void begin_cascade(struct event_strc *event_strc)
 		torx_unlock(event_strc->n) // 🟩🟩🟩
 		if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && pos == 0 && utilized_recv != i && utilized_send != i)
 		{ // important check, to snuff out deleted messages
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t stream = protocols[p_iter].stream;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if(stream != ENUM_STREAM_DISCARDABLE && send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type) != -1) // Must use event_strc->fd_type, NOT fd_type (which might be -1). Will do nothing if there are no messages to send
 				break; // allow cascading effect in packet_removal
 		}
@@ -321,7 +321,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 {
 	size_t drained = 0;
 	int packets_to_remove = 1; // 2024/12/24 Very important, do not modify
-	pthread_rwlock_wrlock(&mutex_packet);
+	pthread_rwlock_wrlock(&mutex_packet); // 🟥
 	while(packets_to_remove)
 	{
 		torx_read(event_strc->n) // 🟧🟧🟧
@@ -375,7 +375,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		packet[o].fd_type = -1; // release it for re-use.
 		packet[o].time = 0;
 		packet[o].nstime = 0;
-		pthread_rwlock_unlock(&mutex_packet); // XXX DO NOT continue AFTER THIS XXX
+		pthread_rwlock_unlock(&mutex_packet); // 🟩 // XXX DO NOT continue AFTER THIS XXX
 		time_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
 		nstime_oldest = LONG_MAX; // 2024/12/24 Very important, do not modify
 		o_oldest = -1;
@@ -383,12 +383,12 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 	//	total_packets_removed++; // TODO remove
 		if(!drain_len)
 		{ // For drain_len, we don't do anything except 0 the packets above
-			pthread_rwlock_rdlock(&mutex_protocols);
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint16_t protocol = protocols[p_iter].protocol;
 			const uint8_t stream = protocols[p_iter].stream;
 			const char *name = protocols[p_iter].name;
 			const uint8_t logged = protocols[p_iter].logged;
-			pthread_rwlock_unlock(&mutex_protocols);
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{
 				const int f = packet_f_i;
@@ -499,13 +499,13 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				{ // If this triggers, enable FSojoasfoSO lines for debugging. In the past, it was due to send_prep being called twice on the same n,i pair.
 					const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
 					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%ld nstime=%ld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,packet_time,packet_nstime,name);
-					pthread_rwlock_rdlock(&mutex_packet);
+					pthread_rwlock_rdlock(&mutex_packet); // 🟧
 					for(int ooo = 0 ; ooo <= threadsafe_read_int(&mutex_global_variable,&highest_ever_o) ; ooo++)
 						if(packet[ooo].p_iter > -1 && packet[ooo].n == event_strc->n && packet[ooo].fd_type == event_strc->fd_type)
 						{ // This is important debug info
-							pthread_rwlock_rdlock(&mutex_protocols);
+							pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 							const char *o_name = protocols[packet[ooo].p_iter].name;
-							pthread_rwlock_unlock(&mutex_protocols);
+							pthread_rwlock_unlock(&mutex_protocols); // 🟩
 							printf("-------------Same n, same fd_type-------------\n");
 							printf("Checkpoint packet[%d].name:	%s\n",ooo,o_name);
 							printf("Checkpoint packet[%d].n:		%d\n",ooo,packet[ooo].n);
@@ -521,7 +521,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							else
 								error_simple(0,"Error cause unknown. Coding error. Report this.");
 						}
-					pthread_rwlock_unlock(&mutex_packet);
+					pthread_rwlock_unlock(&mutex_packet); // 🟩
 					goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
 				}
 				else // incomplete message, complete send
@@ -532,9 +532,9 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				}
 			}
 		}
-		pthread_rwlock_wrlock(&mutex_packet);
+		pthread_rwlock_wrlock(&mutex_packet); // 🟥
 	}
-	pthread_rwlock_unlock(&mutex_packet);
+	pthread_rwlock_unlock(&mutex_packet); // 🟩
 	if(!drained)
 		error_simple(0,"Remove packet failed to remove anything. Coding error. Report this.");
 	else if(drain_len && drained != drain_len)
@@ -782,7 +782,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					} */
 					continue;
 				}
-				torx_fd_lock(file_n,f) // XXX
+				torx_fd_lock(file_n,f) // 🟥🟥🟥🟥
 				torx_read(file_n) // 🟧🟧🟧
 				FILE *fd_active = peer[file_n].file[f].fd;
 				torx_unlock(file_n) // 🟩🟩🟩
@@ -791,14 +791,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 					if(!file_path)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(file_n,f) // XXX
+						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
 						continue;
 					}
 					fd_active = fopen(file_path, "a"); // Create file if not existing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(file_n,f) // XXX
+						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 						error_printf(0,"Failed to open for writing1: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
@@ -807,7 +807,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					fd_active = fopen(file_path, "r+"); // Open file for writing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
-						torx_fd_unlock(file_n,f) // XXX
+						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 						error_printf(0,"Failed to open for writing2: %s",file_path);
 						torx_free((void*)&file_path);
 						continue;
@@ -819,7 +819,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_write(file_n) // 🟥🟥🟥
 				peer[file_n].file[f].fd = fd_active;
 				torx_unlock(file_n) // 🟩🟩🟩
-				torx_fd_unlock(file_n,f) // XXX
+				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 				if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
@@ -864,7 +864,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						event_strc->buffer = NULL; // XXX IMPORTANT: to prevent the message from being torx_free'd when we hit continue;
 						continue;
 					}
-					pthread_rwlock_rdlock(&mutex_protocols);
+					pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 					const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
 					const uint32_t date_len = protocols[p_iter].date_len;
 					const uint32_t signature_len = protocols[p_iter].signature_len;
@@ -875,7 +875,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					const uint8_t group_msg = protocols[p_iter].group_msg;
 					const uint8_t stream = protocols[p_iter].stream;
 					const char *name = protocols[p_iter].name;
-					pthread_rwlock_unlock(&mutex_protocols);
+					pthread_rwlock_unlock(&mutex_protocols); // 🟩
 					if(buffer_len < null_terminated_len + date_len + signature_len)
 					{
 						error_printf(0,"Unreasonably short message received from peer. Discarding entire message protocol: %u owner: %u size: %u of reported: %u",protocol,event_strc->owner,buffer_len,event_strc->untrusted_message_len);
@@ -1111,7 +1111,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							}
 							else if(file_stat.st_mtime != modified)
 							{ // File cannot be accessed or has an unexpected modification time XXX MUST BE THE SAME AS BELOW torx_fd_lock
-								torx_fd_lock(file_n,f) // XXX MUST BE BETWEEN REDUNDANT CHECKS. XXX To prevent two requests that come in at nearly the same time from causing the file to unnecessarily be checksum'd twice.
+								torx_fd_lock(file_n,f) // 🟥🟥🟥🟥 // XXX MUST BE BETWEEN REDUNDANT CHECKS. XXX To prevent two requests that come in at nearly the same time from causing the file to unnecessarily be checksum'd twice.
 								if(file_stat.st_mtime != modified)
 								{ // Checking again (redundantly) XXX MUST BE THE SAME AS ABOVE torx_fd_lock
 									unsigned char checksum[CHECKSUM_BIN_LEN];
@@ -1134,7 +1134,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									sodium_memzero(checksum_unverified,sizeof(checksum_unverified));
 									if(cmp)
 									{
-										torx_fd_unlock(file_n,f) // XXX
+										torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 										error_simple(0,"Requested file does not match modification time or hash. It has been modified or corrupted since receiving. You may re-offer the modified file.");
 										torx_free((void*)&file_path);
 										continue;
@@ -1142,7 +1142,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									modified = file_stat.st_mtime; // Updating modification time in struct after verifying checksums, and carrying on.
 									setter(file_n,INT_MIN,f,offsetof(struct file_list,modified),&modified,sizeof(modified));
 								}
-								torx_fd_unlock(file_n,f) // XXX
+								torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 							}
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
@@ -1269,9 +1269,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							unsigned char invitation[crypto_sign_BYTES];
 							getter_array(&invitation,sizeof(invitation),group_n,INT_MIN,-1,offsetof(struct peer_list,invitation));
 							const unsigned char *group_peer_ed25519_pk = (unsigned char *)&event_strc->buffer[GROUP_ID_SIZE+56];
-							pthread_rwlock_rdlock(&mutex_expand_group);
+							pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 							const int *peerlist = group[g].peerlist;
-							pthread_rwlock_unlock(&mutex_expand_group);
+							pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 							if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
 							{
 								if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
@@ -1690,9 +1690,9 @@ void *torx_events(void *ctx)
 				int p_iter;
 				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(event_strc->n,0,-1,offsetof(struct message_list,p_iter))) > -1)
 				{ // Put queue skipping protocols first, if unsent, before pipe auth
-					pthread_rwlock_rdlock(&mutex_protocols);
+					pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 					const uint16_t protocol = protocols[p_iter].protocol;
-					pthread_rwlock_unlock(&mutex_protocols);
+					pthread_rwlock_unlock(&mutex_protocols); // 🟩
 					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
 					{
 						send_prep(event_strc->n,-1,0,p_iter,1);
