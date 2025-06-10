@@ -170,9 +170,9 @@ pthread_mutex_t mutex_group_peer_add = PTHREAD_MUTEX_INITIALIZER; // is necessar
 pthread_mutex_t mutex_group_join = PTHREAD_MUTEX_INITIALIZER; // is necessary to avoid race condition, do not eliminate
 pthread_mutex_t mutex_onion = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_closing = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER; // prevents rapid restarts of Tor from causing issues with reading Tor's STDOUT
 pthread_mutex_t mutex_message_loading = PTHREAD_MUTEX_INITIALIZER; // may be necessary in rare cases where Tor for some reason restarts on startup; related to messages_loaded
-pthread_mutex_t mutex_tor_ctrl = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_tor_ctrl = PTHREAD_MUTEX_INITIALIZER; // prevents multiple concurrent Tor calls (since we need to recv respones before sending new commands)
 
 /* 2024 rwmutex */
 pthread_rwlock_t mutex_debug_level = PTHREAD_RWLOCK_INITIALIZER;
@@ -3071,8 +3071,19 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 			signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 			#endif
 		}
-		else if (torx_close_socket(&mutex_global_variable,&tor_ctrl_socket)) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
-			error_simple(0,"Tor is probably already dead.");
+		else
+		{
+			pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
+			const uint8_t already_using_system_tor = using_system_tor;
+			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+			if(!already_using_system_tor)
+			{ // Must only request shutdown on binary Tor
+				char *ret = tor_call("signal shutdown\n"); // Request a clean shutdown (cleaner than TAKEOWNERSHIP or kill() invoked)
+				torx_free((void*)&ret);
+			} // Not else if
+			if(torx_close_socket(&mutex_global_variable,&tor_ctrl_socket)) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
+				error_simple(0,"Tor is probably already dead.");
+		}
 	//	while(!randport(tor_ctrl_port) || !randport(tor_socks_port)) // does not work because tor is not deregistering these ports properly on shutdown, it seems.
 	//		fprintf(stderr,"not ready yet. TODO REMOVE???\n");
 		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
