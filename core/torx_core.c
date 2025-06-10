@@ -351,6 +351,24 @@ void torx_fn_unlock(const int n)
 	torx_unlock(n) // 🟩🟩🟩
 }
 
+static inline int torx_close_socket(pthread_rwlock_t *mutex,evutil_socket_t *socket)
+{ // Only useful for global variables. NOTE: For file descriptors, use close_sockets_nolock and close_sockets macros.
+	if(!socket)
+		return -1; // Sanity check
+	if(mutex)
+		pthread_rwlock_wrlock(mutex);
+	int ret = 0;
+	if(*socket > 0 && (ret = evutil_closesocket(*socket)) < 0)
+	{
+		error_simple(0,"Failed to close socket.");
+		breakpoint();
+	}
+	*socket = 0;
+	if(mutex)
+		pthread_rwlock_wrlock(mutex);
+	return ret; // 0 on success or non-op
+}
+
 static inline void write_debug_file(const char *message)
 {
 	if(!message || !strlen(message))
@@ -2381,18 +2399,8 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	peer[n].tport = 0;
 	peer[n].socket_utilized[0] = INT_MIN;
 	peer[n].socket_utilized[1] = INT_MIN;
-	if(peer[n].sendfd > 0)
-	{
-		evutil_closesocket(peer[n].sendfd); // TODO TODO TODO added 2023/08/09.
-		peer[n].sendfd = 0;
-	}
-	peer[n].sendfd = 0;
-	if(peer[n].recvfd > 0)
-	{
-		evutil_closesocket(peer[n].recvfd); // TODO TODO TODO added 2023/08/09.
-		peer[n].recvfd = 0;
-	}
-	peer[n].recvfd = 0;
+	torx_close_socket(NULL,&peer[n].sendfd);
+	torx_close_socket(NULL,&peer[n].recvfd);
 	peer[n].sendfd_connected = 0;
 	peer[n].recvfd_connected = 0;
 	peer[n].bev_send = NULL; // TODO ensure its leaving event loop?
@@ -3037,12 +3045,12 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 				wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
 			signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 			#endif
-		} else if(evutil_closesocket(tor_ctrl_socket) < 0) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
+		}
+		else if (torx_close_socket(&mutex_global_variable,&tor_ctrl_socket)) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
 			error_simple(0,"Tor is probably already dead.");
 	//	while(!randport(tor_ctrl_port) || !randport(tor_socks_port)) // does not work because tor is not deregistering these ports properly on shutdown, it seems.
 	//		fprintf(stderr,"not ready yet. TODO REMOVE???\n");
 		pthread_rwlock_wrlock(&mutex_global_variable);
-		tor_ctrl_socket = 0;
 		tor_running = 0;
 		tor_pid = 0;
 		pthread_rwlock_unlock(&mutex_global_variable);
@@ -3061,12 +3069,8 @@ static inline void *start_tor_threaded(void *arg)
 	const uint8_t already_using_system_tor = using_system_tor;
 	const uint8_t already_running = tor_running;
 	pthread_rwlock_unlock(&mutex_global_variable);
-	if(already_running && already_using_system_tor)
-	{ // Must do this before calling get_tor_version in case we are changing tor_ctrl_port
-		if(evutil_closesocket(tor_ctrl_socket) < 0)
-			error_simple(0,"Unlikely socket failed to close error.4");
-		tor_ctrl_socket = 0;
-	}
+	if(already_running && already_using_system_tor) // Must do this before calling get_tor_version in case we are changing tor_ctrl_port
+		torx_close_socket(&mutex_global_variable,&tor_ctrl_socket);
 	if(get_tor_version())
 		error_simple(0,"Cannot start Tor without a functional binary or control port.");
 	else if(threadsafe_read_uint8(&mutex_global_variable,&using_system_tor))
@@ -5143,18 +5147,14 @@ static inline long int tor_call_authenticate(const uint16_t local_tor_ctrl_port)
 				sodium_memzero(apibuffer,sizeof(apibuffer));
 				if(s < (ssize_t)len)
 				{
-					if(evutil_closesocket(tor_ctrl_socket) < 0)
-						error_simple(0,"Unlikely socket failed to close error.33");
-					tor_ctrl_socket = 0;
+					torx_close_socket(&mutex_global_variable,&tor_ctrl_socket);
 					error_simple(0,"Tor call failed. Is Tor not running or is the control port incorrect?");
 					return RETRIES_MAX;
 				}
 				char *ret = tor_call_internal_recv(tor_ctrl_socket);
 				if(!ret || strncmp(ret,"250",3))
 				{ // Check control port password
-					if(evutil_closesocket(tor_ctrl_socket) < 0)
-						error_simple(0,"Unlikely socket failed to close error.333");
-					tor_ctrl_socket = 0;
+					torx_close_socket(&mutex_global_variable,&tor_ctrl_socket);
 					error_simple(0,"Tor call authentication failed. Check control port password.");
 					if(ret)
 						error_printf(4,"Tor Control Response:\n%s",ret);
@@ -5200,13 +5200,11 @@ char *tor_call(const char *msg)
 	}
 	else
 	{
+		torx_close_socket(&mutex_global_variable,&tor_ctrl_socket);
 		if(retries == RETRIES_MAX) // Failed to connect to port
 			error_printf(0,"Tor Control Port not running on %s:%u after %ld tries.",TOR_CTRL_IP,local_tor_ctrl_port,retries);
 		else
 			error_simple(0,"There is likely an orphan Tor process running from a crashed TorX. If so, any Tor proccess run by this user and restart. Alternatively, you are restarting Tor, causing a call to fail. If so, carry on.");
-		if(evutil_closesocket(tor_ctrl_socket) < 0)
-			error_simple(0,"Unlikely socket failed to close error.3");
-		tor_ctrl_socket = 0;
 	}
 	pthread_mutex_unlock(&mutex_tor_ctrl);
 	if(torx_debug_level(-1) > 4 || (msg_recv && strncmp(msg_recv,"25",2)))

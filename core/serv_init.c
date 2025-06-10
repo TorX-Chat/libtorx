@@ -633,7 +633,6 @@ void load_onion(const int n)
 		return; // done, do not need to load listener because we no sockets to listen on
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Open .recvfd for a SING/MULT/CTRL/GROUP_CTRL onion, then call torx_events() on it
-		struct sockaddr_in serv_addr = {0}; //, cli_addr;
 		const evutil_socket_t sock = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0);
 		if(sock < 0)
 		{
@@ -642,6 +641,7 @@ void load_onion(const int n)
 		}
 		DisableNagle(sock);
 		evutil_make_socket_nonblocking(sock); // for libevent
+		struct sockaddr_in serv_addr = {0}; //, cli_addr;
 		serv_addr.sin_family = AF_INET;
 		serv_addr.sin_addr.s_addr = inet_addr(TOR_CTRL_IP); // IP associated with tport, not necessarily TOR_CTRL_IP
 		serv_addr.sin_port = htobe16(tport);

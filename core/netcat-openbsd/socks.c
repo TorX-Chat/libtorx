@@ -253,7 +253,7 @@ static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr
 
 static inline evutil_socket_t socks_establish(const char *host, const char *port, struct addrinfo hints)
 {
-	struct addrinfo *res, *res0 = {0};
+	struct addrinfo *res = {0}, *res0 = {0};
 	evutil_socket_t proxyfd = -1;
 	const int error = getaddrinfo(host, port, &hints, &res0); // essentially DNS query of TOR_SOCKS_IP
 	if(error)
@@ -292,8 +292,7 @@ static inline evutil_socket_t socks_establish(const char *host, const char *port
 
 static inline int decode_addrport(const char *host, const char *port, struct sockaddr *addr,const size_t addrlen)
 { // Decode address of TOR_SOCKS_IP
-	struct addrinfo hints, *res = {0};
-	memset(&hints, 0, sizeof(hints));
+	struct addrinfo hints = {0}, *res = {0};
 	hints.ai_family = PF_INET;
 	hints.ai_flags = 0;
 	hints.ai_socktype = SOCK_STREAM;
@@ -388,7 +387,6 @@ evutil_socket_t socks_connect(const char *host, const char *port)
 	char proxyport[6];
 	snprintf(proxyport,sizeof(proxyport),"%d",threadsafe_read_uint16(&mutex_global_variable,&tor_socks_port));
 	struct addrinfo hints = {0};
-	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = PF_INET;
 	hints.ai_flags = 0;
 	hints.ai_socktype = SOCK_STREAM;
