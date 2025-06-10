@@ -278,7 +278,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			memcpy(&send_buffer[2],&trash,sizeof(uint16_t)); // protocol
 			/* XXX sanity check start */
 			torx_read(n) // 🟧🟧🟧
-			const size_t allocated = torx_allocation_len(peer[n].message[i].message);
+			const uint32_t allocated = torx_allocation_len(peer[n].message[i].message);
 			torx_unlock(n) // 🟩🟩🟩
 			const size_t reading = start + (size_t)packet_len - prefix_len;
 			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)

@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 31 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 32 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -969,9 +969,9 @@ void *torx_secure_malloc(const size_t len)
 	return ((char*)allocation + 4 + 4);
 }
 
-size_t torx_allocation_len(const void *arg)
+uint32_t torx_allocation_len(const void *arg)
 { // Convenience function for running safety checks before read/write to a pointer of unknown allocation. Returns length including/AFTER virtual pointer, not including prefix bytes or padding before the pointer.
-	size_t len = 0;
+	uint32_t len = 0;
 	if(arg)
 	{
 		const void *real_ptr = (const char *)arg - 8;
@@ -981,10 +981,36 @@ size_t torx_allocation_len(const void *arg)
 			error_simple(0,"Called torx_allocation_len on a non-TorX malloc, resulting in an illegal read and failure.");
 			breakpoint();
 		}
-		else
+		else // NOTE: Must obtain len *after* verifying type, otherwise we increase illegal read potential by four bytes
 			len = *((const uint32_t *)real_ptr);
 	}
 	return len;
+}
+
+void *torx_copy(uint32_t *len_p,const void *arg)
+{ // Convenience function; typically used where a mutex is involved.
+	if(arg)
+	{
+		const void *real_ptr = (const char *)arg - 8;
+		const uint32_t type = *((const uint32_t *)real_ptr+1);
+		if(type != ENUM_MALLOC_TYPE_SECURE && type != ENUM_MALLOC_TYPE_INSECURE)
+		{
+			error_simple(0,"Called torx_copy on a non-TorX malloc, resulting in an illegal read and failure.");
+			breakpoint();
+		}
+		else
+		{ // NOTE: Must obtain len *after* verifying type, otherwise we increase illegal read potential by four bytes
+			const uint32_t len = *((const uint32_t *)real_ptr);
+			void *allocation = type == ENUM_MALLOC_TYPE_SECURE ? torx_secure_malloc(len) : torx_insecure_malloc(len);
+			memcpy(allocation,arg,len);
+			if(len_p)
+				*len_p = len;
+			return allocation;
+		}
+	}
+	if(len_p)
+		*len_p = 0;
+	return NULL;
 }
 
 void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)
@@ -2073,7 +2099,7 @@ char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)
 	gen_truncated_sha3(&onion_decoded[crypto_sign_PUBLICKEYBYTES],onion_decoded);
 	onion_decoded[34] = 0x03; // adds version byte
 	char onion[56+1];
-	size_t len = base32_encode((unsigned char*)onion,onion_decoded,sizeof(onion_decoded));
+	const size_t len = base32_encode((unsigned char*)onion,onion_decoded,sizeof(onion_decoded));
 	sodium_memzero(onion_decoded,sizeof(onion_decoded));
 	if(len == 56)
 	{
@@ -2325,7 +2351,7 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 		}
 	if(shrinkage)
 	{ // TODO Maybe have this not occur on shutdown (BUT, it should happen when calling zero_n, to allow for a re-initialized n suitable for re-use)
-		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
+		const uint32_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
 		const size_t current_shift = (size_t)abs(shrinkage);
 		error_printf(2,"Experimental rollback functionality occuring! n=%d min_i=%d max_i=%d pointer_location=%d shrinkage=%d\n",n,peer[n].min_i,peer[n].max_i,pointer_location,shrinkage);
 		if(shrinkage > 0) // We shift everything forward
@@ -2913,7 +2939,7 @@ static inline void *tor_log_reader(void *arg)
 		pthread_mutex_lock(&mutex_tor_pipe);
 		if(read_tor_pipe_cache)
 		{
-			const size_t current_size = torx_allocation_len(read_tor_pipe_cache);
+			const uint32_t current_size = torx_allocation_len(read_tor_pipe_cache);
 			read_tor_pipe_cache = torx_realloc(read_tor_pipe_cache,current_size+(size_t)len);
 			memcpy(&read_tor_pipe_cache[current_size-1],data,(size_t)len+1);
 		}
@@ -3177,15 +3203,8 @@ static inline void *start_tor_threaded(void *arg)
 		snprintf(p3,sizeof(p3),"%d",ConstrainedSockSize);
 		snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
 		char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
-		if(!torrc_content_local)
-		{
-			if(torrc_content)
-			{ // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
-				const size_t len = strlen(torrc_content);
-				torrc_content_local = torx_secure_malloc(len+1);
-				memcpy(torrc_content_local,torrc_content,len+1);
-			}
-		}
+		if(!torrc_content_local && torrc_content) // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
+			torrc_content_local = torx_copy(NULL,torrc_content);
 		char tor_location_local[PATH_MAX]; // not sensitive
 		snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
 		char *ret;
@@ -3594,7 +3613,7 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 	if(offerer_n == -1 && o && o % 10 == 0)
 	{
 		torx_write(n) // 🟥🟥🟥
-		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
+		const uint32_t current_allocation_size = torx_allocation_len(peer[n].file[f].offer);
 		peer[n].file[f].offer = torx_realloc(peer[n].file[f].offer,current_allocation_size + sizeof(struct offer_list) *10);
 		// callback unnecessary, not doing
 		for(int j = o + 10; j > o; j--)
@@ -3622,7 +3641,7 @@ static inline void expand_request_struc(const int n,const int f,const int r)
 	if(requester_n == -1 && r && r % 10 == 0)
 	{
 		torx_write(n) // 🟥🟥🟥
-		const size_t current_allocation_size = torx_allocation_len(peer[n].file[f].request);
+		const uint32_t current_allocation_size = torx_allocation_len(peer[n].file[f].request);
 		peer[n].file[f].request = torx_realloc(peer[n].file[f].request,current_allocation_size + sizeof(struct request_list) *10);
 		// callback unnecessary, not doing
 		for(int j = r + 10; j > r; j--)
@@ -3643,7 +3662,7 @@ static inline void expand_file_struc(const int n,const int f)
 	if(f && f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f + 10 > max_file because we never clear checksum so it is currently a reliable check
 	{
 		torx_write(n) // 🟥🟥🟥
-		const size_t current_allocation_size = torx_allocation_len(peer[n].file);
+		const uint32_t current_allocation_size = torx_allocation_len(peer[n].file);
 		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
 		for(int j = f + 10; j > f; j--)
 			initialize_f(n,j);
@@ -3676,7 +3695,7 @@ void expand_message_struc(const int n,const int i) // XXX do not put locks in he
 		}
 		else
 			pointer_location = find_message_struc_pointer(min_i); // Note: returns negative
-		const size_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
+		const uint32_t current_allocation_size = torx_allocation_len(peer[n].message + pointer_location);
 		if(i < 0)
 			peer[n].message = (struct message_list*)torx_realloc_shift(peer[n].message + pointer_location, current_allocation_size + sizeof(struct message_list) *10,1) - pointer_location - current_shift;
 		else
@@ -3698,7 +3717,7 @@ static inline void expand_peer_struc(const int n)
 	if(onion == '\0' && getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)) < 0 && n && n % 10 == 0 && n + 10 > threadsafe_read_int(&mutex_global_variable,&max_peer))
 	{ // Safe to cast n as size_t because > -1
 		pthread_rwlock_wrlock(&mutex_expand);
-		const size_t current_allocation_size = torx_allocation_len(peer);
+		const uint32_t current_allocation_size = torx_allocation_len(peer);
 		peer = torx_realloc(peer,current_allocation_size + sizeof(struct peer_list) *10);
 		for(int j = n + 10; j > n; j--)
 			initialize_n(j);
@@ -3725,7 +3744,7 @@ static inline void expand_group_struc(const int g) // XXX do not put locks in he
 	}
 	if(g % 10 == 0 && g && g + 10 > threadsafe_read_int(&mutex_global_variable,&max_group) && is_null(group[g].id,GROUP_ID_SIZE))
 	{ // Safe to cast g as size_t because > -1
-		const size_t current_allocation_size = torx_allocation_len(group);
+		const uint32_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
 		pthread_rwlock_unlock(&mutex_expand_group); // XXX DANGER, WE ASSUME LOCKS XXX
 		expand_group_struc_cb(g);

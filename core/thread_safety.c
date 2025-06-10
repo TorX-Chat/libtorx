@@ -84,11 +84,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct message_list,message))
 		{
 			if(peer[n].message[i].message)
-			{
-				len = peer[n].message[i].message_len;
-				string = torx_secure_malloc(len);
-				memcpy(string,peer[n].message[i].message,len);
-			}
+				string = torx_copy(&len,peer[n].message[i].message);
 		}
 		else
 			error_printf(-1,"Invalid offset passed to getter_string1: %lu. Coding error. Report this.",offset);
@@ -98,29 +94,17 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct file_list,filename))
 		{
 			if(peer[n].file[f].filename)
-			{
-				len = (uint32_t)strlen(peer[n].file[f].filename) + 1;
-				string = torx_secure_malloc(len);
-				memcpy(string,peer[n].file[f].filename,len);
-			}
+				string = torx_copy(&len,peer[n].file[f].filename);
 		}
 		else if(offset == offsetof(struct file_list,file_path))
 		{
 			if(peer[n].file[f].file_path)
-			{
-				len = (uint32_t)strlen(peer[n].file[f].file_path) + 1;
-				string = torx_secure_malloc(len);
-				memcpy(string,peer[n].file[f].file_path,len);
-			}
+				string = torx_copy(&len,peer[n].file[f].file_path);
 		}
 		else if(offset == offsetof(struct file_list,split_path))
 		{
 			if(peer[n].file[f].split_path)
-			{
-				len = (uint32_t)strlen(peer[n].file[f].split_path) + 1;
-				string = torx_secure_malloc(len);
-				memcpy(string,peer[n].file[f].split_path,len);
-			}
+				string = torx_copy(&len,peer[n].file[f].split_path);
 		}
 		else
 		{ // Handle arrays or error offsets
@@ -137,11 +121,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct peer_list,peernick))
 		{
 			if(peer[n].peernick)
-			{
-				len = (uint32_t)strlen(peer[n].peernick) + 1;
-				string = torx_secure_malloc(len);
-				memcpy(string,peer[n].peernick,len);
-			}
+				string = torx_copy(&len,peer[n].peernick);
 		}
 		else
 		{ // Handle arrays or error offsets

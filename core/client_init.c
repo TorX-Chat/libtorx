@@ -436,12 +436,8 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 	}
 	else if(first_owner == ENUM_OWNER_GROUP_PEER)
 		fallback_g = set_g(target_list[0],NULL);
-	if(skip_prep)
-	{ // For re-send only. Warning: Highly experimental.
-		message_len = base_message_len;
-		message = torx_secure_malloc(message_len);
-		memcpy(message,arg,message_len);
-	}
+	if(skip_prep) // For re-send only. Warning: Highly experimental.
+		message = torx_copy(&message_len,arg);
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 		message = message_prep(&message_len,target_list[0],section,start,end,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
 	else
@@ -514,7 +510,7 @@ static inline int *generate_target_list(uint32_t *target_count,const int n)
 			breakpoint();
 			return NULL;
 		}
-		target_list = torx_secure_malloc(sizeof(int)*(*target_count));
+		target_list = torx_insecure_malloc(sizeof(int)*(*target_count));
 		pthread_rwlock_rdlock(&mutex_expand_group);
 		for(uint32_t nn = 0; nn < *target_count; nn++)
 			target_list[nn] = group[g].peerlist[nn];
@@ -523,7 +519,7 @@ static inline int *generate_target_list(uint32_t *target_count,const int n)
 	else
 	{
 		*target_count = 1;
-		target_list = torx_secure_malloc(sizeof(int)*(*target_count));
+		target_list = torx_insecure_malloc(sizeof(int)*(*target_count));
 		target_list[0] = n;
 	}
 	return target_list;
