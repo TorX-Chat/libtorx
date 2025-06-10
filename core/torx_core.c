@@ -86,6 +86,7 @@ uint8_t reduced_memory = 0; // NOTE: increasing decreases RAM requirements *and*
 int8_t debug = 0; //"0-5" default verbosity. Ensure that privacy related info is not printed before level 3.
 long long unsigned int crypto_pwhash_OPSLIMIT = 0;
 size_t crypto_pwhash_MEMLIMIT = 0;
+size_t tor_calls = 0; // This is part of a work-around for a bug
 int crypto_pwhash_ALG = 0;
 char saltbuffer[crypto_pwhash_SALTBYTES]; // 16
 char *working_dir = {0}; // directory for containing .db and .pid files
@@ -2757,11 +2758,7 @@ static inline int get_tor_version(void)
 	uint8_t using_system_tor_local = (tor_ctrl_port && !tor_pid);
 	pthread_rwlock_unlock(&mutex_global_variable);
 	if(using_system_tor_local)
-	{
-		ret = tor_call("Known bug: After authenticating, our first command to tor_call fails with 510 Unrecognized command \"\"\n"); // XXX TWO PLACES
-		torx_free((void*)&ret);
 		ret = tor_call("getinfo version\n");
-	}
 	if(!ret && tor_location_local[0] != '\0') // NOT else
 	{ // Unless using system Tor, prefer to make a binary call if the binary is available so that this function can be called successfully before Tor is started.
 		if(using_system_tor_local)
@@ -3224,8 +3221,6 @@ static inline void *start_tor_threaded(void *arg)
 		tor_pid = pid;
 		pthread_rwlock_unlock(&mutex_global_variable);
 		pthread_mutex_unlock(&mutex_tor_pipe);
-		ret = tor_call("Known bug: After authenticating, our first command to tor_call fails with 510 Unrecognized command \"\"\n"); // XXX TWO PLACES
-		torx_free((void*)&ret);
 		ret = tor_call("TAKEOWNERSHIP\n"); // We place this here rather than after authenticating in tor_call because we do need to run sql_populate_peer again
 		torx_free((void*)&ret);
 		pid_write(pid);
@@ -5101,33 +5096,23 @@ static inline char *tor_call_internal_recv(const evutil_socket_t socket)
 	return msg_recv;
 }
 
-char *tor_call(const char *msg)
-{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead. (Warning may be depreciated now that we run in a single control connection?)
-	size_t msg_len;
-	if(msg == NULL || !(msg_len = strlen(msg)) || msg_len < 2 || msg[msg_len-1] != '\n')
-	{
-		error_simple(0,"Sanity check fail in tor_call. Calls must be non-null and end with a newline or recv will hang. Coding error. Report this.");
-		breakpoint();
-		return NULL;
-	}
-	struct sockaddr_in serv_addr = {0};
-	const uint16_t local_tor_ctrl_port = threadsafe_read_uint16(&mutex_global_variable,&tor_ctrl_port);
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htobe16(local_tor_ctrl_port);
-	if(inet_pton(AF_INET,TOR_CTRL_IP,&serv_addr.sin_addr) <= 0) // Convert IPv4 and IPv6 addresses from text to binary form
-	{
-		error_simple(0,"Invalid address for Tor Control. Coding error. Report this.");
-		return NULL;
-	}
+static inline long int tor_call_authenticate(const uint16_t local_tor_ctrl_port)
+{ // Connect and authenticate
 	long int retries = 0;
-	pthread_mutex_lock(&mutex_tor_ctrl);
 	if(tor_ctrl_socket < 1)
 	{
+		struct sockaddr_in serv_addr = {0};
+		serv_addr.sin_family = AF_INET;
+		serv_addr.sin_port = htobe16(local_tor_ctrl_port);
+		if(inet_pton(AF_INET,TOR_CTRL_IP,&serv_addr.sin_addr) <= 0) // Convert IPv4 and IPv6 addresses from text to binary form
+		{
+			error_simple(0,"Invalid address for Tor Control. Coding error. Report this.");
+			return RETRIES_MAX;
+		}
 		if((tor_ctrl_socket = SOCKET_CAST_IN socket(AF_INET,SOCK_STREAM,0)) < 0)
 		{
-			pthread_mutex_unlock(&mutex_tor_ctrl);
 			error_simple(0,"Socket creation error. Report this.");
-			return NULL;
+			return RETRIES_MAX;
 		}
 		struct timespec req;
 		req.tv_sec = 0; // 0s
@@ -5161,9 +5146,8 @@ char *tor_call(const char *msg)
 					if(evutil_closesocket(tor_ctrl_socket) < 0)
 						error_simple(0,"Unlikely socket failed to close error.33");
 					tor_ctrl_socket = 0;
-					pthread_mutex_unlock(&mutex_tor_ctrl);
 					error_simple(0,"Tor call failed. Is Tor not running or is the control port incorrect?");
-					return NULL;
+					return RETRIES_MAX;
 				}
 				char *ret = tor_call_internal_recv(tor_ctrl_socket);
 				if(!ret || strncmp(ret,"250",3))
@@ -5171,20 +5155,43 @@ char *tor_call(const char *msg)
 					if(evutil_closesocket(tor_ctrl_socket) < 0)
 						error_simple(0,"Unlikely socket failed to close error.333");
 					tor_ctrl_socket = 0;
-					pthread_mutex_unlock(&mutex_tor_ctrl);
 					error_simple(0,"Tor call authentication failed. Check control port password.");
 					if(ret)
 						error_printf(4,"Tor Control Response:\n%s",ret);
 					torx_free((void*)&ret);
-					return NULL;
+					return RETRIES_MAX;
 				}
 				torx_free((void*)&ret);
 				error_printf(4,"Tor call SUCCESS after %ld retries",retries);
+				tor_calls = 0; // must reset
 				break;
 			}
 		}
 	}
+	return retries;
+}
+
+char *tor_call(const char *msg)
+{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead. (Warning may be depreciated now that we run in a single control connection?)
+	size_t msg_len;
+	if(msg == NULL || !(msg_len = strlen(msg)) || msg_len < 2 || msg[msg_len-1] != '\n')
+	{
+		error_simple(0,"Sanity check fail in tor_call. Calls must be non-null and end with a newline or recv will hang. Coding error. Report this.");
+		breakpoint();
+		return NULL;
+	}
 	char *msg_recv = NULL;
+	const uint16_t local_tor_ctrl_port = threadsafe_read_uint16(&mutex_global_variable,&tor_ctrl_port);
+	pthread_mutex_lock(&mutex_tor_ctrl);
+	const long int retries = tor_call_authenticate(local_tor_ctrl_port);
+	if(retries != RETRIES_MAX && !tor_calls++)
+	{ // TODO Work-around for known bug: After authenticating, our first command to tor_call (both binary Tor and system Tor) fails with 510 Unrecognized command ""
+		if(send(SOCKET_CAST_OUT tor_ctrl_socket,"This will fail\n",SOCKET_WRITE_SIZE 15,0) == 15)
+		{ // We just need to send a newline, or any text terminated with a newline, then recv.
+			msg_recv = tor_call_internal_recv(tor_ctrl_socket);
+			torx_free((void*)&msg_recv);
+		}
+	}
 	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (msg_recv = tor_call_internal_recv(tor_ctrl_socket)))
 	{ // Attempt Send && Receive
 		pthread_rwlock_wrlock(&mutex_global_variable);
