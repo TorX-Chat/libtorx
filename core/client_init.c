@@ -449,14 +449,14 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 		goto error;
 	}
 	// XXX Step 6: Iterate message
-	const int i = increment_i(group_n > -1 ? group_n : target_list[0],0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message,message_len);
+	const int i = increment_i(group_n > -1 ? group_n : target_list[0],0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message);
 	// XXX Step 7: Send_prep as appropriate
 	int repeated = 0;
 	for(uint32_t cycle = 0; cycle < target_count; cycle++)
 	{
 		int iiii = i;
 		if(target_g > -1) // This is for messages to multiple GROUP_PEER. "Public message"
-			iiii = increment_i(target_list[cycle],0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message,message_len);
+			iiii = increment_i(target_list[cycle],0,time,nstime,ENUM_MESSAGE_FAIL,fd_type,p_iter,message);
 		if(!stream)
 		{ // Stream messages, if logged, are logged in packet_removal after they send
 			if(cycle == 0)

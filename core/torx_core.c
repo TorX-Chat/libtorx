@@ -75,7 +75,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 32 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 33 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2325,7 +2325,6 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 		peer[n].message[i].message = NULL; // will be freed in group CTRL
 	else
 		torx_free((void*)&peer[n].message[i].message);
-	peer[n].message[i].message_len = 0;
 	peer[n].message[i].p_iter = -1; // must be -1
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].pos = 0;
@@ -3479,7 +3478,6 @@ static void initialize_i(const int n,const int i) // XXX do not put locks in her
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].p_iter = -1;
 	peer[n].message[i].message = NULL;
-	peer[n].message[i].message_len = 0;
 	peer[n].message[i].pos = 0;
 	peer[n].message[i].nstime = 0;
 //	note: our max is message_n which is handled elsewhere
@@ -3775,7 +3773,7 @@ void expand_message_struc_followup(const int n,const int i)
 			initialize_i_cb(n,j);
 }
 
-int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message,const uint32_t message_len)
+int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message)
 {
 	if(n < 0)
 		error_simple(-1,"increment_i sanity check failed");
@@ -3802,7 +3800,6 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 	peer[n].message[i].stat = stat;
 	peer[n].message[i].p_iter = p_iter;
 	peer[n].message[i].message = message;
-	peer[n].message[i].message_len = message_len;
 	torx_unlock(n) // 🟩🟩🟩
 	if(expanded)
 		expand_message_struc_followup(n,i);
@@ -4052,7 +4049,9 @@ int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols);
 	if(protocol != ENUM_PROTOCOL_GROUP_OFFER && protocol != ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 		return -1;
-	const uint32_t message_len = getter_uint32(n,i,-1,offsetof(struct message_list,message_len));
+	torx_read(n) // 🟧🟧🟧
+	const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);
+	torx_unlock(n) // 🟩🟩🟩
 	if((protocol == ENUM_PROTOCOL_GROUP_OFFER && message_len < GROUP_OFFER_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST && message_len < GROUP_OFFER_FIRST_LEN))
 		return -1;
 	char tmp_message[GROUP_ID_SIZE + sizeof(uint32_t)];
@@ -4073,7 +4072,9 @@ int set_f_from_i(int *file_n,const int n,const int i)
 		error_simple(0,"set_f_from_i sanity check failure. Coding error. Report this.");
 		return -1;
 	}
-	const uint32_t message_len = getter_uint32(n,i,-1,offsetof(struct message_list,message_len));
+	torx_read(n) // 🟧🟧🟧
+	const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);
+	torx_unlock(n) // 🟩🟩🟩
 	if(message_len < CHECKSUM_BIN_LEN)
 		return -1;
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));

@@ -328,7 +328,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint8_t stat;
 		int p_iter;
 		char *message; // should free on shutdown, in cleanup()
-		uint32_t message_len; // includes (where applicable only) applicable null terminator, date, untrusted protocol, signature
 		uint32_t pos; // amount sent TODO utilize for amount received also
 		time_t nstime; // nanoseconds (essentially after a decimal point of time)
 	} *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
@@ -572,7 +571,6 @@ struct event_strc { // XXX Do not sodium_malloc structs unless they contain sens
 	int n;
 	int fresh_n; // for SING/MULT to pass internally
 	char *buffer; // for use with incomplete messages in read_conn.
-	uint32_t buffer_len; // current length of .buffer (received so far)
 	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
 	uint8_t killed;
 };
@@ -701,6 +699,7 @@ void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t le
 void breakpoint(void) __attribute__((optimize("O0")));
 #pragma clang diagnostic pop
 #pragma GCC diagnostic pop
+uint32_t getter_length(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
 char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
 unsigned char *getter_group_id(const int g)__attribute__((warn_unused_result));
 void *group_access(const int g,const size_t offset)__attribute__((warn_unused_result));
@@ -819,7 +818,7 @@ void initial_keyed(void);
 void re_expand_callbacks(void);
 void expand_message_struc(const int n,const int i); // must be called from within locks
 void expand_message_struc_followup(const int n,const int i); // must be called after expand_message_struc, after unlock
-int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message,const uint32_t message_len)__attribute__((warn_unused_result));
+int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message)__attribute__((warn_unused_result));
 int set_last_message(int *last_message_n,const int n,const int count_back)__attribute__((warn_unused_result));
 int group_online(const int g)__attribute__((warn_unused_result));
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)__attribute__((warn_unused_result));

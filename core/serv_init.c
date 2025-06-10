@@ -250,7 +250,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				goto error;
 			}
 			// All protocols that contain a message size on the first packet of a message // Attempt send of messages marked :fail: or resend
-			const uint32_t message_len = getter_uint32(n,i,-1,offsetof(struct message_list,message_len));
+			torx_read(n) // 🟧🟧🟧
+			const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);
+			torx_unlock(n) // 🟩🟩🟩
 			uint32_t prefix_len = 2+2; // packet_len + protocol
 			if(start == 0)
 			{ // Only place length at the beginning of message, not on every message
@@ -436,7 +438,6 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 	event_strc->n = n;
 	event_strc->fresh_n = -1;
 	event_strc->buffer = NULL;
-	event_strc->buffer_len = 0;
 	event_strc->untrusted_message_len = 0;
 	event_strc->killed = 0;
 }

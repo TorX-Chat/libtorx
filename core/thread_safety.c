@@ -66,6 +66,76 @@ void breakpoint(void)
 { // Breakpoint for gdb
 }
 
+uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
+{ // Designed to be efficient, primarily for the UI to get things like message_len.
+	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
+	{
+		error_printf(0,"getter_length sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
+		breakpoint();
+		return 0;
+	}
+	uint32_t len = 0;
+	torx_read(n) // 🟧🟧🟧
+	if(i > INT_MIN)
+	{
+		if(offset == offsetof(struct message_list,message))
+		{
+			if(peer[n].message[i].message)
+				len = torx_allocation_len(peer[n].message[i].message);
+		}
+		else
+			error_printf(-1,"Invalid offset passed to getter_length1: %lu. Coding error. Report this.",offset);
+	}
+	else if(f > -1)
+	{
+		if(offset == offsetof(struct file_list,filename))
+		{
+			if(peer[n].file[f].filename)
+				len = torx_allocation_len(peer[n].file[f].filename);
+		}
+		else if(offset == offsetof(struct file_list,file_path))
+		{
+			if(peer[n].file[f].file_path)
+				len = torx_allocation_len(peer[n].file[f].file_path);
+		}
+		else if(offset == offsetof(struct file_list,split_path))
+		{
+			if(peer[n].file[f].split_path)
+				len = torx_allocation_len(peer[n].file[f].split_path);
+		}
+		else
+		{ // Handle arrays or error offsets
+			if(offset == offsetof(struct file_list,checksum))
+				len = sizeof(peer[n].file[f].checksum);
+			else
+				error_printf(-1,"Invalid offset passed to getter_length2: %lu. Coding error. Report this.",offset);
+		}
+	}
+	else
+	{
+		if(offset == offsetof(struct peer_list,peernick))
+		{
+			if(peer[n].peernick)
+				len = torx_allocation_len(peer[n].peernick);
+		}
+		else
+		{ // Handle arrays or error offsets
+			if(offset == offsetof(struct peer_list,privkey))
+				len = sizeof(peer[n].privkey);
+			else if(offset == offsetof(struct peer_list,onion))
+				len = sizeof(peer[n].onion);
+			else if(offset == offsetof(struct peer_list,torxid))
+				len = sizeof(peer[n].torxid);
+			else if(offset == offsetof(struct peer_list,peeronion))
+				len = sizeof(peer[n].peeronion);
+			else
+				error_printf(-1,"Invalid offset passed to getter_length3: %lu. Coding error. Report this.",offset);
+		}
+	}
+	torx_unlock(n) // 🟩🟩🟩
+	return len;
+}
+
 char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)
 { // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void*)&string);
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
@@ -188,7 +258,6 @@ struct offsets offsets_message[] = {
 	offsize(message_list,stat,"stat"),
 	offsize(message_list,p_iter,"p_iter"),
 	offsize(message_list,message,"message"),
-	offsize(message_list,message_len,"message_len"),
 	offsize(message_list,pos,"pos"),
 	offsize(message_list,nstime,"nstime")
 };
@@ -377,7 +446,7 @@ void *protocol_access(const int p_iter,const size_t offset)
 }
 
 size_t getter_size(const char *parent,const char *member)
-{ // Returns size of a member
+{ // Returns size of a member. You may be looking for getter_length instead.
 	if(!parent || !member)
 	{
 		error_simple(-1,"getter_size fail. Coding error. Report this.");
@@ -504,7 +573,8 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.2",offset);\
 	if(offset == offsetof(struct message_list,message))\
 	{\
-		if(peer[n].message[i].message_len < size)\
+		const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);\
+		if(message_len < size)\
 			error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.2 %lu < %lu",offset,offsets_struc[iter].size,size);\
 	}\
 	else if(offsets_struc[iter].size < size)\
@@ -533,8 +603,9 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 		torx_read(n) // 🟧🟧🟧
 		if(offset == offsetof(struct message_list,message))
 		{
-			if(peer[n].message[i].message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function, when accessing pointers.
-				memcpy(array,peer[n].message[i].message,peer[n].message[i].message_len);
+			const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);
+			if(message_len < size) // XXX Good example of a sanity check. Need to implement elsewhere in this function, when accessing pointers.
+				memcpy(array,peer[n].message[i].message,message_len);
 			else
 				memcpy(array,peer[n].message[i].message,size);
 		}

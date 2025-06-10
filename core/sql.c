@@ -207,7 +207,6 @@ int message_edit(const int n,const int i,const char *message)
 			{ // Replacing a message
 				torx_write(n) // 🟥🟥🟥
 				message_old = peer[n].message[i].message; // need to free this *after* swap
-				peer[n].message[i].message_len = final_len;
 				peer[n].message[i].message = message_new;
 				torx_unlock(n) // 🟩🟩🟩
 			}
@@ -237,10 +236,7 @@ int message_edit(const int n,const int i,const char *message)
 							int shrinkage;
 							torx_write(peer_n) // 🟥🟥🟥
 							if(message_new)
-							{
-								peer[peer_n].message[ii].message_len = final_len;
 								peer[peer_n].message[ii].message = message_new;
-							}
 							else
 								shrinkage = zero_i(peer_n,ii);
 							torx_unlock(peer_n) // 🟩🟩🟩
@@ -473,7 +469,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			{
 				torx_read(group_n) // 🟧🟧🟧
 				tmp_message = peer[group_n].message[group_i].message;
-				message_len = peer[group_n].message[group_i].message_len;
+				message_len = torx_allocation_len(peer[group_n].message[group_i].message);
 				torx_unlock(group_n) // 🟩🟩🟩
 				break; // winner
 			}
@@ -544,7 +540,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 			invitee_add(g,n);
 		}
 	}
-	return increment_i(n,offset,time,nstime,stat,-1,p_iter,tmp_message,message_len);
+	return increment_i(n,offset,time,nstime,stat,-1,p_iter,tmp_message);
 }
 
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation)
