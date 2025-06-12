@@ -988,7 +988,7 @@ uint32_t torx_allocation_len(const void *arg)
 }
 
 void *torx_copy(uint32_t *len_p,const void *arg)
-{ // Convenience function; typically used where a mutex is involved.
+{ // Convenience function; typically used where a mutex is involved. DO NOT USE WHERE THE ARGUMENT COULD BE A NON-TORX ALLOCATION.
 	if(arg)
 	{
 		const void *real_ptr = (const char *)arg - 8;

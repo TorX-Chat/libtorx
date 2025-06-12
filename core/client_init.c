@@ -436,8 +436,12 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 	}
 	else if(first_owner == ENUM_OWNER_GROUP_PEER)
 		fallback_g = set_g(target_list[0],NULL);
-	if(skip_prep) // For re-send only. Warning: Highly experimental.
-		message = torx_copy(&message_len,arg);
+	if(skip_prep)
+	{ // For re-send only. Warning: Highly experimental. DO NOT USE TORX_COPY because arg may not be TorX allocated.
+		message_len = base_message_len;
+		message = torx_secure_malloc(message_len);
+		memcpy(message,arg,message_len);
+	}
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 		message = message_prep(&message_len,target_list[0],section,start,end,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
 	else

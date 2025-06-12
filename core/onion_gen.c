@@ -401,7 +401,11 @@ int generate_onion(const uint8_t owner,char *privkey,const char *peernick)
 		sodium_memzero(serv_strc->privkey,88+1);
 	sodium_memzero(serv_strc->onion,56+1);
 	if(peernick)
-		serv_strc->peernick = torx_copy(NULL,peernick);
+	{ // DO NOT USE TORX_COPY because peernick may not be TorX allocated.
+		const size_t allocation_len = strlen(peernick)+1;
+		serv_strc->peernick = torx_secure_malloc(allocation_len);
+		snprintf(serv_strc->peernick,allocation_len,"%s",peernick);
+	}
 	if((owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT) && threadsafe_read_int8(&mutex_global_variable,(int8_t*)&shorten_torxids) == 1 && privkey == NULL) // NOTE: This must be the same as above UID:271231
 	{ // Nonblocking operation (relies on callback)
 		serv_strc->in_pthread = 1;
