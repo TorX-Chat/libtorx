@@ -59,6 +59,12 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include <torx.h>
+#include <png.h>
+#include "qrcodegen.h"
+#include "qrcodegen.c"
+
 //#ifdef QR_GENERATOR	TODO implement this conditional in torx.c and torx.h
 /*	 // we can cut our PNG file sizes by about 70% if we get this bitwise operation working right? it seems like with compression libpng already puts us below what bitwise would be
 	png_set_IHDR(png, info, width, height, 1, PNG_COLOR_TYPE_GRAY,

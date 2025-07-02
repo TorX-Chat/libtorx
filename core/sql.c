@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /* Notes
 - https://www.zetetic.net/sqlcipher/sqlcipher-api/#cipher_integrity_check
 - https://www.zetetic.net/sqlcipher/sqlcipher-api/#Changing_Key

@@ -87,6 +87,8 @@ severable if found in contradiction with the License or applicable law.
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
+#include "torx_internal.h"
+
 /* Private state engine
  *
  *The macros below assemble the cases for a switch statement

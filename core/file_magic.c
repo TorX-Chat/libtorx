@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /*	This file contains core TorX functions that require disk interaction (currently all except search_file(), initial()	
 XXX Known Bug List XXX
 	* on 2022/08/15, a unrecognized config option _pwhash_ALG with value: 2, resulted in the salt being overwritten and therefore all files destroyed
@@ -560,7 +563,7 @@ static inline size_t stripbuffer_b32_len51(char *buffer)
 	return j-1;
 }
 
-static inline void *peer_init(void *arg)
+void *peer_init(void *arg)
 { /* For sending an outgoing friend request */
 	const int n = vptoi(arg);
 	torx_write(n) // 🟥🟥🟥

@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /*
 	Helper functions for use on peer struct, group struct, packet struct, and child objects, to prevent data races on integers, with return size sanity checking.
 */

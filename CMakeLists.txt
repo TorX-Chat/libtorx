@@ -49,7 +49,6 @@ else()
 	set(REPO_PNG "https://github.com/glennrp/libpng")
 endif()
 
-#set(ENV{QR_GENERATOR} 1)
 ## _ARGS taken from https://gitlab.torproject.org/tpo/core/tor/-/issues/33624 _ADDITIONAL are extras to remove bloat
 #set(SSL_CONFIG_ARGS shared enable-ec_nistp_64_gcc_128 no-ssl2 no-ssl3 no-dso no-weak-ssl-ciphers no-dtls)
 ### set(SSL_CONFIG_ADDITIONAL no-asm no-stdio no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl) # do more https://security.stackexchange.com/questions/71499/build-only-openssl-crypto
@@ -105,7 +104,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 else()
 	set(SSL_ARCH linux-x86_64) # TODO do not hardcode this
 	set(SODIUM_OUT_BIN_DIR src/libsodium/.libs)
-	set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 make -j8)
+	set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 make)
 	set(SSL_CONFIG_ADDITIONAL enable-ec_nistp_64_gcc_128) # NOTE: only necessary on 64bit
 	set(SSL_CONFIG_CMD ./Configure ${SSL_ARCH} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
 	set(SQLCIPHER_CONFIG_CMD ./configure)
@@ -161,7 +160,14 @@ else()
 	set(SQLCIPHER_CONFIG_ARGS --enable-shared=no LDFLAGS=${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/libcrypto.a )#--oldincludedir=/tmp ) # link .a from ssl
 endif()
 
-add_library( ${PROJECT_NAME} torx.c )
+add_compile_definitions(SQLITE_HAS_CODEC SECURE_MALLOC)
+
+if(QR_GENERATOR)
+	add_compile_definitions(QR_GENERATOR) # necessary, not redundant
+	set(QR_GENERATOR_SRC extra/qr_generator/torx_qr.c)
+endif()
+
+add_library( ${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -203,7 +209,7 @@ if(BUILD_TORX_DEPS)
 		DOWNLOAD_COMMAND git clone ${REPO_SSL} --branch OpenSSL_1_1_1-stable openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
 		UPDATE_COMMAND ""
 		CONFIGURE_COMMAND ${SSL_CONFIG_CMD} ${SSL_CONFIG_TYPE}
-		BUILD_COMMAND make -j8 ${SSL_MAKE_ARGS}
+		BUILD_COMMAND make ${SSL_MAKE_ARGS}
 		INSTALL_COMMAND ""
 		BUILD_BYPRODUCTS ${SSL_BUILD_BYPRODUCT} ${CRYPTO_BUILD_BYPRODUCT}
 	)
@@ -214,7 +220,7 @@ if(BUILD_TORX_DEPS)
 		BUILD_IN_SOURCE 1
 		UPDATE_COMMAND ""
 		CONFIGURE_COMMAND export CC=${CLANG_BINARY_PATH} && export CXX=${CLANGPP_BINARY_PATH} && ./configure
-		BUILD_COMMAND make -j8
+		BUILD_COMMAND make
 		INSTALL_COMMAND ""
 # 		BUILD_BYPRODUCTS ${Z_BUILD_BYPRODUCT} # first we need to get it to be .so
 	)
@@ -226,7 +232,7 @@ if(BUILD_TORX_DEPS)
 		BUILD_IN_SOURCE TRUE
 		UPDATE_COMMAND mkdir -p include/sqlcipher
 		CONFIGURE_COMMAND ${SQLCIPHER_CONFIG_CMD} ${SQLCIPHER_CONFIG_ARGS} --with-crypto-lib=none --enable-tempstore=yes CFLAGS=${SQLCIPHER_CFLAGS}
-		BUILD_COMMAND make -j8
+		BUILD_COMMAND make
 		INSTALL_COMMAND ${CMAKE_COMMAND} -E make_directory include/sqlcipher && ${CMAKE_COMMAND} -E copy sqlite3.h include/sqlcipher/
 	#	INSTALL_COMMAND cp *.h include/sqlcipher/
 		BUILD_BYPRODUCTS ${SQLCIPHER_BUILD_BYPRODUCT}
@@ -330,11 +336,11 @@ target_include_directories(
 		${PNG_INCLUDE_DIRS}				# probably not useful, i think this is bunk. see include_directories()
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 )
-add_compile_definitions(SQLITE_HAS_CODEC QR_GENERATOR SECURE_MALLOC)
+
 if(WIN32)
 target_link_libraries(
 	${PROJECT_NAME}
-	PUBLIC # not sure if necessary. not really sure what PUBLIC/PRIVATE does. something about "link interface"
+	PRIVATE
 		Ws2_32
 		sodium
 	#	event
@@ -348,7 +354,7 @@ target_link_libraries(
 else()
 target_link_libraries(
 	${PROJECT_NAME}
-	PUBLIC # not sure if necessary. not really sure what PUBLIC/PRIVATE does. something about "link interface"
+	PRIVATE
 		sodium
 	#	event
 		event_core
@@ -358,4 +364,8 @@ target_link_libraries(
 # 		zlib
 		sqlcipher
 )
+endif()
+
+if(BUILD_SHARED_LIBS)
+	install(TARGETS ${PROJECT_NAME} DESTINATION lib)
 endif()

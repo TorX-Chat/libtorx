@@ -60,6 +60,8 @@ any form.
 severable if found in contradiction with the License or applicable law.
 */
 
+#include "torx_internal.h"
+
 static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const int f,const int peer_n,const int8_t fd_type)
 { // This is used on ALL TYPES of file transfer (group, PM, p2p).
 	const uint8_t peer_owner = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,owner));

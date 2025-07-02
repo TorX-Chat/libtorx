@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /*
 	// TODO any references to ENUM_OWNER_GROUP_PEER can be removed because we no longer use generate_onion for it (we just create a fake string for PK)
 		note: do a group handshake first with some debug lines to verify that we never call this with owner == GROUP_PEER

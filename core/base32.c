@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 // base32_encode allocates memory that must be freed after calling.
 // TODO replace err with simple NULL return checks
 

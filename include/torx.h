@@ -59,82 +59,61 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
-#define _FILE_OFFSET_BITS 64 // keep this before headers
-#include <stdio.h>
-#include <stdlib.h> 	// may be redundant. Included in main.h for running external tor binary.
-#include <unistd.h> 	// read, etc. Exec ( tor ) XXX does not exist in windows
-#include <string.h>
-#include <time.h>	// for time in message logs etc
-#include <sys/types.h>	// for fork()
-#include <sys/stat.h>	// for umask
-//#include <stdarg.h>	// for va_list
-//#include <ctype.h>	// for "toupper" (we could rewrite the relevant function very easily and remove this)
-#include <signal.h>	// for kill signals
-//#include <threads.h>	// C11 threads.
+
+#ifndef TORX_PUBLIC_HEADERS
+#define TORX_PUBLIC_HEADERS 1
+
 #include <pthread.h>
-#include <libgen.h>	// used ONLY for "dirname" though we could also get basename from it (rather than the one we use)
-#include <utime.h>
-#include <inttypes.h>
-/* Libevent related */
-#include <errno.h>
-#include <fcntl.h>
+#include <libgen.h>	// for dirname / basename
+
 #include <event2/event.h>
 #include <event2/thread.h>
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/listener.h>
+#include <sodium.h>
 
-#include <sodium.h>			// libsodium
-#include <sqlcipher/sqlite3.h>
-
-#ifdef WIN32 // NOTE: This must also be in appindicator.c file
-#define SOCKET_CAST_IN (evutil_socket_t)
-#define SOCKET_CAST_OUT (SOCKET)
-#define SOCKET_WRITE_SIZE (int)
+#ifdef WIN32
+	//#include <winsock2.h>
+	//#include <ws2tcpip.h>
+	//#include <windows.h>
+	//#include <winsock.h>	// for windows. should cover all network related stuff?
+	#include <shlobj.h>	// for SHGetKnownFolderPath
+	#define SOCKET_CAST_IN (evutil_socket_t)
+	#define SOCKET_CAST_OUT (SOCKET)
+	#define SOCKET_WRITE_SIZE (int)
+	#define pid_t int // currently used for run_binary
+	typedef u_short in_port_t;
+	#define OPTVAL_CAST (const char *)
+	#define pusher(F,A) \
+	{ \
+		pthread_cleanup_push(F,A); \
+		pthread_cleanup_pop(1); \
+	}
+	#define htobe16(x) _byteswap_ushort((uint16_t)(x))
+	#define htobe32(x) _byteswap_ulong((uint32_t)(x))
+	#define htobe64(x) _byteswap_uint64((uint64_t)(x))
+	#define be16toh(x) htobe16(x)
+	#define be32toh(x) htobe32(x)
+	#define be64toh(x) htobe64(x)
 #else
-#define SOCKET_CAST_IN
-#define SOCKET_CAST_OUT
-#define SOCKET_WRITE_SIZE
+	#include <sys/wait.h>
+	#include <netinet/in.h> 	// required for BSD; not required on linux. throws: scratch_6.c:13: error: storage size of 'serv_addr' isn't known
+	#include <sys/socket.h>
+	#include <arpa/inet.h>
+	#include <netdb.h>		// dns lookup gethostbyname,
+	#include <netinet/tcp.h>	// for DisableNagle
+	#include <poll.h>		// required by remote_connect.c
+	#define SOCKET_CAST_IN
+	#define SOCKET_CAST_OUT
+	#define SOCKET_WRITE_SIZE
+	#define OPTVAL_CAST
+	#define pusher(F,A) \
+	{ \
+		pthread_cleanup_push(F,A) \
+		pthread_cleanup_pop(1); \
+	}
 #endif
-
-#ifdef WIN32 // XXX
-#define pid_t int // currently used for run_binary
-typedef u_short in_port_t;
-//#include <winsock2.h>
-//#include <ws2tcpip.h>
-//#include <windows.h>
-//#include <winsock.h> // for windows. should cover all network related stuff?
-#include <shlobj.h> // for SHGetKnownFolderPath
-#define OPTVAL_CAST (const char *)
-#define pusher(F,A) \
-{ \
-	pthread_cleanup_push(F,A); \
-	pthread_cleanup_pop(1); \
-}
-#define htobe16(x) _byteswap_ushort((uint16_t)(x))
-#define htobe32(x) _byteswap_ulong((uint32_t)(x))
-#define htobe64(x) _byteswap_uint64((uint64_t)(x))
-#define be16toh(x) htobe16(x)
-#define be32toh(x) htobe32(x)
-#define be64toh(x) htobe64(x)
-
-#else
-
-#include <sys/wait.h>	// XXX works but not c99
-#include <netinet/in.h> // required for BSD; not required on linux. throws: scratch_6.c:13: error: storage size of 'serv_addr' isn't known
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netdb.h> 	// dns lookup gethostbyname,
-#include <netinet/tcp.h> // for DisableNagle
-#include <poll.h>	// required by remote_connect.c
-#define OPTVAL_CAST
-#define pusher(F,A) \
-{ \
-	pthread_cleanup_push(F,A) \
-	pthread_cleanup_pop(1); \
-}
-
-#endif // XXX
 
 #ifdef __ANDROID__
 	#define TORX_PHTREAD_CANCEL_TYPE 0 // pthread_cancel / pthread_setcanceltype is not and will not be supported by android
@@ -143,10 +122,6 @@ typedef u_short in_port_t;
 	#define TORX_PHTREAD_CANCEL_TYPE PTHREAD_CANCEL_DEFERRED // prior to 2025, was PTHREAD_CANCEL_ASYNCHRONOUS, but we read that's bad (and could cause mutex lockups).
 	#define IS_ANDROID 0
 #endif
-
-/* 3rd Party Libraries */
-
-//#include <sys/mman.h> // for mlockall(
 
 #define RED		"\x1b[31m" // printf( RED "Hello\n" RESET );
 #define GREEN		"\x1b[32m"
@@ -376,7 +351,9 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
 	pthread_t thrd_recv; // for torx_events (recv)
 	uint32_t broadcasts_inbound;
-} *peer;
+};
+extern struct peer_list *peer;
+
 struct group_list { // XXX NOTE: individual peers will be in peer struct but peer[n].owner != CTRL so they won't appear in peer list or show online notifications XXX
 	unsigned char id[GROUP_ID_SIZE]; // x25519_sk key, 32 bytes decoded, crypto_scalarmult_base to get _pk. PROBABLY SHOULD NOT CLEAR THIS WHEN DELETING (??? what)
 	int n; // n of our GROUP_CTRL
@@ -390,7 +367,9 @@ struct group_list { // XXX NOTE: individual peers will be in peer struct but pee
 	struct msg_list *msg_index; // no space is allocated, do not free. this is for group_get_index
 	struct msg_list *msg_first;
 	struct msg_list *msg_last;
-} *group; // NOTE: creator of the group will never ask anyone for peer_list because creator is always on everyone's peer list. Other users can periodically poll people for peer_list.
+}; // NOTE: creator of the group will never ask anyone for peer_list because creator is always on everyone's peer list. Other users can periodically poll people for peer_list.
+extern struct group_list *group;
+
 struct msg_list { // This is ONLY to be allocated by message_sort and message_insert
 	struct msg_list *message_prior; // if NULL, no prior notifiable message
 	int n;
@@ -409,7 +388,8 @@ struct packet_info {
 	int8_t fd_type; // -1 trash (ready for re-use??? but then out of order),0 recv, 1 send
 	time_t time; // time added to packet struct
 	time_t nstime; // time added to packet struct
-} packet[SIZE_PACKET_STRC]; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 
+}; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 
+extern struct packet_info packet[SIZE_PACKET_STRC];
 
 struct protocol_info {
 	uint16_t protocol;
@@ -430,13 +410,15 @@ struct protocol_info {
 	uint8_t file_offer;
 	uint8_t group_mechanics;
 	uint8_t stream; // TODO should NOT be added to message struct, nor saved to disk, should be provided straight to UI in a stream_cb(n,protocol,void*,len)
-} protocols[PROTOCOL_LIST_SIZE];
+};
+extern struct protocol_info protocols[PROTOCOL_LIST_SIZE];
 
 struct broadcasts_list {
 	uint32_t hash;
 	unsigned char broadcast[GROUP_BROADCAST_LEN];
 	int peers[BROADCAST_MAX_PEERS]; // initialized as -1
-} broadcasts_queued[BROADCAST_QUEUE_SIZE]; // this is queue
+}; // this is queue
+extern struct broadcasts_list broadcasts_queued[BROADCAST_QUEUE_SIZE];
 
 enum exclusive_types {
 	ENUM_EXCLUSIVE_NONE = 0,
@@ -589,38 +571,37 @@ struct file_request_strc { // XXX Do not sodium_malloc structs unless they conta
 };
 
 /* Callbacks */
-void (*initialize_n_registered)(int);
-void (*initialize_n_registered)(const int n);
-void (*initialize_i_registered)(const int n,const int i);
-void (*initialize_f_registered)(const int n,const int f);
-void (*initialize_g_registered)(const int g);
-void (*shrinkage_registered)(const int n,const int shrinkage);
-void (*expand_file_struc_registered)(const int n,const int f);
-void (*expand_message_struc_registered)(const int n,const int i);
-void (*expand_peer_struc_registered)(const int n);
-void (*expand_group_struc_registered)(const int g);
-void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred);
-void (*change_password_registered)(const int value);
-void (*incoming_friend_request_registered)(const int n);
-void (*onion_deleted_registered)(const uint8_t owner,const int n);
-void (*peer_online_registered)(const int n);
-void (*peer_offline_registered)(const int n);
-void (*peer_new_registered)(const int n);
-void (*onion_ready_registered)(const int n);
-void (*tor_log_registered)(char *message);
-void (*error_registered)(char *error_message);
-void (*fatal_registered)(char *error_message);
-void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
-void (*message_new_registered)(const int n,const int i);
-void (*message_modified_registered)(const int n,const int i);
-void (*message_deleted_registered)(const int n,const int i);
-void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len);
-void (*message_more_registered)(const int loaded,int *loaded_array_n,int *loaded_array_i);
-void (*login_registered)(const int value);
-void (*peer_loaded_registered)(const int n);
-void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
-void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len);
-void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len);
+extern void (*initialize_n_registered)(const int n);
+extern void (*initialize_i_registered)(const int n,const int i);
+extern void (*initialize_f_registered)(const int n,const int f);
+extern void (*initialize_g_registered)(const int g);
+extern void (*shrinkage_registered)(const int n,const int shrinkage);
+extern void (*expand_file_struc_registered)(const int n,const int f);
+extern void (*expand_message_struc_registered)(const int n,const int i);
+extern void (*expand_peer_struc_registered)(const int n);
+extern void (*expand_group_struc_registered)(const int g);
+extern void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred);
+extern void (*change_password_registered)(const int value);
+extern void (*incoming_friend_request_registered)(const int n);
+extern void (*onion_deleted_registered)(const uint8_t owner,const int n);
+extern void (*peer_online_registered)(const int n);
+extern void (*peer_offline_registered)(const int n);
+extern void (*peer_new_registered)(const int n);
+extern void (*onion_ready_registered)(const int n);
+extern void (*tor_log_registered)(char *message);
+extern void (*error_registered)(char *error_message);
+extern void (*fatal_registered)(char *error_message);
+extern void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
+extern void (*message_new_registered)(const int n,const int i);
+extern void (*message_modified_registered)(const int n,const int i);
+extern void (*message_deleted_registered)(const int n,const int i);
+extern void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len);
+extern void (*message_more_registered)(const int loaded,int *loaded_array_n,int *loaded_array_i);
+extern void (*login_registered)(const int value);
+extern void (*peer_loaded_registered)(const int n);
+extern void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
+extern void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len);
+extern void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len);
 
 /* Callback Setters */
 void initialize_n_setter(void (*callback)(int));
@@ -841,16 +822,12 @@ int custom_input(const uint8_t owner,const char *identifier,const char *privkey)
 
 /* broadcast.c */
 void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN]);
-void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g);
-void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
-void broadcast_start(void);
+void broadcast_remove(const int g);
 
 /* sql.c */
-int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
 void message_offload(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
-int sql_exec(sqlite3** db,const char *command,const char *setting_value,const size_t setting_value_len);
 int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len);
 int sql_insert_message(const int n,const int i);
 int sql_update_message(const int n,const int i);
@@ -874,6 +851,7 @@ int file_status_get(const int n,const int f)__attribute__((warn_unused_result));
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
+void *peer_init(void *arg);
 int peer_save(const char *unstripped_peerid,const char *peernick);
 void peer_accept(const int n);
 void change_nick(const int n,const char *freshpeernick);
@@ -949,9 +927,7 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 #endif
 
 #ifdef QR_GENERATOR	// TODO implement this conditional in library and CMakeLists.txt
-	#include <png.h>
-	#include "../qrcodegen.h"
-	#include "../qrcodegen.c"
+	#include <stdbool.h>
 	struct qr_data{
 		bool *data;
 		size_t height;
@@ -963,22 +939,82 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 	char *qr_utf8(const struct qr_data *arg)__attribute__((warn_unused_result));
 	void *return_png(size_t *size_ptr,const struct qr_data *arg)__attribute__((warn_unused_result));
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
-	#include "../torx_qr.c"
 #endif
 
-/* TorX function files */
-#include "../core/utf8/utf8-validate.c"
-#include "../core/blake3-tiny/blake3.c"
-#include "../core/sha3-256/sha3.c"		// for onion_gen.c and for verifying checksums from https://github.com/euugenechou/sha3-256
-#include "../core/mkp224o/cpucount.c"
-#include "../core/torx_core.c"
-#include "../core/thread_safety.c"
-#include "../core/libbaseencode/base32.c"	// from libbaseencode. Issue: it sometimes outputs short output due to requiring null input.
-#include "../core/netcat-openbsd/socks.c"		// openbsd socks 
-#include "../core/broadcast.c"
-#include "../core/libevent.c"			/* Libevent testing file */
-#include "../core/onion_gen.c"
-#include "../core/file_magic.c"
-#include "../core/sql.c"
-#include "../core/serv_init.c"
-#include "../core/client_init.c"
+/* Global variables (defined here, declared elsewhere, primarily in torx_core.c) */
+extern const uint16_t torx_library_version[4];
+extern void *ui_data;
+extern char *debug_file;
+extern uint8_t v3auth_enabled;
+extern uint8_t reduced_memory;
+extern int8_t debug;
+extern long long unsigned int crypto_pwhash_OPSLIMIT;
+extern size_t crypto_pwhash_MEMLIMIT;
+extern size_t tor_calls;
+extern int crypto_pwhash_ALG;
+extern char saltbuffer[crypto_pwhash_SALTBYTES];
+extern char *working_dir;
+extern char *file_db_plaintext;
+extern char *file_db_encrypted;
+extern char *file_db_messages;
+extern char *file_tor_pid;
+extern char *control_password_clear;
+extern char control_password_hash[61+1];
+extern char *torrc_content;
+extern char *default_peernick;
+extern evutil_socket_t tor_ctrl_socket;
+extern uint16_t tor_socks_port;
+extern uint16_t tor_ctrl_port;
+extern uint32_t tor_version[4];
+extern uint8_t sodium_initialized;
+extern uint8_t currently_changing_pass;
+extern uint8_t first_run;
+extern uint8_t destroy_input;
+extern uint8_t tor_running;
+extern uint8_t using_system_tor;
+extern uint8_t lockout;
+extern uint8_t keyed;
+extern pid_t tor_pid;
+extern int highest_ever_o;
+extern int file_piece_p_iter;
+extern uint8_t messages_loaded;
+extern unsigned char decryption_key[crypto_box_SEEDBYTES];
+extern int max_group;
+extern int max_peer;
+extern time_t startup_time;
+extern const char platform_slash;
+extern char *snowflake_location;
+extern char *lyrebird_location;
+extern char *conjure_location;
+extern char *native_library_directory;
+extern char *tor_data_directory;
+extern char *tor_location;
+extern char *download_dir;
+extern char *split_folder;
+extern uint32_t sing_expiration_days;
+extern uint32_t mult_expiration_days;
+extern uint32_t show_log_messages;
+extern uint8_t global_log_messages;
+extern uint8_t log_last_seen;
+extern uint8_t auto_accept_mult;
+extern uint8_t shorten_torxids;
+extern uint8_t suffix_length;
+extern uint32_t global_threads;
+extern uint32_t threads_max;
+extern uint8_t auto_resume_inbound;
+extern uint8_t kill_delete;
+extern uint8_t hide_blocked_group_peer_messages;
+extern uint8_t log_pm_according_to_group_setting;
+extern double file_progress_delay;
+extern uint32_t broadcast_history[BROADCAST_HISTORY_SIZE];
+extern pthread_attr_t ATTR_DETACHED;
+extern pthread_rwlock_t mutex_debug_level;
+extern pthread_rwlock_t mutex_global_variable;
+extern pthread_rwlock_t mutex_protocols;
+extern pthread_rwlock_t mutex_expand;
+extern pthread_rwlock_t mutex_expand_group;
+extern pthread_rwlock_t mutex_packet;
+extern pthread_rwlock_t mutex_broadcast;
+extern uint8_t censored_region;
+
+#endif // TORX_PUBLIC_HEADERS

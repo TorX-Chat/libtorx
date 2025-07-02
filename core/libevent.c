@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /* 
 clear ; gcc /home/user/Code/TorX/src/core/libevent2.c -levent_core -o /tmp/libevent2 && /./tmp/libevent 2
 

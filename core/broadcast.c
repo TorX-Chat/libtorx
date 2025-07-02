@@ -59,6 +59,26 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
+static inline uint32_t fnv1a_32_salted(const void *data,const size_t len)
+{ // we're adding a salt (which salt doesn't matter but it can't change per-session) to prevent malicious peers from being able to easily prevent specific broadcasts (i mean... they could still spam BROADCAST_QUEUE_SIZE)
+	uint32_t hash = 0;
+	unsigned char src[crypto_pwhash_SALTBYTES+len];
+	memcpy(src,saltbuffer,sizeof(saltbuffer)); // using our global salt is fine/safe
+	memcpy(&src[sizeof(saltbuffer)],data,len);
+	for(size_t i = 0 ; i < sizeof(src) ; ++i)
+	{
+		hash ^= src[i];
+		hash *= 0x01000193;
+	}
+	if(!hash) // TorX modification: cannot allow return of 0
+		hash++;
+	sodium_memzero(src,sizeof(src));
+	return hash;
+}
+
 void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN])
 { // Add or discard a broadcast, depending on queue and whether it has already been added/sent. "Broadcast should be added to queue if checksum (single int) is not in broadcast_history array. Queue should store an integer hash of each sent broadcast to avoid repetition. It should also be rate limited (random rate, random delays) to avoid facilitating mapping of the network. Broadcast thread should run perpetually if there is anything in the queue, otherwise close. Broadcasts exceeding queue should be discarded? Undecided."
 	if(!broadcast)
@@ -129,7 +149,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 	pthread_rwlock_unlock(&mutex_broadcast); // 🟩
 }
 
-static inline void broadcast_remove(const int g)
+void broadcast_remove(const int g)
 { // Remove hash from queue because we joined the group successfully, or for other reasons
 	if(g < 0)
 		return;

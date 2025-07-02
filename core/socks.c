@@ -150,6 +150,8 @@ severable if found in contradiction with the License or applicable law.
  **Hobbit* <hobbit@avian.org>.
  */
 
+#include "torx_internal.h"
+
 #define SOCKS_V5	5
 #define SOCKS_NOAUTH	0
 #define SOCKS_NOMETHOD	0xff

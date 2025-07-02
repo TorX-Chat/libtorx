@@ -60,6 +60,8 @@ any form.
 severable if found in contradiction with the License or applicable law.
 */
 
+#include "torx_internal.h"
+
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type)
 { // Puts a message into evbuffer and registers the packet info. Should be run in a while loop on startup and reconnections, and once per message_send. Returns -1 on error or peer offline, 0 on success, and -2 on socket utilized (cannot send immediately). We could return 0 instead of -2, but we might use this.
 	if(n < 0 || p_iter < 0)

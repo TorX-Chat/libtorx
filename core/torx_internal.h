@@ -59,100 +59,79 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
-#define DIGEST 32 // 256-bit digest in bytes.
 
-#define ROUNDS 24 // Number of KECCAK rounds to perform for SHA3-256.
-#define WIDTH 200 // 1600-bit width in bytes.
-#define RATE 136 // 1600-bit width - 512-bit capacity in bytes.
+#ifndef TORX_PRIVATE_HEADERS
+#define TORX_PRIVATE_HEADERS 1
 
-#define ROTL64(x, y) (((x) << (y)) | ((x) >> (64 - (y))))
+#define _FILE_OFFSET_BITS 64 // keep this before headers
 
-/*** Constants. ***/
-static const uint8_t rho[24] = \
-  { 1,  3,   6, 10, 15, 21,
-    28, 36, 45, 55,  2, 14,
-    27, 41, 56,  8, 25, 43,
-    62, 18, 39, 61, 20, 44};
-static const uint8_t pi[24] = \
-  {10,  7, 11, 17, 18, 3,
-    5, 16,  8, 21, 24, 4,
-   15, 23, 19, 13, 12, 2,
-   20, 14, 22,  9, 6,  1};
-static const uint64_t RC[24] = \
-  {1ULL, 0x8082ULL, 0x800000000000808aULL, 0x8000000080008000ULL,
-   0x808bULL, 0x80000001ULL, 0x8000000080008081ULL, 0x8000000000008009ULL,
-   0x8aULL, 0x88ULL, 0x80008009ULL, 0x8000000aULL,
-   0x8000808bULL, 0x800000000000008bULL, 0x8000000000008089ULL, 0x8000000000008003ULL,
-   0x8000000000008002ULL, 0x8000000000000080ULL, 0x800aULL, 0x800000008000000aULL,
-   0x8000000080008081ULL, 0x8000000000008080ULL, 0x80000001ULL, 0x8000000080008008ULL};
+#include <stdio.h>
+#include <stdlib.h> 	// may be redundant. Included in main.h for running external tor binary.
+#include <unistd.h> 	// read, etc. Exec ( tor ) XXX does not exist in windows
+#include <string.h>
+#include <time.h>	// for time in message logs etc
+#include <sys/types.h>	// for fork()
+#include <sys/stat.h>	// for umask
+#include <signal.h>	// for kill signals
+#include <utime.h>
+#include <inttypes.h>
+/* Libevent related */
+#include <errno.h>
+#include <fcntl.h>
 
-/*** Helper macros to unroll the permutation. ***/
-#define rol(x, s) (((x) << s) | ((x) >> (64 - s)))
-#define REPEAT6(e) e e e e e e
-#define REPEAT24(e) REPEAT6(e e e e)
-#define REPEAT5(e) e e e e e
-#define FOR5(v, s, e) \
-  v = 0;            \
-  REPEAT5(e; v += s;)
+#include <sqlcipher/sqlite3.h>
 
-/*** Keccak-f[1600] ***/
-static inline void keccakf(uint8_t bytes[WIDTH]) {
-  uint64_t* a = (uint64_t*)(void*)bytes;
-  uint64_t b[5] = {0};
-  uint64_t t = 0;
-  uint8_t x, y;
+#include <torx.h>
 
-  for (int i = 0; i < 24; i++) {
-    // Theta
-    FOR5(x, 1,
-         b[x] = 0;
-         FOR5(y, 5,
-              b[x] ^= a[x + y]; ))
-    FOR5(x, 1,
-         FOR5(y, 5,
-              a[y + x] ^= b[(x + 4) % 5] ^ rol(b[(x + 1) % 5], 1); ))
-    // Rho and pi
-    t = a[1];
-    x = 0;
-    REPEAT24(b[0] = a[pi[x]];
-             a[pi[x]] = rol(t, rho[x]);
-             t = b[0];
-             x++; )
-    // Chi
-    FOR5(y,
-       5,
-       FOR5(x, 1,
-            b[x] = a[y + x];)
-       FOR5(x, 1,
-            a[y + x] = b[x] ^ ((~b[(x + 1) % 5]) & b[(x + 2) % 5]); ))
-    // Iota
-    a[0] ^= RC[i];
-  }
-}
 
-static int absorb(const uint64_t len, const uint8_t data[len], uint8_t bytes[WIDTH]) {
-	int absorbed = 0;
-	for (uint64_t i = 0; i < len; i++) {
-		bytes[absorbed++] ^= data[i];
-		if (absorbed == RATE) {
-			keccakf(bytes);
-			absorbed = 0;
-		}
-	}
-	return absorbed;
-}
+/* Internal Use Struct Models */
+struct blake3 {
+	unsigned char input[64];	/* current input bytes */
+	uint32_t bytes;			/* bytes in current input block */
+	unsigned block;			/* block index in chunk */
+	uint64_t chunk;			/* chunk index */
+	uint32_t *cv, cv_buf[54 * 8];	/* chain value stack */
+};
+/* Internal Use Functions */
+void blake3_init(struct blake3 *);
+void blake3_update(struct blake3 *, const void *, size_t);
+void blake3_out(struct blake3 *, unsigned char *restrict, size_t);
+//int blake3_test(void);
 
-static void squeeze(uint8_t digest[DIGEST], int padpoint, uint8_t bytes[WIDTH]) {
-	bytes[padpoint] ^= 0x06;
-	bytes[RATE - 1] ^= 0x80;
-	keccakf(bytes);
-	for (int i = 0; i < DIGEST; i++) {
-		digest[i] = bytes[i];
-	}
-}
+/* torx_core.c */
+void zero_o(const int n,const int f,const int o);
+void zero_r(const int n,const int f,const int r);
+void zero_f(const int n,const int f);
 
-void sha3_hash(uint8_t digest[DIGEST], const uint64_t len, const uint8_t data[len]) {
-	uint8_t bytes[WIDTH] = {0};
-	int padpoint = absorb(len, data, bytes);
-	squeeze(digest, padpoint, bytes);
-}
+/* broadcast.c */
+void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g);
+void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_BROADCAST_LEN]);
+void broadcast_start(void);
+
+/* sql.c */
+int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
+int sql_exec(sqlite3** db,const char *command,const char *setting_value,const size_t setting_value_len);
+
+/* Global variables (defined here, declared elsewhere, primarily in torx_core.c) */
+extern pthread_t thrd_tor_log_reader;
+extern pthread_t thrd_start_tor;
+extern pthread_t thrd_broadcast;
+extern pthread_t thrd_change_password;
+extern pthread_t thrd_login;
+extern pthread_mutex_t mutex_socket_rand;
+extern pthread_mutex_t mutex_clock;
+extern pthread_mutex_t mutex_sql_plaintext;
+extern pthread_mutex_t mutex_sql_encrypted;
+extern pthread_mutex_t mutex_sql_messages;
+extern pthread_mutex_t mutex_group_peer_add;
+extern pthread_mutex_t mutex_group_join;
+extern pthread_mutex_t mutex_onion;
+extern pthread_mutex_t mutex_closing;
+extern pthread_mutex_t mutex_tor_pipe;
+extern pthread_mutex_t mutex_message_loading;
+extern pthread_mutex_t mutex_tor_ctrl;
+extern sqlite3 *db_plaintext;
+extern sqlite3 *db_encrypted;
+extern sqlite3 *db_messages;
+
+#endif // TORX_PRIVATE_HEADERS

@@ -59,9 +59,8 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
-#include <stdint.h>
-#include <string.h>
-#include "blake3.h"
+
+#include "torx_internal.h"
 
 #define CHUNK_START	(1u << 0)
 #define CHUNK_END	(1u << 1)

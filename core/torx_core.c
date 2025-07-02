@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /*	This file will contain most core functions. There will be no "main" because core is a library.	*/
 
 /*
@@ -75,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 33 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 34 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -148,8 +151,45 @@ uint8_t kill_delete = 1; // delete peer and history when receiving kill code (if
 uint8_t hide_blocked_group_peer_messages = 0; // Note: blocking would require re-sorting, if hide is toggled
 uint8_t log_pm_according_to_group_setting = 1; // toggles whether or not PM logging should follow the logging settings of the group (useful to UI devs who might want to control group PM logging per-peer)
 double file_progress_delay = 500000000; // nanoseconds (*1 billionth of a second)
-
 uint32_t broadcast_history[BROADCAST_HISTORY_SIZE] = {0}; // NOTE: this is sent OR queued
+
+struct peer_list *peer = {0};
+struct group_list *group = {0};
+struct packet_info packet[SIZE_PACKET_STRC] = {0};
+struct protocol_info protocols[PROTOCOL_LIST_SIZE] = {0};
+struct broadcasts_list broadcasts_queued[BROADCAST_QUEUE_SIZE] = {0};
+
+void (*initialize_n_registered)(int) = NULL;
+void (*initialize_i_registered)(const int n,const int i) = NULL;
+void (*initialize_f_registered)(const int n,const int f) = NULL;
+void (*initialize_g_registered)(const int g) = NULL;
+void (*shrinkage_registered)(const int n,const int shrinkage) = NULL;
+void (*expand_file_struc_registered)(const int n,const int f) = NULL;
+void (*expand_message_struc_registered)(const int n,const int i) = NULL;
+void (*expand_peer_struc_registered)(const int n) = NULL;
+void (*expand_group_struc_registered)(const int g) = NULL;
+void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred) = NULL;
+void (*change_password_registered)(const int value) = NULL;
+void (*incoming_friend_request_registered)(const int n) = NULL;
+void (*onion_deleted_registered)(const uint8_t owner,const int n) = NULL;
+void (*peer_online_registered)(const int n) = NULL;
+void (*peer_offline_registered)(const int n) = NULL;
+void (*peer_new_registered)(const int n) = NULL;
+void (*onion_ready_registered)(const int n) = NULL;
+void (*tor_log_registered)(char *message) = NULL;
+void (*error_registered)(char *error_message) = NULL;
+void (*fatal_registered)(char *error_message) = NULL;
+void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext) = NULL;
+void (*message_new_registered)(const int n,const int i) = NULL;
+void (*message_modified_registered)(const int n,const int i) = NULL;
+void (*message_deleted_registered)(const int n,const int i) = NULL;
+void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len) = NULL;
+void (*message_more_registered)(const int loaded,int *loaded_array_n,int *loaded_array_i) = NULL;
+void (*login_registered)(const int value) = NULL;
+void (*peer_loaded_registered)(const int n) = NULL;
+void (*cleanup_registered)(const int sig_num) = NULL; // callback to UI to inform it that we are closing and it should save settings
+void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len) = NULL;
+void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len) = NULL;
 
 static char *read_tor_pipe_cache = NULL; // cache it hits a newline, without blocking
 
@@ -2117,23 +2157,6 @@ char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)
 	}
 }
 
-static inline uint32_t fnv1a_32_salted(const void *data,const size_t len)
-{ // we're adding a salt (which salt doesn't matter but it can't change per-session) to prevent malicious peers from being able to easily prevent specific broadcasts (i mean... they could still spam BROADCAST_QUEUE_SIZE)
-	uint32_t hash = 0;
-	unsigned char src[crypto_pwhash_SALTBYTES+len];
-	memcpy(src,saltbuffer,sizeof(saltbuffer)); // using our global salt is fine/safe
-	memcpy(&src[sizeof(saltbuffer)],data,len);
-	for(size_t i = 0 ; i < sizeof(src) ; ++i)
-	{
-		hash ^= src[i];
-		hash *= 0x01000193;
-	}
-	if(!hash) // TorX modification: cannot allow return of 0
-		hash++;
-	sodium_memzero(src,sizeof(src));
-	return hash;
-}
-
 int pid_kill(const pid_t pid,const int signal)
 {
 	#ifdef WIN32
@@ -2361,12 +2384,12 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	return shrinkage;
 }
 
-static inline void zero_o(const int n,const int f,const int o) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].offer) before calling! XXX
+void zero_o(const int n,const int f,const int o) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].offer) before calling! XXX
 { // Note: We don't `.offer_n = -1` because it could cause issues in select_peer if this function was called from outside of zero_f
 	torx_free((void*)&peer[n].file[f].offer[o].offer_progress);
 }
 
-static inline void zero_r(const int n,const int f,const int r) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].request) before calling! XXX
+void zero_r(const int n,const int f,const int r) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].request) before calling! XXX
 { // Note: We don't `.requester_n = -1` because it will interfere with expand_request_struc
 //	peer[n].file[f].request[r].requester_n = -1; // Must not reset
 	sodium_memzero(peer[n].file[f].request[r].start,sizeof(peer[n].file[f].request[r].start));
@@ -2375,7 +2398,7 @@ static inline void zero_r(const int n,const int f,const int r) // XXX do not put
 	sodium_memzero(peer[n].file[f].request[r].transferred,sizeof(peer[n].file[f].request[r].transferred));
 }
 
-static inline void zero_f(const int n,const int f) // XXX do not put locks in here
+void zero_f(const int n,const int f) // XXX do not put locks in here
 { // see similarities in process_pause_cancel
 	if(peer[n].file[f].offer)
 		for(int o = 0 ; peer[n].file[f].offer[o].offerer_n > -1 ; o++)
