@@ -28,7 +28,7 @@ This page is primarily for developers and contributors.
 `cmake -D TORX_TAG=main -D CMAKE_BUILD_TYPE=Debug -B build && cd build && make`
 
 ###### For installing TorX (after building):
-`cd build && sudo make install`
+`sudo make install`
 
 ###### For uninstalling TorX (after installing):
 `sudo xargs rm < install_manifest.txt`
