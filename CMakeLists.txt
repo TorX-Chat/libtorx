@@ -366,6 +366,4 @@ target_link_libraries(
 )
 endif()
 
-if(BUILD_SHARED_LIBS)
-	install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-endif()
+install(TARGETS ${PROJECT_NAME} DESTINATION lib)
