@@ -307,9 +307,7 @@ elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	set_target_properties(sodium PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/src/libsodium/.libs/libsodium.so)
 	set_target_properties(sqlcipher PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/sqlcipher-download-prefix/src/sqlcipher-download/.libs/libsqlcipher.so)
 else()
-#	find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS SSL Crypto)
 	find_package(Sodium REQUIRED)
-#	find_package(zlib REQUIRED) ## ??? should not be required? this is only used in openssl and tor
 	find_package(LibEvent REQUIRED COMPONENTS core pthreads)
 	find_package(PNG REQUIRED)
 	if(BUILD_SHARED_LIBS)
@@ -347,8 +345,6 @@ target_link_libraries(
 		event_core
 	#	event_pthreads
 		png
-#		openssl
-# 		zlib
 		sqlcipher
 )
 else()
@@ -360,8 +356,6 @@ target_link_libraries(
 		event_core
 		event_pthreads
 		png
-#		openssl
-# 		zlib
 		sqlcipher
 )
 endif()
