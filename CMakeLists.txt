@@ -51,7 +51,7 @@ else()
 	set(REPO_PNG "https://github.com/glennrp/libpng")
 endif()
 
-## START BLOCK: Try to keep this the same in torx-gtk4 and libtorx. XXX It WILL be passed to libtorx via -D CMAKE_C_FLAGS=${CMAKE_C_FLAGS}, but libtorx also has a default in case of independent build. XXX
+## START BLOCK: Try to keep this the same in torx-gtk4 and libtorx. XXX It WILL be passed to libtorx, but libtorx also has a default in case of independent build. XXX
 	#### C90 crap: -Wvla -Wdeclaration-after-statement
 	#### Unimportant: -Waggregate-return
 	#### Heavily CPU + RAM + time intensive junk static analyzer that throws mainly "possible null dereference" warnings (requires 9+gb ram): -fanalyzer
@@ -195,7 +195,7 @@ if(QR_GENERATOR)
 endif()
 
 add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
-#set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION 2.0.34) # This will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
+set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION 2.0.34) # This will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -388,5 +388,5 @@ target_link_libraries(
 )
 endif()
 
-install(TARGETS ${PROJECT_NAME} DESTINATION lib)
+install(TARGETS ${PROJECT_NAME} DESTINATION lib/torx)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/torx.h DESTINATION include)
