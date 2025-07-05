@@ -19,13 +19,13 @@ This page is primarily for developers and contributors.
 `git clone https://github.com/TorX-Chat/libtorx && cd libtorx`
 
 ###### For building TorX for static linking:
-`cmake -D TORX_TAG=main -D QR_GENERATOR=1 -B build && cd build && make`
+`cmake -D QR_GENERATOR=1 -B build && cd build && make`
 
 ###### For building TorX for shared linking:
-`cmake -D TORX_TAG=main -D QR_GENERATOR=1 -D BUILD_SHARED_LIBS=1 -B build && cd build && make`
+`cmake -D QR_GENERATOR=1 -D BUILD_SHARED_LIBS=1 -B build && cd build && make`
 
 ###### For building TorX with debug symbols:
-`cmake -D TORX_TAG=main -D QR_GENERATOR=1 -D CMAKE_BUILD_TYPE=Debug -B build && cd build && make`
+`cmake -D QR_GENERATOR=1 -D CMAKE_BUILD_TYPE=Debug -B build && cd build && make`
 
 ###### For installing TorX (after building):
 `sudo make install`

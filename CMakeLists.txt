@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.14)
 
 project(torx LANGUAGES C) # removed VERSION 2.0 # because we probably will forget to update it
 
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)	## Suppresses warnings on Windows
+
 include(FetchContent)
 include(ExternalProject)
 set(CMAKE_C_STANDARD 11)
@@ -32,7 +34,7 @@ set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
 if(LAN_REPO)
-	message(STATUS "Using LAN repository: ${LAN_REPO}")
+	message(STATUS "TorX using LAN repository: ${LAN_REPO}")
 	set(REPO_SODIUM "${LAN_REPO}/libsodium.git")
 	set(REPO_SSL "${LAN_REPO}/openssl.git")
 	set(REPO_ZLIB "${LAN_REPO}/zlib.git")
@@ -40,7 +42,7 @@ if(LAN_REPO)
 	set(REPO_EVENT "${LAN_REPO}/libevent.git")
 	set(REPO_PNG "${LAN_REPO}/libpng.git")
 else()
-	message(STATUS "Using default remote repositories instead of LAN (lib).")
+	message(STATUS "TorX using default remote repositories.")
 	set(REPO_SODIUM "https://github.com/jedisct1/libsodium")
 	set(REPO_SSL "https://github.com/openssl/openssl")
 	set(REPO_ZLIB "https://github.com/madler/zlib")
@@ -48,6 +50,31 @@ else()
 	set(REPO_EVENT "https://github.com/libevent/libevent.git")
 	set(REPO_PNG "https://github.com/glennrp/libpng")
 endif()
+
+## START BLOCK: Try to keep this the same in torx-gtk4 and libtorx. XXX It WILL be passed to libtorx via -D CMAKE_C_FLAGS=${CMAKE_C_FLAGS}, but libtorx also has a default in case of independent build. XXX
+	#### C90 crap: -Wvla -Wdeclaration-after-statement
+	#### Unimportant: -Waggregate-return
+	#### Heavily CPU + RAM + time intensive junk static analyzer that throws mainly "possible null dereference" warnings (requires 9+gb ram): -fanalyzer
+	#### other static analyzer binaries: cppcheck clang-tidy
+if(NOT DEFINED CMAKE_C_FLAGS OR CMAKE_C_FLAGS STREQUAL "")
+	if (CMAKE_BUILD_TYPE STREQUAL "Debug") ## XXX Dev builds can add either of: -fsanitize=thread -fsanitize=address
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE=0 -O0")
+		if(NOT WIN32)
+			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=undefined -fsanitize=float-cast-overflow -fsanitize=float-divide-by-zero")
+		endif()
+	else()
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_FORTIFY_SOURCE=2 -O2")
+	endif()
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra  -fwrapv -mshstk -Wstrict-overflow=5 -Wshadow -Wpedantic -Wcast-qual -Wno-overlength-strings -Wwrite-strings -Wnull-dereference -Wstrict-prototypes -Wstrict-aliasing -Wmissing-prototypes -Wmissing-declarations -fstack-protector-strong -Wconversion -Wformat-security")
+	string(FIND ${CMAKE_C_COMPILER} "clang" found_clang)
+	if(found_clang GREATER -1)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wcast-align -Weverything -Wno-missing-variable-declarations -Wno-declaration-after-statement -Wno-cast-function-type-strict -Wno-reserved-identifier -Wno-padded -Wno-vla -Wno-used-but-marked-unused -Wno-disabled-macro-expansion -Wno-documentation -Wno-documentation-unknown-command -Wno-double-promotion -Wno-unsafe-buffer-usage")
+	else() # GCC
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wcast-align=strict -Wformat-signedness") # Dropped -fwhole-program because it caused linking errors when passed to libtorx. Likely responsible for other linking abnormalities.
+	endif()
+endif()
+message(STATUS "${PROJECT_NAME} C_FLAGS being set to: ${CMAKE_C_FLAGS}")
+## END BLOCK
 
 ## _ARGS taken from https://gitlab.torproject.org/tpo/core/tor/-/issues/33624 _ADDITIONAL are extras to remove bloat
 #set(SSL_CONFIG_ARGS shared enable-ec_nistp_64_gcc_128 no-ssl2 no-ssl3 no-dso no-weak-ssl-ciphers no-dtls)
@@ -167,7 +194,8 @@ if(QR_GENERATOR)
 	set(QR_GENERATOR_SRC extra/qr_generator/torx_qr.c)
 endif()
 
-add_library( ${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
+add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
+#set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION 2.0.34) # This will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -338,14 +366,14 @@ target_include_directories(
 if(WIN32)
 target_link_libraries(
 	${PROJECT_NAME}
-	PRIVATE
-		Ws2_32
+	PRIVATE	# Currently, all of these links are meaningless on Windows. The links really only occur when building the UI.
 		sodium
 	#	event
 		event_core
 	#	event_pthreads
 		png
 		sqlcipher
+		Ws2_32
 )
 else()
 target_link_libraries(

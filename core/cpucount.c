@@ -59,6 +59,9 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
+
+#include "torx_internal.h"
+
 /* From https://github.com/cathugger/mkp224o/blob/master/cpucount.c
 cpucount.c is licensed as CC0 by cathugger
 */
