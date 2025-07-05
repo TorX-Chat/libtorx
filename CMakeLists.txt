@@ -388,5 +388,5 @@ target_link_libraries(
 )
 endif()
 
-install(TARGETS ${PROJECT_NAME} DESTINATION lib/torx)
+install(TARGETS ${PROJECT_NAME} DESTINATION lib)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/torx.h DESTINATION include)
