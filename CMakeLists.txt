@@ -4,6 +4,7 @@ project(torx LANGUAGES C) # removed VERSION 2.0 # because we probably will forge
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.10)	## Suppresses warnings on Windows
 
+include(GNUInstallDirs)
 include(FetchContent)
 include(ExternalProject)
 set(CMAKE_C_STANDARD 11)
@@ -195,7 +196,7 @@ if(QR_GENERATOR)
 endif()
 
 add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
-set_target_properties(${PROJECT_NAME} PROPERTIES SOVERSION 2.0.34) # This will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
+set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.34) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -388,5 +389,5 @@ target_link_libraries(
 )
 endif()
 
-install(TARGETS ${PROJECT_NAME} DESTINATION lib)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/torx.h DESTINATION include)
+set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/torx.h)
+install(TARGETS ${PROJECT_NAME} COMPONENT RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}) # COMPONENT RUNTIME installs both the PUBLIC_HEADER and RUNTIME appropriately.
