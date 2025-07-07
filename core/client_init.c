@@ -880,7 +880,7 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 	}
 	if(fp)
 	{
-		close_sockets_nolock(fp);
+		close_sockets_nolock(fp)
 		return 0;
 	}
 	else if(file_path == NULL)

@@ -1080,7 +1080,7 @@ static int numCharCountBits(enum qrcodegen_Mode mode, int version) {
 		case qrcodegen_Mode_BYTE        : { static const int temp[] = { 8, 16, 16}; return temp[i]; }
 		case qrcodegen_Mode_KANJI       : { static const int temp[] = { 8, 10, 12}; return temp[i]; }
 		case qrcodegen_Mode_ECI         : return 0;
-	//	default:  assert(false);  return -1;  // Dummy value
+		default				: return -1; // To suppress Clang warning -Wswitch-default, which conflicts with -Wcovered-switch-default
 	}
 	return -1;
 }

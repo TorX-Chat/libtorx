@@ -70,6 +70,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		return -1;
 	}
 	int f = -1, i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
+	uint64_t start = 0;
 	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const char *name = protocols[p_iter].name;
@@ -81,8 +82,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		error_printf(0,"Questionable action in send_prep, possibly caused by a protocol being sent to a GROUP_CTRL without being registered as group_msg / ENUM_EXCLUSIVE_GROUP_MSG. Target owner=%u. Coding error. Report this.",owner);
 		goto error;
 	}
-	uint64_t start = 0;
-	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+	else if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 	{
 		f = f_i;
 		if(f < 0 || file_n < 0 || fd_type < 0)
@@ -360,7 +360,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
-			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%lu to pos=0\n"RESET,n,i,fd_type,start);
+			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%zu to pos=0\n"RESET,n,i,fd_type,start);
 			torx_write(n) // 🟥🟥🟥
 			peer[n].message[i].pos = 0;
 			torx_unlock(n) // 🟩🟩🟩

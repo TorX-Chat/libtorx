@@ -516,8 +516,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							printf("Checkpoint packet[%d].f_i:		%d\n",ooo,packet[ooo].f_i);
 							printf("Checkpoint packet[%d].packet_len:	%u\n",ooo,packet[ooo].packet_len);
 							printf("Checkpoint packet[%d].fd_type:		%d\n",ooo,packet[ooo].fd_type);
-							printf("Checkpoint packet[%d].time:		%ld\n",ooo,packet[ooo].time);
-							printf("Checkpoint packet[%d].nstime:		%ld\n",ooo,packet[ooo].nstime);
+							printf("Checkpoint packet[%d].time:		%ld\n",ooo,(long)packet[ooo].time);
+							printf("Checkpoint packet[%d].nstime:		%ld\n",ooo,(long)packet[ooo].nstime);
 							printf("-----------If not _FILE_PIECE, bug!-----------\n");
 							if(packet[ooo].p_iter != file_piece_p_iter) // Severe coding error
 								error_simple(0,"socket_utilized failed to prevent two non-file packets on the same n+fd_type from getting into our packet struct. Severe coding error. Report this.");
@@ -806,7 +806,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						torx_free((void*)&file_path);
 						continue;
 					}
-					close_sockets_nolock(fd_active);
+					close_sockets_nolock(fd_active)
 					fd_active = fopen(file_path, "r+"); // Open file for writing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
@@ -1108,7 +1108,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(stat_ret)
 							{ // File does not exist
 								error_simple(0,"Requested file cannot be accessed. Try re-offering it.");
-								printf("Checkpoint path: %s %ld ?= %ld\n",file_path,file_stat.st_mtime,modified);
+								printf("Checkpoint path: %s %ld ?= %ld\n",file_path,(long)file_stat.st_mtime,(long)modified);
 								torx_free((void*)&file_path);
 								continue;
 							}

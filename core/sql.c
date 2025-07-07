@@ -236,7 +236,7 @@ int message_edit(const int n,const int i,const char *message)
 						const time_t nstime_ii = getter_time(peer_n,ii,-1,offsetof(struct message_list,nstime));
 						if(time_ii == time && nstime_ii == nstime)
 						{ // DO NOT need to sql_update_message or print_message_cb here. No private messages will come here.
-							int shrinkage;
+							int shrinkage = 0;
 							torx_write(peer_n) // 🟥🟥🟥
 							if(message_new)
 								peer[peer_n].message[ii].message = message_new;
@@ -729,7 +729,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 	int val = -1;
 	uint32_t message_len;
-	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));;
+	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 		val = sql_exec(&db_messages,command,NULL,0); // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
 	else if(null_terminated_len == 0 && message)
@@ -1126,6 +1126,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			else
 				extraneous = (const char *)sqlite3_column_blob(stmt, 8);
 		}
+		else
+			extraneous = NULL;
 		const int i = load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
 		if(i != INT_MIN && !(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
 			loaded++; // XXX j2fjq0fiofg WARNING: The second part of this if statement MUST be the same as in inline_load_array

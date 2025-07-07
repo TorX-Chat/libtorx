@@ -297,7 +297,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 		}
 		else
 			torx_unlock(n) // 🟩🟩🟩
-		close_sockets_nolock(fp);
+		close_sockets_nolock(fp)
 	}
 }
 
@@ -855,7 +855,7 @@ void destroy_file(const char *file_path)
 		return;
 	}
 	const long int size = ftell(fp);
-	close_sockets_nolock(fp);
+	close_sockets_nolock(fp)
 	if((fp = fopen(new_file_path, "r+")) == NULL || size == -1)
 	{
 		error_simple(0,"Error opening file for write in destroy_file");
@@ -877,7 +877,7 @@ void destroy_file(const char *file_path)
 		left -= written_current;
 	}
 	while (left > 0 && written_current > 0);
-	close_sockets_nolock(fp);
+	close_sockets_nolock(fp)
 	if(remove(new_file_path) != 0)
 		error_simple(0,"Error deleting file in destroy_file");
 	sodium_memzero(new_file_path,sizeof(new_file_path));
@@ -970,7 +970,7 @@ static inline int split_read(const int n,const int f)
 	{ // condition is necessary with fclose it seems
 	//	printf("Checkpoint Reading nos: %d\n",peer[n].file[f].splits);
 	//	printf("Checkpoint Reading split data: %lu %lu\n",peer[n].file[f].split_progress[0],peer[n].file[f].split_progress[1]);
-		close_sockets_nolock(fp);
+		close_sockets_nolock(fp)
 		return 0; // successfully read
 	}
 	return -1; // no file exists, wrong checksum, or cannot be read
@@ -1019,7 +1019,7 @@ int initialize_split_info(const int n,const int f)
 			memcpy(&split_data[CHECKSUM_BIN_LEN + sizeof(splits)],peer[n].file[f].split_progress,sizeof(uint64_t)*(splits+1));
 			torx_unlock(n) // 🟩🟩🟩
 			fwrite(split_data,1,sizeof(split_data),fp);
-			close_sockets_nolock(fp);
+			close_sockets_nolock(fp)
 			sodium_memzero(split_data,sizeof(split_data));
 		}
 		torx_free((void*)&split_path);
@@ -1163,7 +1163,7 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 			const size_t read = fread(buf, 1, to_read, fp);
 			if(len && read != to_read)
 			{
-				close_sockets_nolock(fp);
+				close_sockets_nolock(fp)
 				error_simple(0,"Read less than expected when calculating checksum. Coding or disk error.");
 			//	printf("Checkpoint read: %lu\nCheckpoint to_read: %lu\nCheckpoint size: %lu\n",read,to_read,size);
 				return 0;
@@ -1172,7 +1172,7 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 			size += read;
 		}
 		sodium_memzero(buf,sizeof(buf));
-		close_sockets_nolock(fp);
+		close_sockets_nolock(fp)
 	}
 	else /* if(data) */
 	{
@@ -1200,13 +1200,13 @@ char *custom_input_file(const char *hs_ed25519_secret_key_file) // hs_ files hav
 	fseek(hs_ed25519_secret_key_file_pointer,(long int)-sizeof(privkey_decoded),SEEK_END);
 	if(read != sizeof(header) || memcmp(header,correct_header,sizeof(header)) || fread(privkey_decoded,1,sizeof(privkey_decoded),hs_ed25519_secret_key_file_pointer) < 64)
 	{
-		close_sockets_nolock(hs_ed25519_secret_key_file_pointer);
+		close_sockets_nolock(hs_ed25519_secret_key_file_pointer)
 		error_simple(0,"Custom input file was less than 64 bytes or lacked expected header. Bailing.");
 		return NULL;
 	}
 	char *privkey = b64_encode(privkey_decoded,sizeof(privkey_decoded));
 	sodium_memzero(privkey_decoded,sizeof(privkey_decoded));
-	close_sockets_nolock(hs_ed25519_secret_key_file_pointer);
+	close_sockets_nolock(hs_ed25519_secret_key_file_pointer)
 	return privkey;
 }
 

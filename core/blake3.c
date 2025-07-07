@@ -159,6 +159,7 @@ block(struct blake3 *ctx, const unsigned char *buf)
 	switch (ctx->block) {
 	case 0:  flags |= CHUNK_START; break;
 	case 15: flags |= CHUNK_END;   break;
+	default: break; // To suppress Clang warning -Wswitch-default
 	}
 	load(m, buf);
 	compress(cv, m, cv, ctx->chunk, 64, flags);

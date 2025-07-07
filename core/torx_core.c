@@ -417,7 +417,7 @@ static inline void write_debug_file(const char *message)
 	if(file == NULL)
 		return;
 	fputs(message,file); // No point to check return here
-	close_sockets_nolock(file);
+	close_sockets_nolock(file)
 }
 
 static inline void error_allocated_already(const int debug_level,char *do_not_free_message)
@@ -869,7 +869,7 @@ unsigned char *read_bytes(size_t *data_len,const char *path)
 		fseek(fp, 0L, SEEK_SET);
 		if(fread(data,1,allocated,fp) != allocated)
 			error_simple(0,"Read less than expected amount of data. Uncaught bug.");
-		close_sockets_nolock(fp);
+		close_sockets_nolock(fp)
 	}
 	else
 		error_simple(0,"Could not open file. Check permissions. Bailing out.");
@@ -1155,6 +1155,8 @@ int message_insert(const int g,const int n,const int i)
 	const time_t nstime = peer[n].message[i].nstime;
 	torx_unlock(n) // 🟩🟩🟩
 	struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
+	if(!page)
+		return -1;
 	page->n = n;
 	page->i = i;
 	page->time = time;
@@ -1310,6 +1312,8 @@ void message_sort(const int g)
 				if(time_last < time || (time_last == time && nstime_last < nstime))
 				{ // Indeed sequential
 					struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
+					if(!page)
+						return;
 					page->message_prior = message_prior;
 					page->n = group_n;
 					page->i = i;
@@ -1751,7 +1755,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	{
 		FILE *pipewrite = fdopen(link2[1],"w");
 		fputs(input,pipewrite);
-		close_sockets_nolock(pipewrite);
+		close_sockets_nolock(pipewrite)
 	}
 	if(fd_stdin)
 		*(int*)fd_stdin = link2[1];
@@ -1966,9 +1970,9 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].last_transferred = transferred;
 		torx_unlock(n) // 🟩🟩🟩
 		if(last_transferred == transferred)
-			printf("Checkpoint transfer_progress STALLED at %lu\n",transferred);
+			printf("Checkpoint transfer_progress STALLED at %zu\n",transferred);
 	//	else
-	//		printf("Checkpoint transfer_progress %lu of %lu\n",transferred,size);
+	//		printf("Checkpoint transfer_progress %zu of %lu\n",transferred,size);
 		transfer_progress_cb(n,f,transferred);
 	}
 }
@@ -2191,7 +2195,7 @@ static int pid_write(const int pid)
 	char p1[21];
 	snprintf(p1,sizeof(p1),"%d",pid);
 	fputs(p1,fp);
-	close_sockets_nolock(fp); // close append mode
+	close_sockets_nolock(fp) // close append mode
 	return 0;
 }
 
@@ -2204,7 +2208,7 @@ static inline int pid_read(void)
 		char pid_string[21] = {0};
 		if(fgets(pid_string,sizeof(pid_string)-1,fp))
 			pid = (int)strtoll(pid_string, NULL, 10);
-		close_sockets_nolock(fp); // close append mode
+		close_sockets_nolock(fp) // close append mode
 	}
 	return pid;
 }
@@ -3086,6 +3090,7 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 		if(tor_ctrl_socket < 1)
 		{ // tor_ctrl_socket could be 0 because we could be killing an orphaned Tor from a pid file
 			#ifdef WIN32
+			(void) wait_to_reap;
 			pid_kill(tor_pid,SIGTERM);
 			#else
 			signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
@@ -5296,6 +5301,8 @@ void tor_call_async(void (*callback)(char*),const char *msg)
 	}
 	const size_t msg_len = strlen(msg);
 	struct tor_call_strc *tor_call_strc = torx_insecure_malloc(sizeof(struct tor_call_strc));
+	if(!tor_call_strc)
+		return;
 	tor_call_strc->thrd = 0; // initializing
 	tor_call_strc->callback = callback; // Note: may be null
 	tor_call_strc->msg = torx_secure_malloc(msg_len + 1);

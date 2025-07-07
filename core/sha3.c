@@ -64,11 +64,8 @@ severable if found in contradiction with the License or applicable law.
 
 #define DIGEST 32 // 256-bit digest in bytes.
 
-#define ROUNDS 24 // Number of KECCAK rounds to perform for SHA3-256.
 #define WIDTH 200 // 1600-bit width in bytes.
 #define RATE 136 // 1600-bit width - 512-bit capacity in bytes.
-
-#define ROTL64(x, y) (((x) << (y)) | ((x) >> (64 - (y))))
 
 /*** Constants. ***/
 static const uint8_t rho[24] = \
