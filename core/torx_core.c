@@ -967,6 +967,7 @@ void *torx_insecure_malloc(const size_t len)
 		error_simple(-1,"Insecure allocation failure.");
 		return NULL;
 	}
+	sodium_memzero(((char*)allocation + 4 + 4),len); // Zero the allocation, which is what sodium_malloc does.
 	*((uint32_t *)allocation) = (uint32_t) len; // ONLY THE REAL DATA LENGTH, not including prefix bytes or padding
 	*((uint32_t *)allocation+1) = ENUM_MALLOC_TYPE_INSECURE;
 	return ((char*)allocation + 4 + 4);
@@ -1004,6 +1005,8 @@ void *torx_secure_malloc(const size_t len)
 		error_simple(-1,"Secure allocation failure.");
 		return NULL;
 	}
+	if(!ENABLE_SECURE_MALLOC)
+		sodium_memzero(((char*)allocation + 4 + 4),len); // Zero the allocation, which is what sodium_malloc does.
 	*((uint32_t *)allocation) = (uint32_t) len; // ONLY THE REAL DATA LENGTH, not including prefix bytes or padding
 	*((uint32_t *)allocation+1) = ENUM_MALLOC_TYPE_SECURE;
 	return ((char*)allocation + 4 + 4);
