@@ -7,7 +7,7 @@ This page is primarily for developers and contributors.
 
 #### Build Instructions:
 ##### Linux:
-<br>If you want to try on a LiveCD, <a href="https://get.debian.org/images/weekly-live-builds/amd64/iso-hybrid/">here are some Trixie liveCDs</a>
+<br>If you want to try on a LiveCD, <a href="https://get.debian.org/images/weekly-live-builds/amd64/iso-hybrid/">here are some suitable liveCDs</a>
 
 ###### Install build dependencies:
 `sudo apt install git build-essential cmake libsodium-dev libevent-dev libsqlcipher-dev libpng-dev`
@@ -19,13 +19,13 @@ This page is primarily for developers and contributors.
 `git clone https://github.com/TorX-Chat/libtorx && cd libtorx`
 
 ###### For building TorX for static linking:
-`cmake -D QR_GENERATOR=1 -B build && cd build && make`
+`cmake -B build && cd build && make`
 
 ###### For building TorX for shared linking:
-`cmake -D QR_GENERATOR=1 -D BUILD_SHARED_LIBS=1 -B build && cd build && make`
+`cmake -D BUILD_SHARED_LIBS=1 -B build && cd build && make`
 
 ###### For building TorX with debug symbols:
-`cmake -D QR_GENERATOR=1 -D CMAKE_BUILD_TYPE=Debug -B build && cd build && make`
+`cmake -D CMAKE_BUILD_TYPE=Debug -B build && cd build && make`
 
 ###### For installing TorX (after building):
 `sudo make install`

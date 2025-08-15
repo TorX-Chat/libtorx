@@ -77,9 +77,9 @@ TODO FIXME XXX Notes:
 	* having connections break after every message (preventing online status checks) is not really viable because an adversary can still do a HSDir lookup to find you status, without ever making a TCP connection to you
 */
 
-/* Globally defined variables follow */
-const uint16_t torx_library_version[4] = { 2 , 0 , 34 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
-// XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt SOVERSION XXX
+/* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
+const uint16_t torx_library_version[4] = { 2 , 0 , 35 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+// XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
 void *ui_data = NULL; // XXX UI devs may put a struct on this to store data within the C backend, to avoid being lost during UI disposal. The library must NOT use it. XXX
@@ -222,12 +222,21 @@ pthread_rwlock_t mutex_expand = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_expand_group = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_packet = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_broadcast = PTHREAD_RWLOCK_INITIALIZER;
+#ifndef NO_STICKERS
+pthread_rwlock_t mutex_sticker = PTHREAD_RWLOCK_INITIALIZER;
+#endif // NO_STICKERS
 
 //int8_t force_sign = 2; // permanently moved to UI
 sqlite3 *db_plaintext = {0};
 sqlite3 *db_encrypted = {0};
 sqlite3 *db_messages = {0};
 uint8_t censored_region = 0;
+#ifndef NO_STICKERS
+uint8_t stickers_save_all = 0; // Do not default to 1 for legal reasons
+uint8_t stickers_offload_all = 0; // Do not cache stickers in RAM. NOTE: If !stickers_save_all && stickers_offload_all, stickers data will not be requested.
+uint8_t stickers_send_data = 1; // not really that useful because if we don't send stickers, people can't request stickers.
+struct sticker_list *sticker = {0};
+#endif // NO_STICKERS
 
 const char *tor_log_removed_suffixes[] = {". Giving up. (waiting for circuit)\n", "New control connection opened from 127.0.0.1.\n", ". Giving up. (waiting for rendezvous desc)\n", "].onion for reason resolve failed. Fetch status: No more HSDir available to query.\n"};
 
@@ -878,6 +887,14 @@ unsigned char *read_bytes(size_t *data_len,const char *path)
 	return data;
 }
 
+void toggle_int8(void *arg)
+{ // Works for int8_t and uint8_t // XXX DO NOT USE WITH g_signal_connect / g_signal_connect_swapped / any async usage requiring "&" prefix
+	if(*(uint8_t *)arg)
+		*(uint8_t *)arg = 0;
+	else
+		*(uint8_t *)arg = 1;
+}
+
 void zero_pthread(void *thrd)
 { // Implement inside thread via pthread_cleanup_push(zero_pthread,(void*)&) in all threads that could be thread_kill'd
 	pthread_t *thread = (pthread_t *)thrd;
@@ -1084,7 +1101,7 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 			const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
 			if(len_new < len_old)
 			{ // Shrink
-				error_printf(2,"Reducing size in torx_realloc. Should only occur when deleting a peer's message history. %lu < %lu",len_new,len_old);
+				error_printf(2,"Reducing size in torx_realloc. %lu < %lu",len_new,len_old);
 				if(shift_data_forwards) // Cause loss of start data, instead of end data.
 					memcpy(allocation,(char*)arg + diff,len_new);
 				else
@@ -2467,6 +2484,28 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	peer[n].thrd_send = 0; // thread_kill(peer[n].thrd_send); // NO. will result in deadlocks.
 	peer[n].thrd_recv = 0; // thread_kill(peer[n].thrd_recv); // NO. will result in deadlocks.
 	peer[n].broadcasts_inbound = 0;
+	#ifndef NO_AUDIO_CALL
+	for (size_t c = 0; c < torx_allocation_len(peer[n].call)/sizeof(struct call_list); c++)
+	{
+		torx_free((void*)&peer[n].call[c].participating);
+		torx_free((void*)&peer[n].call[c].participant_mic);
+		torx_free((void*)&peer[n].call[c].participant_speaker);
+	}
+	torx_free((void*)&peer[n].call);
+	for(uint32_t count = torx_allocation_len(peer[n].audio_cache)/sizeof(unsigned char *); count ; ) // do not change logic without thinking
+		torx_free((void*)&peer[n].audio_cache[--count]); // clear out all unplayed audio data
+	torx_free((void*)&peer[n].audio_cache);
+	torx_free((void*)&peer[n].audio_time);
+	torx_free((void*)&peer[n].audio_nstime);
+	peer[n].audio_last_retrieved_time = 0;
+	peer[n].audio_last_retrieved_nstime = 0;
+	record_cache_clear_nolocks(n);
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	for (size_t y = 0; y < torx_allocation_len(peer[n].stickers_requested)/sizeof(unsigned char *); y++)
+		torx_free((void*)&peer[n].stickers_requested[y]);
+	torx_free((void*)&peer[n].stickers_requested);
+	#endif // NO_STICKERS
 // TODO probably need a callback to UI (to zero the UI struct)
 }
 
@@ -3558,7 +3597,20 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].thrd_send = 0;
 	peer[n].thrd_recv = 0;
 	peer[n].broadcasts_inbound = 0;
-
+	#ifndef NO_AUDIO_CALL
+	peer[n].audio_cache = NULL;
+	peer[n].audio_time = NULL;
+	peer[n].audio_nstime = NULL;
+	peer[n].audio_last_retrieved_time = 0;
+	peer[n].audio_last_retrieved_nstime = 0;
+	peer[n].cached_recording = NULL;
+	peer[n].cached_time = 0;
+	peer[n].cached_nstime = 0;
+	peer[n].call = NULL; // Will be further initialized by set_c
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	peer[n].stickers_requested = NULL;
+	#endif // NO_STICKERS
 	peer[n].message = (struct message_list *)torx_secure_malloc(sizeof(struct message_list) *21) + 10; // XXX Note the +10
 	for(int j = -10; j < 11; j++)
 		initialize_i(n,j);
@@ -3566,6 +3618,7 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	peer[n].file = torx_secure_malloc(sizeof(struct file_list) *11);
 	for(int j = 0; j < 11; j++)
 		initialize_f(n,j);
+
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	max_peer++;
 	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
@@ -3628,6 +3681,16 @@ void re_expand_callbacks(void)
 				for(int j = f + 10; j > f; j--)
 					initialize_f_cb(nn,j);
 			}
+			#ifndef NO_AUDIO_CALL
+			torx_read(nn) // 🟧🟧🟧
+			const size_t count = torx_allocation_len(peer[nn].call)/sizeof(struct call_list);
+			torx_unlock(nn) // 🟩🟩🟩
+			for(int call_c = 0; (size_t)call_c < count ; call_c++)
+			{
+				expand_call_struc_cb(nn,call_c);
+				initialize_peer_call_cb(nn,call_c);
+			}
+			#endif // NO_AUDIO_CALL
 		}
 	}
 	for(int g = 10; g + 10 <= threadsafe_read_int(&mutex_global_variable,&max_group) ; g += 10)
@@ -3636,6 +3699,7 @@ void re_expand_callbacks(void)
 		for(int j = g + 10; j > g; j--)
 			initialize_g_cb(j);
 	}
+
 }
 
 static inline void expand_offer_struc(const int n,const int f,const int o)
@@ -4636,7 +4700,20 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
 	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
 	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
-
+	#ifndef NO_AUDIO_CALL
+	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN, "AAC Audio Stream Join", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_MSG, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE, "AAC Audio Stream Join Private", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_PM, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_PEERS, "AAC Audio Stream Peers", "", 0, 0, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE, "AAC Audio Stream Leave", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE, "AAC Audio Data Date", "", 0, 1, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	protocol_registration(ENUM_PROTOCOL_STICKER_HASH,"Sticker","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED,"Sticker Date Signed","",0,1,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_STICKER_HASH_PRIVATE,"Sticker Private","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_STICKER_REQUEST,"Sticker Request","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_STICKER_DATA_GIF,"Sticker data","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_NON_DISCARDABLE); // NOTE: if making !stream, need to move related handler
+	#endif // NO_STICKERS
 	size_t len;
 	if(file_db_plaintext == NULL)
 	{
@@ -5101,6 +5178,16 @@ void cleanup_lib(const int sig_num)
 		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
 		torx_free((void*)&peer[n].file);
 	}
+	#ifndef NO_STICKERS
+	pthread_rwlock_wrlock(&mutex_sticker); // 🟥 // XXX DO NOT EVER UNLOCK XXX
+	for(int s = 0; (uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list); s++)
+	{
+		sodium_memzero(sticker[s].checksum,CHECKSUM_BIN_LEN);
+		torx_free((void*)&sticker[s].peers);
+		torx_free((void*)&sticker[s].data);
+	}
+	torx_free((void*)&sticker);
+	#endif // NO_STICKERS
 	pthread_rwlock_wrlock(&mutex_protocols); // 🟥
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥 // do not use for debug variable
 	pthread_rwlock_wrlock(&mutex_debug_level); // 🟥 // XXX Cannot use error_ll after this

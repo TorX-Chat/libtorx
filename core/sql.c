@@ -1379,9 +1379,8 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 			error_printf(3, "Can't retrieve data: %s",sqlite3_errmsg(*db));
 		if(setting_value && setting_value_len)
 		{ // Got something worth returning!
-			data = torx_secure_malloc(setting_value_len+1);
+			data = torx_secure_malloc(setting_value_len);
 			memcpy(data,setting_value,setting_value_len);
-			data[setting_value_len] = '\0';
 		}
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
@@ -1509,7 +1508,7 @@ void sql_populate_setting(const int force_plaintext)
 					const size_t len = strlen(setting_name);
 					char *setting_name_allocated = torx_secure_malloc(len+1);
 					snprintf(setting_name_allocated,len+1,"%s",setting_name);
-					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1);
+					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1); // TODO +1/Null termination could interfere with binary interpretation if callback utilizes torx_allocation_len(setting_value_allocated) instead of setting_value_len
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(peer_index,setting_name_allocated,setting_value_allocated,setting_value_len,1);
@@ -1629,6 +1628,21 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(control_password_clear,setting_value,setting_value_len);
 					control_password_clear[setting_value_len] = '\0';
 				}
+				#ifndef NO_STICKERS
+				else if(!strncmp(setting_name,"stickers_save_all",17))
+					stickers_save_all = (uint8_t)strtoull(setting_value, NULL, 10);
+				else if(!strncmp(setting_name,"sticker-gif-",12))
+				{ // NOTE: the following CANNOT be locked by mutex_global_variable
+					if(peer_index < 0) // should always be true
+						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+					const int s = sticker_register((const unsigned char *)setting_value,setting_value_len);
+					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+					sticker[s].saved = 1; // we got this from disk, so we must mark it as saved
+					pthread_rwlock_unlock(&mutex_sticker); // 🟩
+					if(peer_index < 0) // should always be true.
+						pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+				}
+				#endif // NO_STICKERS
 				else
 				{ // Send unrecognized settings to UI
 					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
@@ -1637,7 +1651,7 @@ void sql_populate_setting(const int force_plaintext)
 					const size_t len = strlen(setting_name);
 					char *setting_name_allocated = torx_secure_malloc(len+1);
 					snprintf(setting_name_allocated,len+1,"%s",setting_name);
-					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1);
+					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1); // TODO +1/Null termination could interfere with binary interpretation if callback utilizes torx_allocation_len(setting_value_allocated) instead of setting_value_len
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(n,setting_name_allocated,setting_value_allocated,setting_value_len,0);

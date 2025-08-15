@@ -34,8 +34,12 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
+## We should allow some way to override this, https://cmake.org/cmake/help/latest/envvar/CMAKE_BUILD_PARALLEL_LEVEL.html https://cmake.org/cmake/help/latest/module/ProcessorCount.html
+include(ProcessorCount)
+ProcessorCount(CPU_COUNT)
+
 if(LAN_REPO)
-	message(STATUS "TorX using LAN repository: ${LAN_REPO}")
+	message(STATUS "${PROJECT_NAME} using LAN repository: ${LAN_REPO}")
 	set(REPO_SODIUM "${LAN_REPO}/libsodium.git")
 	set(REPO_SSL "${LAN_REPO}/openssl.git")
 	set(REPO_ZLIB "${LAN_REPO}/zlib.git")
@@ -43,7 +47,7 @@ if(LAN_REPO)
 	set(REPO_EVENT "${LAN_REPO}/libevent.git")
 	set(REPO_PNG "${LAN_REPO}/libpng.git")
 else()
-	message(STATUS "TorX using default remote repositories.")
+	message(STATUS "${PROJECT_NAME} using default remote repositories.")
 	set(REPO_SODIUM "https://github.com/jedisct1/libsodium")
 	set(REPO_SSL "https://github.com/openssl/openssl")
 	set(REPO_ZLIB "https://github.com/madler/zlib")
@@ -82,7 +86,7 @@ message(STATUS "${PROJECT_NAME} C_FLAGS being set to: ${CMAKE_C_FLAGS}")
 ### set(SSL_CONFIG_ADDITIONAL no-asm no-stdio no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl) # do more https://security.stackexchange.com/questions/71499/build-only-openssl-crypto
 #set(SSL_CONFIG_ADDITIONAL no-asm no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl no-comp no-hw no-engine)
 # set(SSL_CONFIG_ARGS --debug no-asm no-tests no-libapp no-external-tests no-fuzz-libfuzzer no-fuzz-afl no-comp no-hw no-engine no-dso no-weak-ssl-ciphers no-dtls no-idea no-camellia no-seed no-bf no-cast no-rc2 no-rc4 no-rc5 no-md2 no-md4 no-ecdh no-sock no-ssl2 no-ssl3 no-dsa no-dh no-ec no-ecdsa no-tls1 no-rfc3779 no-whirlpool no-srp no-mdc2 no-ecdh no-engine no-srtp) # -fPIC -fstack-protector-all
-set(SSL_CONFIG_ARGS no-ssl3 no-weak-ssl-ciphers no-dtls no-dso no-comp no-ec2m no-psk no-srp no-camellia no-idea no-md2 no-md4 no-mdc2 no-rc2 no-rc4 no-rc5 no-rmd160 no-whirlpool no-hw no-ui-console no-unit-test no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl ) # removed temp: no-asm no-comp no-stdio, removed permanent (tor requires): no-engine . NOTE: some of these might be needed by sqlcipher but not tor.
+set(SSL_CONFIG_ARGS no-legacy no-ssl3 no-weak-ssl-ciphers no-dtls no-dso no-comp no-ec2m no-psk no-srp no-camellia no-idea no-md2 no-md4 no-mdc2 no-rc2 no-rc4 no-rc5 no-rmd160 no-whirlpool no-ui-console no-unit-test no-tests no-external-tests no-fuzz-libfuzzer no-fuzz-afl ) # removed temp: no-asm no-comp no-stdio, removed permanent (tor requires): no-engine no-deprecated. NOTE: some of these might be needed by sqlcipher but not tor.
 ## XXX XXX REMOVED enable-ec_nistp_64_gcc_128 because it overrides no-comp. It MIGHT BE NECESSARY FOR TOR XXX XXX
 if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	add_definitions(-D__USE_GNU=1) # __USE_GNU is necessary for libevent for android otherwise we get pipe2 issues upon rebuild
@@ -90,7 +94,7 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	set(EVENT__HAVE_SIGNALFD OFF)
 ##	set(CLANG_BINARY_PATH $ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang)
 ##	set(CLANGPP_BINARY_PATH $ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++)
-	set(ENV{PATH} $ENV{ANDROID_NDK_HOME}toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH}) # CRITICALLY IMPORTANT for openssl
+	set(ENV{PATH} $ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH}) # CRITICALLY IMPORTANT for openssl
 #	set(ENV{ANDROID_NDK_ROOT} $ENV{ANDROID_NDK_HOME}) # XXX testing for openssl
 	option(CMAKE_PLATFORM_NO_VERSIONED_SONAME TRUE) # WORKS for libevent, not for sodium
 	set(CMAKE_PLATFORM_NO_VERSIONED_SONAME TRUE) # 
@@ -122,17 +126,17 @@ if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	set(SSL_MAKE_ARGS SHLIB_VERSION_NUMBER= SHLIB_EXT=_1_1.so)
 
 ## XXX WORKS but NEED to manually append PATH with ndk tools /bin/ folder (outside of cmake, in the shell that calls it)
-	set(SSL_CONFIG_CMD export PATH=$ENV{ANDROID_NDK_HOME}toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} && export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./Configure ${SSL_ARCH} -D__ANDROID_API__=${ANDROID_PLATFORM} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
+	set(SSL_CONFIG_CMD export PATH=$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} && export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./Configure ${SSL_ARCH} -D__ANDROID_API__=${ANDROID_PLATFORM} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
 ## XXX FAILS due to bug in OpenSSL build for android, where CC= and CXX= are ignored or misused
 ##	set(SSL_CONFIG_CMD export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./Configure ${SSL_ARCH} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
 ##	set(SSL_CONFIG_CMD export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./Configure ${SSL_ARCH} -D__ANDROID_API__=${CMAKE_SYSTEM_VERSION} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
-## XXX works static only	
+## XXX works static only
 #set(SSL_CONFIG_CMD export CC=${CLANG_BINARY_PATH} && export CXX=${CLANGPP_BINARY_PATH} && ./Configure cc ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
-	set(SQLCIPHER_CONFIG_CMD export PATH=$ENV{ANDROID_NDK_HOME}toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} && export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./configure --host=${SQLCIPHER_ARCH} ) # removed --target=${SQLCIPHER_ARCH} --build=${SQLCIPHER_ARCH} because they are wrong and unhelpful
+	set(SQLCIPHER_CONFIG_CMD export PATH=$ENV{ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH} && export CC=${CLANG_BINARY} && export CXX=${CLANGPP_BINARY} && ./configure --host=${SQLCIPHER_ARCH} ) # removed --target=${SQLCIPHER_ARCH} --build=${SQLCIPHER_ARCH} because they are wrong and unhelpful
 else()
 	set(SSL_ARCH linux-x86_64) # TODO do not hardcode this
 	set(SODIUM_OUT_BIN_DIR src/libsodium/.libs)
-	set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 make)
+	set(SODIUM_BLD_CMD cmake -E env LIBSODIUM_FULL_BUILD=1 make -j${CPU_COUNT})
 	set(SSL_CONFIG_ADDITIONAL enable-ec_nistp_64_gcc_128) # NOTE: only necessary on 64bit
 	set(SSL_CONFIG_CMD ./Configure ${SSL_ARCH} ${SSL_CONFIG_ARGS} ${SSL_CONFIG_ADDITIONAL})
 	set(SQLCIPHER_CONFIG_CMD ./configure)
@@ -190,13 +194,27 @@ endif()
 
 add_compile_definitions(SQLITE_HAS_CODEC SECURE_MALLOC)
 
-if(QR_GENERATOR)
-	add_compile_definitions(QR_GENERATOR) # necessary, not redundant
+if(NO_QR_GENERATOR)
+	message(STATUS "${PROJECT_NAME} building with NO_QR_GENERATOR")
+	add_compile_definitions(NO_QR_GENERATOR) # necessary, not redundant
+else()
 	set(QR_GENERATOR_SRC extra/qr_generator/torx_qr.c)
 endif()
+if(NO_AUDIO_CALL)
+	message(STATUS "${PROJECT_NAME} building with NO_AUDIO_CALL")
+	add_compile_definitions(NO_AUDIO_CALL) # necessary, not redundant
+else()
+	set(AUDIO_CALL_SRC extra/audio_call/audio_call.c)
+endif()
+if(NO_STICKERS)
+	message(STATUS "${PROJECT_NAME} building with NO_STICKERS")
+	add_compile_definitions(NO_STICKERS) # necessary, not redundant
+else()
+	set(STICKERS_SRC extra/stickers/stickers.c)
+endif()
 
-add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC})
-set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.34) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
+add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/file_magic.c core/libevent.c core/serv_init.c core/blake3.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${QR_GENERATOR_SRC} ${AUDIO_CALL_SRC} ${STICKERS_SRC})
+set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.35) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -233,12 +251,14 @@ if(BUILD_TORX_DEPS)
 	ExternalProject_Add(
 		openssl-download
 		GIT_REPOSITORY ${REPO_SSL}
-		GIT_TAG OpenSSL_1_1_1-stable
+	#	GIT_TAG OpenSSL_1_1_1-stable
+		GIT_TAG openssl-3.5.2
 		BUILD_IN_SOURCE TRUE
-		DOWNLOAD_COMMAND git clone ${REPO_SSL} --branch OpenSSL_1_1_1-stable openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
+	#	DOWNLOAD_COMMAND git clone ${REPO_SSL} --branch OpenSSL_1_1_1-stable openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
+		DOWNLOAD_COMMAND git clone ${REPO_SSL} --branch openssl-3.5.2 openssl-download ## --depth=1 XXX dual placing, this is to force not building submodules. TODO Enable --depth=1 if using HTTPS.
 		UPDATE_COMMAND ""
 		CONFIGURE_COMMAND ${SSL_CONFIG_CMD} ${SSL_CONFIG_TYPE}
-		BUILD_COMMAND make ${SSL_MAKE_ARGS}
+		BUILD_COMMAND make -j${CPU_COUNT} ${SSL_MAKE_ARGS}
 		INSTALL_COMMAND ""
 		BUILD_BYPRODUCTS ${SSL_BUILD_BYPRODUCT} ${CRYPTO_BUILD_BYPRODUCT}
 	)
@@ -249,7 +269,7 @@ if(BUILD_TORX_DEPS)
 		BUILD_IN_SOURCE 1
 		UPDATE_COMMAND ""
 		CONFIGURE_COMMAND export CC=${CLANG_BINARY_PATH} && export CXX=${CLANGPP_BINARY_PATH} && ./configure
-		BUILD_COMMAND make
+		BUILD_COMMAND make -j${CPU_COUNT}
 		INSTALL_COMMAND ""
 # 		BUILD_BYPRODUCTS ${Z_BUILD_BYPRODUCT} # first we need to get it to be .so
 	)
@@ -261,7 +281,7 @@ if(BUILD_TORX_DEPS)
 		BUILD_IN_SOURCE TRUE
 		UPDATE_COMMAND mkdir -p include/sqlcipher
 		CONFIGURE_COMMAND ${SQLCIPHER_CONFIG_CMD} ${SQLCIPHER_CONFIG_ARGS} --with-crypto-lib=none --enable-tempstore=yes CFLAGS=${SQLCIPHER_CFLAGS}
-		BUILD_COMMAND make
+		BUILD_COMMAND make -j${CPU_COUNT}
 		INSTALL_COMMAND ${CMAKE_COMMAND} -E make_directory include/sqlcipher && ${CMAKE_COMMAND} -E copy sqlite3.h include/sqlcipher/
 	#	INSTALL_COMMAND cp *.h include/sqlcipher/
 		BUILD_BYPRODUCTS ${SQLCIPHER_BUILD_BYPRODUCT}
@@ -362,6 +382,7 @@ target_include_directories(
 	PRIVATE
 		${PNG_INCLUDE_DIRS}				# probably not useful, i think this is bunk. see include_directories()
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
+		${CMAKE_CURRENT_SOURCE_DIR}/core	# Necessary so that audio_call.c can find torx_internal.h
 )
 
 if(WIN32)

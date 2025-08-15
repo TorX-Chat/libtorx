@@ -73,8 +73,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 { // Designed to be efficient, primarily for the UI to get things like message_len.
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
-		error_printf(0,"getter_length sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
-		breakpoint();
+		error_printf(-1,"getter_length sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
 		return 0;
 	}
 	uint32_t len = 0;
@@ -143,8 +142,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 { // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void*)&string);
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
-		error_printf(0,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
-		breakpoint();
+		error_printf(-1,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
 		if(size)
 			*size = 0;
 		return NULL;
@@ -226,6 +224,19 @@ struct offsets {
 };
 // For size of array (number of pages): sizeof(offsets_peer) / sizeof(struct offsets)
 struct offsets offsets_peer[] = {
+	#ifndef NO_AUDIO_CALL
+	offsize(peer_list,audio_cache,"audio_cache"),
+	offsize(peer_list,audio_time,"audio_time"),
+	offsize(peer_list,audio_nstime,"audio_nstime"),
+	offsize(peer_list,audio_last_retrieved_time,"audio_last_retrieved_time"),
+	offsize(peer_list,audio_last_retrieved_nstime,"audio_last_retrieved_nstime"),
+	offsize(peer_list,cached_recording,"cached_recording"),
+	offsize(peer_list,cached_time,"cached_time"),
+	offsize(peer_list,cached_nstime,"cached_nstime"),
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	offsize(peer_list,stickers_requested,"stickers_requested"),
+	#endif // NO_STICKERS
 	offsize(peer_list,owner,"owner"),
 	offsize(peer_list,status,"status"),
 	offsize(peer_list,privkey,"privkey"),
@@ -333,10 +344,36 @@ struct offsets offsets_broadcasts[] = {
 	offsize(broadcasts_list,peers,"peers")
 };
 
+#ifndef NO_AUDIO_CALL
+struct offsets offsets_call[] = {
+	offsize(call_list,joined,"joined"),
+	offsize(call_list,waiting,"waiting"),
+	offsize(call_list,mic_on,"mic_on"),
+	offsize(call_list,speaker_on,"speaker_on"),
+	offsize(call_list,start_time,"start_time"),
+	offsize(call_list,start_nstime,"start_nstime"),
+	offsize(call_list,participating,"participating"),
+	offsize(call_list,participant_mic,"participant_mic"),
+	offsize(call_list,participant_speaker,"participant_speaker")
+};
+#endif // NO_AUDIO_CALL
+
+#ifndef NO_STICKERS
+struct offsets offsets_sticker[] = {
+	offsize(sticker_list,checksum,"checksum"),
+	offsize(sticker_list,peers,"peers"),
+	offsize(sticker_list,data,"data"),
+	offsize(sticker_list,saved,"saved")
+};
+#endif // NO_STICKERS
+
 unsigned char *getter_group_id(const int g)
 {
 	if(g < 0)
-		error_simple(-1,"Negative g passed to group_access. Coding error. Report this.");
+	{
+		error_simple(-1,"Negative g passed to getter_group_id. Coding error. Report this.");
+		return NULL;
+	}
 	unsigned char *id = torx_secure_malloc(GROUP_ID_SIZE);
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	memcpy(id,group[g].id,GROUP_ID_SIZE);
@@ -347,7 +384,10 @@ unsigned char *getter_group_id(const int g)
 void *group_access(const int g,const size_t offset)
 {
 	if(g < 0)
+	{
 		error_simple(-1,"Negative g passed to group_access. Coding error. Report this.");
+		return NULL;
+	}
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	void *ret = (char*)&group[g] + offset;
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
@@ -383,7 +423,10 @@ void *group_get_prior(int *n,int *i,const void *arg)
 void group_get_index(int *n,int *i,const int g,const uint32_t index)
 {
 	if(!n || !i || g < 0)
+	{
 		error_simple(-1,"group_get_index failed sanity check. Coding error. Report this.");
+		return;
+	}
 	struct msg_list *current_page = NULL;
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const uint32_t diff_msg_count = (const uint32_t)labs((long int)index - (long int)group[g].msg_count-1);
@@ -426,11 +469,14 @@ void group_get_index(int *n,int *i,const int g,const uint32_t index)
 void *protocol_access(const int p_iter,const size_t offset)
 {
 	if(p_iter < 0)
+	{
 		error_simple(-1,"Negative p_iter passed to protocol_access. Coding error. Report this.");
+		return NULL;
+	}
 	return (char*)&protocols[p_iter] + offset;
 }
 
-#define getter_offset_sanity_check(offsets_struc) \
+#define getter_offset_sanity_check(offsets_struc) /* Cannot be converted to function */ \
 { \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets); \
 	while(iter < pages && strcmp(offsets_struc[iter].name,member)) \
@@ -441,7 +487,7 @@ void *protocol_access(const int p_iter,const size_t offset)
 		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this.",member); \
 }
 
-#define getter_offset_return_size(offsets_struc) \
+#define getter_offset_return_size(offsets_struc) /* Cannot be converted to function */ \
 { \
 	size_t iter = 0; \
 	getter_offset_sanity_check(offsets_struc) \
@@ -469,14 +515,22 @@ size_t getter_size(const char *parent,const char *member)
 		getter_offset_return_size(offsets_packet)
 	else if(!strcmp(parent,"broadcasts"))
 		getter_offset_return_size(offsets_broadcasts)
+	#ifndef NO_AUDIO_CALL
+	else if(!strcmp(parent,"call"))
+		getter_offset_return_size(offsets_call)
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	else if(!strcmp(parent,"sticker"))
+		getter_offset_return_size(offsets_sticker)
+	#endif // NO_STICKERS
 	error_printf(-1,"getter_size fail. Coding error. Report this. Parent: %s Member: %s",parent,member);
 	return 0;
 }
 
-#define getter_offset_return_offset(offsets_struc) \
+#define getter_offset_return_offset(offsets_struc) /* Cannot be converted to function */ \
 { \
 	size_t iter = 0; \
-	getter_offset_sanity_check(offsets_struc) \
+	getter_offset_sanity_check(offsets_struc); \
 	return offsets_struc[iter].offset; \
 }
 
@@ -501,6 +555,14 @@ size_t getter_offset(const char *parent,const char *member)
 		getter_offset_return_offset(offsets_packet)
 	else if(!strcmp(parent,"broadcasts"))
 		getter_offset_return_offset(offsets_broadcasts)
+	#ifndef NO_AUDIO_CALL
+	else if(!strcmp(parent,"call"))
+		getter_offset_return_offset(offsets_call)
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	else if(!strcmp(parent,"sticker"))
+		getter_offset_return_offset(offsets_sticker)
+	#endif // NO_STICKERS
 	error_printf(-1,"getter_offset fail. Coding error. Report this. Parent: %s Member: %s",parent,member);
 	return 0;
 }
@@ -510,8 +572,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	char value;
 	if(n < 0 || (i > INT_MIN && f > -1))
 	{
-		error_printf(0,"getter byte sanity check failed at offset: %lu",offset);
-		breakpoint();
+		error_printf(-1,"getter byte sanity check failed at offset: %lu",offset);
 		return 0;
 	}
 	else if(!peer)
@@ -527,47 +588,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	return value;
 }
 
-#define getter_sanity_check(offsets_struc) \
-	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
-	size_t iter = 0;\
-	while(iter < pages && offset != offsets_struc[iter].offset)\
-		iter++;\
-	if(iter == pages)\
-		error_printf(-1,"Illegal offset. Coding error. Report this. n: %d i: %d f: %d Offset: %lu",n,i,f,offset);\
-	if(offsets_struc[iter].size != sizeof(value))\
-		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this.2 %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,sizeof(value));
-
-#define return_getter_value \
-	if(n < 0 || (i > INT_MIN && f > -1))\
-	{\
-		error_printf(0,"getter sanity check failed at offset: %lu",offset);\
-		breakpoint();\
-		return 0;\
-	}\
-	else if(!peer)\
-		return 0;\
-	if(i > INT_MIN)\
-	{\
-		getter_sanity_check(offsets_message)\
-		torx_read(n)\
-		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));\
-	}\
-	else if(f > -1)\
-	{\
-		getter_sanity_check(offsets_file)\
-		torx_read(n)\
-		memcpy(&value,(char*)&peer[n].file[f] + offset,sizeof(value));\
-	}\
-	else\
-	{\
-		getter_sanity_check(offsets_peer)\
-		torx_read(n)\
-		memcpy(&value,(char*)&peer[n] + offset,sizeof(value));\
-	}\
-	torx_unlock(n) \
-	return value;
-
-#define getter_array_sanity_check(offsets_struc) \
+#define getter_array_sanity_check(offsets_struc) /* Cannot be converted to function */ \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
 	size_t iter = 0;\
 	while(iter < pages && offset != offsets_struc[iter].offset)\
@@ -587,15 +608,9 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 { // Be careful on size. Could actually use this on integers, not just arrays. It needs re-writing and better sanity checks. See getter_string as an example.
 	if(n < 0 || (i > INT_MIN && f > -1) || size < 1 || array == NULL)
 	{
-		error_printf(0,"getter_array sanity check failed at offset: %lu",offset);
-		if(!array)
-			error_simple(0,"!array");
-		if(n < 0)
-			error_simple(0,"n < 0");
-		if(size < 1)
-			error_simple(0,"size < 1");
-		breakpoint();
-		sodium_memzero(array,size); // zero the target
+		if(array)
+			sodium_memzero(array,size); // zero the target
+		error_printf(-1,"getter_array sanity check failed at offset: %lu",offset);
 		return;
 	}
 	else if(!peer) // can occur during shutdown
@@ -635,64 +650,96 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	torx_unlock(n) // 🟩🟩🟩
 }
 
+#define getter_sanity_check(offsets_struc) /* Cannot be converted to function */ \
+	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
+	size_t iter = 0;\
+	while(iter < pages && offset != offsets_struc[iter].offset)\
+		iter++;\
+	if(iter == pages)\
+		error_printf(-1,"Illegal offset. Coding error. Report this.");\
+	if(offsets_struc[iter].size != anticipated_size)\
+		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this. %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,anticipated_size);
+
+static inline union types getter_peer_union(const int n,const int i,const int f,const size_t offset,const size_t anticipated_size)
+{
+	union types value = {0}; // Initialize as 0
+	if(n < 0 || (i > INT_MIN && f > -1))
+	{
+		error_printf(-1,"getter sanity check failed at offset: %lu",offset);
+		return value;
+	}
+	else if(!peer)
+		return value;
+	if(i > INT_MIN)
+	{
+		getter_sanity_check(offsets_message)
+		torx_read(n)
+		memcpy(&value,(char*)&peer[n].message[i] + offset,anticipated_size);
+	}
+	else if(f > -1)
+	{
+		getter_sanity_check(offsets_file)
+		torx_read(n)
+		memcpy(&value,(char*)&peer[n].file[f] + offset,anticipated_size);
+	}
+	else
+	{
+		getter_sanity_check(offsets_peer)
+		torx_read(n)
+		memcpy(&value,(char*)&peer[n] + offset,anticipated_size);
+	}
+	torx_unlock(n)
+	return value;
+}
+
 int8_t getter_int8(const int n,const int i,const int f,const size_t offset)
 {
-	int8_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int8_t)).int8;
 }
 
 int16_t getter_int16(const int n,const int i,const int f,const size_t offset)
 {
-	int16_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int16_t)).int16;
 }
 
 int32_t getter_int32(const int n,const int i,const int f,const size_t offset)
 {
-	int32_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int32_t)).int32;
 }
 
 int64_t getter_int64(const int n,const int i,const int f,const size_t offset)
 {
-	int64_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int64_t)).int64;
 }
 
 uint8_t getter_uint8(const int n,const int i,const int f,const size_t offset)
 {
-	uint8_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(uint8_t)).uint8;
 }
 
 uint16_t getter_uint16(const int n,const int i,const int f,const size_t offset)
 {
-	uint16_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int16_t)).uint16;
 }
 
 uint32_t getter_uint32(const int n,const int i,const int f,const size_t offset)
 {
-	uint32_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(uint32_t)).uint32;
 }
 
 uint64_t getter_uint64(const int n,const int i,const int f,const size_t offset)
 {
-	uint64_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(uint64_t)).uint64;
 }
 
 int getter_int(const int n,const int i,const int f,const size_t offset)
 {
-	int value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(int)).integer;
 }
 
 time_t getter_time(const int n,const int i,const int f,const size_t offset)
 {
-	time_t value = 0;
-	return_getter_value // macro
+	return getter_peer_union(n,i,f,offset,sizeof(time_t)).time;
 }
 
 void setter(const int n,const int i,const int f,const size_t offset,const void *value,const size_t size)
@@ -711,8 +758,7 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 */
 	if(n < 0 || (i > INT_MIN && f > -1) || size < 1 || value == NULL)
 	{
-		error_printf(0,"setter sanity check failed at offset: %lu sanity: %d %d %d",offset,n,i,f);
-		breakpoint();
+		error_printf(-1,"setter sanity check failed at offset: %lu sanity: %d %d %d",offset,n,i,f);
 		return;
 	}
 	else if(!peer) // can occur during shutdown
@@ -738,88 +784,71 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 	torx_unlock(n) // 🟩🟩🟩
 }
 
-/* XXX The following is for group struct only XXX */ // Totally unused
-// Note: getter_sanity_check_group is exactly the same as getter_sanity_check, just with different fatal error debug args
-#define getter_sanity_check_group(offsets_struc) \
-	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
-	size_t iter = 0;\
-	while(iter < pages && offset != offsets_struc[iter].offset)\
-		iter++;\
-	if(iter == pages)\
-		error_printf(-1,"Illegal offset. Coding error. Report this. g: %d Offset: %lu",g,offset);\
-	if(offsets_struc[iter].size != sizeof(value))\
-		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.4 %lu != %lu",offset,offsets_struc[iter].size,sizeof(value));
+/* XXX The following is for group struct only XXX */
 
-#define return_getter_group_value \
-	if(g < 0)\
-	{\
-		error_printf(0,"getter_group sanity check failed at offset: %lu",offset);/* TODO should be fatal */\
-		breakpoint();\
-		return 0;\
-	}\
-	else if(!group)\
-		return 0;\
-	getter_sanity_check_group(offsets_group)\
-	pthread_rwlock_rdlock(&mutex_expand_group);\
-	memcpy(&value,(char*)&group[g] + offset,sizeof(value));\
-	pthread_rwlock_unlock(&mutex_expand_group);\
+static inline union types getter_group_union(const int g,const size_t offset,const size_t anticipated_size)
+{
+	union types value = {0}; // Initialize as 0
+	if(g < 0)
+	{
+		error_printf(-1,"getter_group sanity check failed at offset: %lu",offset);
+		return value;
+	}
+	else if(!group)
+		return value;
+	getter_sanity_check(offsets_group)
+	pthread_rwlock_rdlock(&mutex_expand_group);
+	memcpy(&value,(char*)&group[g] + offset,anticipated_size);
+	pthread_rwlock_unlock(&mutex_expand_group);
 	return value;
+}
 
 int8_t getter_group_int8(const int g,const size_t offset)
 {
-	int8_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(int8_t)).int8;
 }
 
 int16_t getter_group_int16(const int g,const size_t offset)
 {
-	int16_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(int16_t)).int16;
 }
 
 int32_t getter_group_int32(const int g,const size_t offset)
 {
-	int32_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(int32_t)).int32;
 }
 
 int64_t getter_group_int64(const int g,const size_t offset)
 {
-	int64_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(int64_t)).int64;
 }
 
 uint8_t getter_group_uint8(const int g,const size_t offset)
 {
-	uint8_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(uint8_t)).uint8;
 }
 
 uint16_t getter_group_uint16(const int g,const size_t offset)
 {
-	uint16_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(uint16_t)).uint16;
 }
 
 uint32_t getter_group_uint32(const int g,const size_t offset)
 {
-	uint32_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(uint32_t)).uint32;
 }
 
 uint64_t getter_group_uint64(const int g,const size_t offset)
 {
-	uint64_t value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(uint64_t)).uint64;
 }
 
 int getter_group_int(const int g,const size_t offset)
 {
-	int value = 0;
-	return_getter_group_value // macro
+	return getter_group_union(g,offset,sizeof(int)).integer;
 }
 
-#define getter_group_array_sanity_check(offsets_struc) \
+#define getter_group_array_sanity_check(offsets_struc) /* Cannot be converted to function */ \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
 	size_t iter = 0;\
 	while(iter < pages && offset != offsets_struc[iter].offset)\
@@ -837,8 +866,7 @@ void setter_group(const int g,const size_t offset,const void *value,const size_t
 */
 	if(g < 0 || size < 1 || value == NULL)
 	{
-		error_printf(0,"setter_group sanity check failed at offset: %lu",offset);
-		breakpoint();
+		error_printf(-1,"setter_group sanity check failed at offset: %lu",offset);
 		return;
 	}
 	else if(!group) // can occur during shutdown
@@ -851,81 +879,73 @@ void setter_group(const int g,const size_t offset,const void *value,const size_t
 
 /* XXX The following are ONLY SAFE ON packet struct and global variables because of their fixed size / location XXX */
 
-#define read_integer\
-		if(arg == NULL)\
-		{\
-			error_simple(0,"Invalid integer size.");\
-			return 0;\
-		}\
-		pthread_rwlock_rdlock(mutex);\
-		memcpy(&value, arg, sizeof(value));\
-		pthread_rwlock_unlock(mutex);\
+static inline union types getter_global_union(pthread_rwlock_t *mutex,const void *arg,const size_t anticipated_size)
+{
+	union types value = {0}; // Initialize as 0
+	if(!arg || !mutex || !anticipated_size)
+	{
+		error_simple(-1,"getter_global_union sanity check failed");
 		return value;
+	}
+	pthread_rwlock_rdlock(mutex);
+	memcpy(&value, arg, anticipated_size);
+	pthread_rwlock_unlock(mutex);
+	return value;
+}
 
 int8_t threadsafe_read_int8(pthread_rwlock_t *mutex,const int8_t *arg)
 {
-	int8_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(int8_t)).int8;
 }
 
 int16_t threadsafe_read_int16(pthread_rwlock_t *mutex,const int16_t *arg)
 {
-	int16_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(int16_t)).int16;
 }
 
 int32_t threadsafe_read_int32(pthread_rwlock_t *mutex,const int32_t *arg)
 {
-	int32_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(int32_t)).int32;
 }
 
 int64_t threadsafe_read_int64(pthread_rwlock_t *mutex,const int64_t *arg)
 {
-	int64_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(int64_t)).int64;
 }
 
 uint8_t threadsafe_read_uint8(pthread_rwlock_t *mutex,const uint8_t *arg)
 {
-	uint8_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(uint8_t)).uint8;
 }
 
 uint16_t threadsafe_read_uint16(pthread_rwlock_t *mutex,const uint16_t *arg)
 {
-	uint16_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(uint16_t)).uint16;
 }
 
 uint32_t threadsafe_read_uint32(pthread_rwlock_t *mutex,const uint32_t *arg)
 {
-	uint32_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(uint32_t)).uint32;
 }
 
 uint64_t threadsafe_read_uint64(pthread_rwlock_t *mutex,const uint64_t *arg)
 {
-	uint64_t value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(uint64_t)).uint64;
 }
 
 int threadsafe_read_int(pthread_rwlock_t *mutex,const int *arg)
 {
-	int value;
-	read_integer // macro
+	return getter_global_union(mutex,arg,sizeof(int)).integer;
 }
 
 void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *source,const size_t len)
 {
-	if(source == NULL || len < 1)
+	if(!mutex || !destination || !source || !len)
 	{
-		error_simple(0,"Invalid integer destination. Coding error. Report this.");
-		breakpoint();
+		error_simple(-1,"threadsafe_write sanity check failed");
 		return;
 	}
 	pthread_rwlock_wrlock(mutex); // 🟥
 	memcpy(destination,source,len);
 	pthread_rwlock_unlock(mutex); // 🟩
 }
-

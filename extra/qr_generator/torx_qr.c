@@ -60,12 +60,11 @@ any form.
 severable if found in contradiction with the License or applicable law.
 */
 
-#include <torx.h>
+#include "torx_internal.h"
 #include <png.h>
 #include "qrcodegen.h"
 #include "qrcodegen.c"
 
-//#ifdef QR_GENERATOR	TODO implement this conditional in torx.c and torx.h
 /*	 // we can cut our PNG file sizes by about 70% if we get this bitwise operation working right? it seems like with compression libpng already puts us below what bitwise would be
 	png_set_IHDR(png, info, width, height, 1, PNG_COLOR_TYPE_GRAY,
 		PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
@@ -223,5 +222,3 @@ size_t write_bytes(const char *filename,const void *png_data,const size_t length
 	fclose(fp); fp = NULL;
 	return bytes_written;
 }
-
-//#endif

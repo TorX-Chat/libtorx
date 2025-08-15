@@ -65,6 +65,7 @@ severable if found in contradiction with the License or applicable law.
 
 #include <pthread.h>
 #include <libgen.h>	// for dirname / basename
+#include <string.h>
 
 #include <event2/event.h>
 #include <event2/thread.h>
@@ -143,42 +144,17 @@ severable if found in contradiction with the License or applicable law.
 #define STRIKETHROUGH	"\x1b[9m"
 #define RESET		"\x1b[0m"
 
-#define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
-#define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common
-// TODO 2024/03/12 SOCKET_SO_SNDBUF perhaps we make 2048 for libevent's/our library, and 40960 for Tor because its slow?
-#define SOCKET_SO_SNDBUF 2048 // By default, use 2048 because 2028*2==4096, which matches libevent's buffer size ; Higher == More speed, Lower == Less delays.
-#define SOCKET_SO_RCVBUF 0 // if 0, default: cat /proc/sys/net/core/wmem_default
-#define ConstrainedSockSize 0 // not sure if defaulting to system defaults TODO constrain if there are issues with file transfers appearing to send immediately
-
-#define PROTOCOL_LIST_SIZE 64
-#define INIT_VPORT 60591 // Tribute to Phil Zimmerman, June 5th 1991, creator of PGP and contributor to ZRTP. https://philzimmermann.com/EN/background/index.html
-#define CTRL_VPORT 61912 // Tribute to Julian Assange, June 19th 2012. NOTE: Ports should be listed in LongLivedPorts in torrc.
-#define PORT_DEFAULT_SOCKS 9050
-#define PORT_DEFAULT_CONTROL 9051
-#define PACKET_SIZE_MAX 498 // (CELL_PAYLOAD_SIZE-RELAY_HEADER_SIZE) = 498 https://github.com/torproject/tor/blob/main/src/core/or/or.h#L489 Appears to be 498 sometimes, 506 other times, but should verify via https://github.com/spring-epfl/tor-cell-dissector
-#define SIZE_PACKET_STRC 1024 // Seems to not limit the size of individual outbound messages. One for every packet in outbound buffer. So far single-file outbound transfers show this never gets above 1-2. The space it takes at 10,000 is only ~2mb
 #define CHECKSUM_BIN_LEN 32
 #define GROUP_ID_SIZE crypto_box_SECRETKEYBYTES // 32 
 #define MAX_STREAMS_GROUP 500 // Should not need to be >1 except for group chats. If it is too low, it used to break when too many messages come at once.
 #define MAX_STREAMS_PEER 10
 #define SHIFT 10 // this is for vptoi/itovp. it must be greater than any negative value that we might pass to the functions.
-#define CHECKSUM_ON_COMPLETION 1 // This blocks, so it should be used for debug purposes only
-#define MESSAGE_TIMEOUT -1 // should be -1(disabled), but IN THEORY we could be recieving messages but unable to send while waiting for tor's timeout to expire. In practice, -1 has been best. Update: does nothing.
-#define AUTOMATICALLY_LOAD_CTRL 1 // 1 yes, 0 no. 1 is effectively default for -q mode. This is not a viable solution because adversaries can still monitor your disconnection times. 
-#define TOR_CTRL_IP "127.0.0.1" // Allowing this to be set by UI would be incredibly dangerous because users could set it to remote and expose their keys to unencrypted networks. Note: in *nix, we could use unix sockets.
-#define TOR_SOCKS_IP "127.0.0.1" // See above. If system tor is not using this IP for their socks port, we won't be able to connect because extract_port doesn't account for it.
-#define SPLIT_DELAY 1 // 0 is writing checkpoint every packet, 1 is every 120kb, 2 is every 240kb, ... Recommend 1+. XXX 0 may cause divide by zero errors/crash?
-#define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
+#define PROTOCOL_LIST_SIZE 64
+#define SIZE_PACKET_STRC 1024 // Seems to not limit the size of individual outbound messages. One for every packet in outbound buffer. So far single-file outbound transfers show this never gets above 1-2. The space it takes at 10,000 is only ~2mb
 #define MAX_INVITEES 4096
-#define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
-#define REALISTIC_PEAK_TRANSFER_SPEED 50*1024*1024 // In bytes/s. Throws away bytes_per_second calculations above this level, for the purpose of calculating average transfer speed. It's fine and effective to set this as high as 1024*1024*1024 (1gb/s).
-
-#define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
-#define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
-#define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
 #define BROADCAST_QUEUE_SIZE 4096
 #define BROADCAST_HISTORY_SIZE BROADCAST_QUEUE_SIZE*2 // should be equal to or larger than queue size
-#define BROADCAST_MAX_INBOUND_PER_PEER BROADCAST_QUEUE_SIZE/16 // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
+#define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
 
 /* The following DO NOT CONTAIN + '\0' + [Time] + [NSTime] + Protocol + Signature */
 #define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
@@ -351,6 +327,32 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
 	pthread_t thrd_recv; // for torx_events (recv)
 	uint32_t broadcasts_inbound;
+	#ifndef NO_AUDIO_CALL
+	struct call_list {
+		uint8_t joined; // Whether we accepted/joined it
+		uint8_t waiting; // Whether it is awaiting an acceptance/join or has been declined/ignored
+		uint8_t mic_on;
+		uint8_t speaker_on;
+		time_t start_time;
+		time_t start_nstime;
+		int *participating;
+		uint8_t *participant_mic;
+		uint8_t *participant_speaker;
+	} *call;
+	/* Playback related */
+	unsigned char **audio_cache; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
+	time_t *audio_time; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
+	time_t *audio_nstime; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
+	time_t audio_last_retrieved_time; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
+	time_t audio_last_retrieved_nstime; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
+	/* Recording related */
+	unsigned char **cached_recording; // TODO could be held globally, rather than in peer struct?
+	time_t cached_time; // time of last modification of cached_recording // TODO could be held globally, rather than in peer struct?
+	time_t cached_nstime; // nstime of last modification of cached_recording // TODO could be held globally, rather than in peer struct?
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	unsigned char **stickers_requested;
+	#endif // NO_STICKERS
 };
 extern struct peer_list *peer;
 
@@ -370,26 +372,15 @@ struct group_list { // XXX NOTE: individual peers will be in peer struct but pee
 }; // NOTE: creator of the group will never ask anyone for peer_list because creator is always on everyone's peer list. Other users can periodically poll people for peer_list.
 extern struct group_list *group;
 
-struct msg_list { // This is ONLY to be allocated by message_sort and message_insert
-	struct msg_list *message_prior; // if NULL, no prior notifiable message
-	int n;
-	int i;
-	time_t time; // adding time to avoid having to reference peer struct unnecessarily whenever inserting/removing
-	time_t nstime;
-	struct msg_list *message_next; // if NULL, no next notifiable message
+#ifndef NO_STICKERS
+struct sticker_list {
+	unsigned char checksum[CHECKSUM_BIN_LEN];
+	int *peers; // Only these peers can request data, to prevent fingerprinting by sticker list.
+	unsigned char *data; // Cached
+	uint8_t saved; // Whether data exists on disk
 };
-
-struct packet_info {
-	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
-	int file_n;
-	int f_i; // f value or i value, as appropriate? (cannot be required)
-	uint16_t packet_len; // size of packet, or unsent size of packet if partial
-	int p_iter; // initialize at -1
-	int8_t fd_type; // -1 trash (ready for re-use??? but then out of order),0 recv, 1 send
-	time_t time; // time added to packet struct
-	time_t nstime; // time added to packet struct
-}; // Should be filled for each packet added to an evbuffer so that we can determine how to make the appropriate :sent: writes 
-extern struct packet_info packet[SIZE_PACKET_STRC];
+extern struct sticker_list *sticker;
+#endif // NO_STICKERS
 
 struct protocol_info {
 	uint16_t protocol;
@@ -413,12 +404,29 @@ struct protocol_info {
 };
 extern struct protocol_info protocols[PROTOCOL_LIST_SIZE];
 
-struct broadcasts_list {
-	uint32_t hash;
-	unsigned char broadcast[GROUP_BROADCAST_LEN];
-	int peers[BROADCAST_MAX_PEERS]; // initialized as -1
-}; // this is queue
-extern struct broadcasts_list broadcasts_queued[BROADCAST_QUEUE_SIZE];
+/* Struct Models */
+union types {
+	uint64_t uint64;
+	uint32_t uint32;
+	uint16_t uint16;
+	uint8_t uint8;
+	size_t size;
+	time_t time;
+	int integer;
+	int64_t int64;
+	int32_t int32;
+	int16_t int16;
+	int8_t int8;
+};
+
+struct msg_list { // This is ONLY to be allocated by message_sort and message_insert
+	struct msg_list *message_prior; // if NULL, no prior notifiable message
+	int n;
+	int i;
+	time_t time; // adding time to avoid having to reference peer struct unnecessarily whenever inserting/removing
+	time_t nstime;
+	struct msg_list *message_next; // if NULL, no next notifiable message
+};
 
 enum exclusive_types {
 	ENUM_EXCLUSIVE_NONE = 0,
@@ -435,6 +443,20 @@ enum stream_types { // Stream > 0 is not stored in struct longer than necessary.
 
 enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed upon each message):
 		XXX New Method:	echo $(($RANDOM*2-$RANDOM%2)) */
+	#ifndef NO_AUDIO_CALL
+	ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN = 65303, // Start Time + nstime // This is also offer
+	ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE = 33037, // Start Time + nstime // This is also offer
+	ENUM_PROTOCOL_AAC_AUDIO_STREAM_PEERS = 16343, // Start Time + nstime + 56*participating
+	ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE = 23602, // Start Time + nstime
+	ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE = 54254, // Start Time + nstime + data
+	#endif // NO_AUDIO_CALL
+	#ifndef NO_STICKERS
+	ENUM_PROTOCOL_STICKER_HASH = 29812,		// Sticker will be sending a sticker hash. If peer doesn't have the sticker, request.
+	ENUM_PROTOCOL_STICKER_HASH_PRIVATE = 40505,
+	ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED = 1891,
+	ENUM_PROTOCOL_STICKER_REQUEST = 24931,		// hash
+	ENUM_PROTOCOL_STICKER_DATA_GIF = 46093,		// hash + data
+	#endif // NO_STICKERS
 /*	ENUM_PROTOCOL_FILE_PREVIEW_PNG = 32343,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_PNG_DATE_SIGNED = 17878,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_GIF = 54526,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
@@ -522,52 +544,6 @@ enum file_statuses
 	ENUM_FILE_INACTIVE_ACCEPTED = 4, // This must be inbound. For idle outbound, must be ENUM_FILE_INACTIVE_COMPLETE
 	ENUM_FILE_INACTIVE_CANCELLED = 5,
 	ENUM_FILE_INACTIVE_COMPLETE = 6
-};
-
-/* Struct Models/Types used for passing to specific pthread'd functions */ // Don't forget to initialize = {0} when calling these types.
-
-struct tor_call_strc {
-	pthread_t thrd;
-	void (*callback)(char*);
-	char *msg;
-};
-struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	int n;
-	char *path;
-	time_t modified;
-	size_t size;
-};
-struct pass_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	char *password_old;
-	char *password_new;
-	char *password_verify;
-};
-struct event_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	evutil_socket_t sockfd;
-	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
-	int8_t fd_type; // 0 recvfd, 1 sendfd
-	uint8_t owner;
-	uint8_t invite_required;
-	int g;
-	int group_n;
-	int n;
-	int fresh_n; // for SING/MULT to pass internally
-	char *buffer; // for use with incomplete messages in read_conn.
-	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
-	uint8_t killed;
-};
-struct int_char { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	int i; // cannot make const, not necessary anyway
-	const char *p;
-	const unsigned char *up;
-};
-struct file_request_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	int n;
-	int f;
-	int8_t fd_type;
-	int16_t section; // must NOT be uint8_t because it MUST be able to reach 256, even though the maximum section number is 0-255; avoid uint8_t overflows in for loops.
-	uint64_t start;
-	uint64_t end;
 };
 
 /* Callbacks */
@@ -669,7 +645,7 @@ void cleanup_cb(const int sig_num);
 void stream_cb(const int n,const int p_iter,char *data,const uint32_t len);
 void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t len);
 
-// XXX TODO FIXME some of these functions might be fun to return const values
+// XXX TODO FIXME some of these functions might be fun to return const values. Specifically functions that return pointers.
 
 /* thread_safety.c */
 /* To prevent data races and race conditions on the peer struct and its members */
@@ -734,6 +710,7 @@ void torx_fn_unlock(const int n);
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
 unsigned char *read_bytes(size_t *data_len,const char *path)__attribute__((warn_unused_result));
+void toggle_int8(void *arg);
 void zero_pthread(void *thrd);
 void setcanceltype(int type,int *arg);
 int8_t torx_debug_level(const int8_t level);
@@ -745,22 +722,14 @@ void *torx_insecure_malloc(const size_t len)__attribute__((warn_unused_result));
 void *torx_secure_malloc(const size_t len)__attribute__((warn_unused_result));
 void torx_free_simple(void *p);
 void torx_free(void **p);
-int message_insert(const int g,const int n,const int i);
-void message_remove(const int g,const int n,const int i);
-void message_sort(const int g);
-time_t message_find_since(const int n)__attribute__((warn_unused_result));
 int message_load_more(const int n);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)__attribute__((warn_unused_result));
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
 char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
-void transfer_progress(const int n,const int f);
-char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
-char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
 uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_transferred_inbound(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_transferred_outbound(const int n,const int f,const int r)__attribute__((warn_unused_result));
-uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
 int vptoi(const void* arg)__attribute__((warn_unused_result));
 void *itovp(const int i)__attribute__((warn_unused_result));
 int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_result));
@@ -771,8 +740,6 @@ int set_f_from_i(int *file_n,const int n,const int i)__attribute__((warn_unused_
 int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
 int set_r(const int n,const int f,const int passed_requester_n)__attribute__((warn_unused_result));
 void random_string(char *destination,const size_t destination_size);
-void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
-char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
 int pid_kill(const pid_t pid,const int signal);
 void torrc_save(const char *torrc_content_local);
 char *torrc_verify(const char *torrc_content_local)__attribute__((warn_unused_result));
@@ -781,29 +748,17 @@ uint32_t torx_allocation_len(const void *arg)__attribute__((warn_unused_result))
 void *torx_copy(uint32_t *len_p,const void *arg)__attribute__((warn_unused_result));
 void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)__attribute__((warn_unused_result));
 void *torx_realloc(void *arg,const size_t len_new)__attribute__((warn_unused_result));
-void zero_n(const int n);
-int zero_i(const int n,const int i);
-void zero_g(const int g);
-void invitee_add(const int g,const int n);
-int invitee_remove(const int g,const int n);
-char *mit_strcasestr(char *dumpster,const char *diver)__attribute__((warn_unused_result));
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
-size_t stripbuffer(char *buffer);
 uint16_t randport(const uint16_t arg)__attribute__((warn_unused_result));
-char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
 void start_tor(void);
 size_t b64_decoded_size(const char *in)__attribute__((warn_unused_result));
 size_t b64_decode(unsigned char *out,const size_t destination_size,const char *in); // caller must allocate space
 char *b64_encode(const void *in,const size_t len)__attribute__((warn_unused_result)); // torx_free required
 void initial_keyed(void);
 void re_expand_callbacks(void);
-void expand_message_struc(const int n,const int i); // must be called from within locks
-void expand_message_struc_followup(const int n,const int i); // must be called after expand_message_struc, after unlock
-int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message)__attribute__((warn_unused_result));
 int set_last_message(int *last_message_n,const int n,const int count_back)__attribute__((warn_unused_result));
 int group_online(const int g)__attribute__((warn_unused_result));
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)__attribute__((warn_unused_result));
-int group_add_peer(const int g,const char *group_peeronion,const char *group_peernick,const unsigned char *group_peer_ed25519_pk,const unsigned char *inviter_signature);
 int group_join(const int inviter_n,const unsigned char *group_id,const char *group_name,const char *creator_onion,const unsigned char *creator_ed25519_pk);
 int group_join_from_i(const int n,const int i);
 int group_generate(const uint8_t invite_required,const char *name);
@@ -811,8 +766,6 @@ void initial(void);
 void change_password_start(const char *password_old,const char *password_new,const char *password_verify);
 void login_start(const char *password);
 void cleanup_lib(const int sig_num);
-void xstrupr(char *string);
-void xstrlwr(char *string);
 char *tor_call(const char *msg)__attribute__((warn_unused_result));
 void tor_call_async(void (*callback)(char*),const char *msg);
 char *onion_from_privkey(const char *privkey)__attribute__((warn_unused_result));
@@ -820,105 +773,49 @@ char *torxid_from_onion(const char *onion)__attribute__((warn_unused_result));
 char *onion_from_torxid(const char *torxid)__attribute__((warn_unused_result));
 int custom_input(const uint8_t owner,const char *identifier,const char *privkey);
 
-/* broadcast.c */
-void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADCAST_LEN]);
-void broadcast_remove(const int g);
-
 /* sql.c */
 void message_offload(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
 int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len);
-int sql_insert_message(const int n,const int i);
-int sql_update_message(const int n,const int i);
-int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);
-int sql_update_peer(const int n);
-int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since);
-void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
-int sql_populate_peer(void);
 unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query)__attribute__((warn_unused_result));
+void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
 void sql_populate_setting(const int force_plaintext);
-int sql_delete_message(const int peer_index,const time_t time,const time_t nstime);
-int sql_delete_history(const int peer_index);
 int sql_delete_setting(const int force_plaintext,const int peer_index,const char *setting_name);
-int sql_delete_peer(const int peer_index);
 
 /* file_magic.c */
 int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
 int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
 int file_status_get(const int n,const int f)__attribute__((warn_unused_result));
-void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
-int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
-int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
-void *peer_init(void *arg);
 int peer_save(const char *unstripped_peerid,const char *peernick);
 void peer_accept(const int n);
 void change_nick(const int n,const char *freshpeernick);
 uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
 void destroy_file(const char *file_path); // do not use directly for deleting history
-int initialize_split_info(const int n,const int f);
-void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
 size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
 char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
 void takedown_onion(const int peer_index,const int delete);
 void block_peer(const int n);
 
 /* client_init.c */
-int file_remove_offer(const int file_n,const int f,const int peer_n);
-int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
-int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
 int message_resend(const int n,const int i);
 int message_send_select(const uint32_t target_count,const int *target_list,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 void kill_code(const int n,const char *explanation); // must accept -1
-void file_request_internal(const int n,const int f,const int8_t fd_type);
-void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial);
+int file_send(const int n,const char *path);
 void file_set_path(const int n,const int f,const char *path);
 void file_accept(const int n,const int f);
 void file_cancel(const int n,const int f);
-unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)__attribute__((warn_unused_result));
-int file_send(const int n,const char *path);
-
-/* serv_init.c */
-int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
-int add_onion_call(const int n);
-void load_onion(const int n);
-
-/* libevent.c */
-void *torx_events(void *ctx);
 
 /* onion_gen.c */
-void generate_onion_simple(char onion[56+1],char privkey[88+1]);
-void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519_pk);
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
-
-/* socks.c */
-void DisableNagle(const evutil_socket_t sendfd);
-evutil_socket_t socks_connect(const char *host, const char *port)__attribute__((warn_unused_result));
 
 /* cpucount.c */
 int cpucount(void)__attribute__((warn_unused_result));
 
-/* sha3.c */
-#define DIGEST 32 // 256-bit digest in bytes.
-void sha3_hash(uint8_t digest[DIGEST], const uint64_t len, const uint8_t data[len]);
-
 /* utf-validate.c */
 uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_unused_result));
-
-/* base32.c */
-typedef enum _baseencode_errno {
-	SUCCESS = 0,
-	INVALID_INPUT = 1,
-	EMPTY_STRING = 2,
-	INPUT_TOO_BIG = 3,
-	INVALID_B32_DATA = 4,
-	INVALID_B64_DATA = 5,
-	MEMORY_ALLOCATION = 6,
-} baseencode_error_t;
-size_t base32_encode(unsigned char *encoded_data,const unsigned char *user_data,const size_t data_len);
-unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err)__attribute__((warn_unused_result));
 
 #ifdef SECURE_MALLOC	// TODO implement this conditional in library and CMakeLists.txt // https://imtech.imt.fr/en/2019/01/22/stack-canaries-software-protection/
 	#define ENABLE_SECURE_MALLOC 1
@@ -926,7 +823,7 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 	#define ENABLE_SECURE_MALLOC 0
 #endif
 
-#ifdef QR_GENERATOR	// TODO implement this conditional in library and CMakeLists.txt
+#ifndef NO_QR_GENERATOR
 	#include <stdbool.h>
 	struct qr_data{
 		bool *data;
@@ -939,46 +836,76 @@ unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,bas
 	char *qr_utf8(const struct qr_data *arg)__attribute__((warn_unused_result));
 	void *return_png(size_t *size_ptr,const struct qr_data *arg)__attribute__((warn_unused_result));
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
-#endif
+#endif // NO_QR_GENERATOR
+
+#ifndef NO_AUDIO_CALL
+extern void (*initialize_peer_call_registered)(const int call_n,const int call_c);
+extern void (*expand_call_struc_registered)(const int call_n,const int call_c);
+extern void (*call_update_registered)(const int call_n,const int call_c);
+extern void (*audio_cache_add_registered)(const int participant_n);
+extern uint8_t default_participant_mic;
+extern uint8_t default_participant_speaker;
+void initialize_peer_call_setter(void (*callback)(int,int));
+void expand_call_struc_setter(void (*callback)(int,int));
+void call_update_setter(void (*callback)(int,int));
+void audio_cache_add_setter(void (*callback)(int));
+void initialize_peer_call_cb(const int call_n,const int call_c);
+void expand_call_struc_cb(const int call_n,const int call_c);
+void call_update_cb(const int call_n,const int call_c);
+void audio_cache_add_cb(const int participant_n);
+uint8_t getter_call_uint8(const int call_n,const int call_c,const int participant_n,const size_t offset)__attribute__((warn_unused_result));
+time_t getter_call_time(const int call_n,const int call_c,const int participant_n,const size_t offset)__attribute__((warn_unused_result));
+int *call_recipient_list(uint32_t *recipient_count,const int call_n,const int call_c)__attribute__((warn_unused_result));
+int *call_participant_list(uint32_t *participant_count,const int call_n,const int call_c)__attribute__((warn_unused_result));
+int call_participant_count(const int call_n, const int call_c)__attribute__((warn_unused_result));
+int call_start(const int call_n);
+void call_toggle_mic(const int call_n,const int call_c,const int participant_n);
+void call_toggle_speaker(const int call_n,const int call_c,const int participant_n);
+void call_join(const int call_n,const int call_c);
+void call_ignore(const int call_n,const int call_c);
+void call_leave(const int call_n,const int call_c);
+void call_leave_all_except(const int except_n,const int except_c);
+void call_mute_all_except(const int except_n,const int except_c);
+unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,uint32_t *len,const int participant_n)__attribute__((warn_unused_result));
+int record_cache_clear(const int call_n);
+int record_cache_add(const int call_n,const int call_c,const uint32_t cache_minimum_size,const uint32_t max_age_in_ms,const unsigned char *data,const uint32_t data_len);
+#endif // NO_AUDIO_CALL
+
+#ifndef NO_STICKERS
+int set_s(const unsigned char checksum[CHECKSUM_BIN_LEN])__attribute__((warn_unused_result));
+void sticker_save(const int s);
+void sticker_delete(const int s);
+int sticker_register(const unsigned char *data,const size_t data_len);
+uint8_t sticker_retrieve_saved(const int s)__attribute__((warn_unused_result));
+char *sticker_retrieve_checksum(const int s)__attribute__((warn_unused_result));
+unsigned char *sticker_retrieve_data(size_t *len_p,const int s)__attribute__((warn_unused_result));
+uint32_t sticker_retrieve_count(void)__attribute__((warn_unused_result));
+void sticker_offload(const int s);
+void sticker_offload_saved(void);
+#endif // NO_STICKERS
 
 /* Global variables (defined here, declared elsewhere, primarily in torx_core.c) */
 extern const uint16_t torx_library_version[4];
 extern void *ui_data;
 extern char *debug_file;
-extern uint8_t v3auth_enabled;
 extern uint8_t reduced_memory;
 extern int8_t debug;
-extern long long unsigned int crypto_pwhash_OPSLIMIT;
-extern size_t crypto_pwhash_MEMLIMIT;
-extern size_t tor_calls;
-extern int crypto_pwhash_ALG;
-extern char saltbuffer[crypto_pwhash_SALTBYTES];
 extern char *working_dir;
-extern char *file_db_plaintext;
-extern char *file_db_encrypted;
-extern char *file_db_messages;
-extern char *file_tor_pid;
 extern char *control_password_clear;
-extern char control_password_hash[61+1];
 extern char *torrc_content;
 extern char *default_peernick;
-extern evutil_socket_t tor_ctrl_socket;
 extern uint16_t tor_socks_port;
 extern uint16_t tor_ctrl_port;
 extern uint32_t tor_version[4];
-extern uint8_t sodium_initialized;
-extern uint8_t currently_changing_pass;
 extern uint8_t first_run;
+extern uint8_t currently_changing_pass;
 extern uint8_t destroy_input;
 extern uint8_t tor_running;
 extern uint8_t using_system_tor;
 extern uint8_t lockout;
 extern uint8_t keyed;
-extern pid_t tor_pid;
-extern int highest_ever_o;
-extern int file_piece_p_iter;
 extern uint8_t messages_loaded;
-extern unsigned char decryption_key[crypto_box_SEEDBYTES];
+extern pid_t tor_pid;
 extern int max_group;
 extern int max_peer;
 extern time_t startup_time;
@@ -1006,15 +933,17 @@ extern uint8_t kill_delete;
 extern uint8_t hide_blocked_group_peer_messages;
 extern uint8_t log_pm_according_to_group_setting;
 extern double file_progress_delay;
-extern uint32_t broadcast_history[BROADCAST_HISTORY_SIZE];
 extern pthread_attr_t ATTR_DETACHED;
 extern pthread_rwlock_t mutex_debug_level;
 extern pthread_rwlock_t mutex_global_variable;
 extern pthread_rwlock_t mutex_protocols;
 extern pthread_rwlock_t mutex_expand;
 extern pthread_rwlock_t mutex_expand_group;
-extern pthread_rwlock_t mutex_packet;
-extern pthread_rwlock_t mutex_broadcast;
 extern uint8_t censored_region;
+#ifndef NO_STICKERS
+extern uint8_t stickers_save_all; // formerly called save_all_stickers
+extern uint8_t stickers_offload_all; // formerly called offload_all_stickers
+extern uint8_t stickers_send_data; // formerly called send_sticker_data
+#endif // NO_STICKERS
 
 #endif // TORX_PUBLIC_HEADERS

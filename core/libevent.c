@@ -212,6 +212,10 @@ static inline void peer_offline(struct event_strc *event_strc)
 	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 	const uint8_t online = recvfd_connected + sendfd_connected;
+	#ifndef NO_AUDIO_CALL
+	if(!online)
+		call_peer_leaving_all_except(event_strc->n,-1,-1);
+	#endif // NO_AUDIO_CALL
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(uint8_t cycle = 0; cycle < 2; cycle++)
@@ -477,6 +481,34 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					}
 					else
 					{
+						#ifndef NO_STICKERS
+						if(protocol == ENUM_PROTOCOL_STICKER_HASH || protocol == ENUM_PROTOCOL_STICKER_HASH_PRIVATE || protocol == ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED)
+						{ // THE FOLLOWING IS IMPORTANT TO PREVENT FINGERPRINTING BY STICKER WALLET. It has to be upon send instead of earlier to ensure unsent group messages trigger it.
+							const int relevent_n = (event_strc->group_n > -1 && protocol != ENUM_PROTOCOL_STICKER_HASH_PRIVATE) ? event_strc->group_n : event_strc->n;
+							unsigned char checksum[CHECKSUM_BIN_LEN];
+							torx_read(event_strc->n) // 🟧🟧🟧
+							memcpy(checksum,peer[event_strc->n].message[i].message,CHECKSUM_BIN_LEN);
+							torx_unlock(event_strc->n) // 🟩🟩🟩
+							const int s = set_s(checksum);
+							if(s > -1)
+							{
+								uint32_t iter = 0;
+								pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+								while(iter < torx_allocation_len(sticker[s].peers)/sizeof(int) && sticker[s].peers[iter] != relevent_n)
+									iter++;
+								if(iter == torx_allocation_len(sticker[s].peers)/sizeof(int))
+								{ // Register a new recipient of sticker so that they can request data
+									if(sticker[s].peers)
+										sticker[s].peers = torx_realloc(sticker[s].peers,torx_allocation_len(sticker[s].peers) + sizeof(int));
+									else
+										sticker[s].peers = torx_insecure_malloc(sizeof(int));
+									sticker[s].peers[iter] = relevent_n;
+								}
+								pthread_rwlock_unlock(&mutex_sticker); // 🟩
+							}
+							sodium_memzero(checksum,sizeof(checksum));
+						}
+						#endif // NO_STICKERS
 						const uint8_t stat = ENUM_MESSAGE_SENT;
 						setter(event_strc->n,i,-1,offsetof(struct message_list,stat),&stat,sizeof(stat));
 						sql_update_message(event_strc->n,i);
@@ -1388,6 +1420,83 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							continue;
 						}
 					}
+					#ifndef NO_STICKERS
+					else if(protocol == ENUM_PROTOCOL_STICKER_REQUEST)
+					{ // Recieved sticker request
+						if(torx_allocation_len(event_strc->buffer) >= CHECKSUM_BIN_LEN && threadsafe_read_uint8(&mutex_global_variable,&stickers_send_data))
+						{
+							const int s = set_s((unsigned char*)event_strc->buffer);
+							if(s > -1)
+							{ // We have this sticker
+								int relevant_n = event_strc->n; // For groups, this should be group_n
+								for(int cycle = 0; cycle < 2; cycle++)
+								{ // Verify that we previously offered this sticker to this peer. First try n, then group_n upon continue.
+									const uint8_t owner = getter_uint8(relevant_n,INT_MIN,-1,offsetof(struct peer_list,owner));
+									uint32_t iter = 0;
+									pthread_rwlock_rdlock(&mutex_sticker); // 🟧
+									while(iter < torx_allocation_len(sticker[s].peers)/sizeof(int) && sticker[s].peers[iter] != relevant_n)
+										iter++;
+									if(iter == torx_allocation_len(sticker[s].peers)/sizeof(int))
+									{ // We didn't previously offer this sticker to this peer
+										pthread_rwlock_unlock(&mutex_sticker); // 🟩
+										if(owner == ENUM_OWNER_GROUP_PEER)
+										{ // if not on peer_n(pm), try group_n (public)
+											relevant_n = event_strc->group_n;
+											continue;
+										}
+										else
+											error_simple(0,"Peer requested a sticker they dont have access to (either they are buggy or malicious). Report this.");
+									}
+									else
+									{ // Peer requested a sticker we have previously offered to them
+										pthread_rwlock_unlock(&mutex_sticker); // 🟩
+										unsigned char *data = sticker_retrieve_data(NULL,s);
+										data = torx_realloc_shift(data,CHECKSUM_BIN_LEN + torx_allocation_len(data),1); // shift forward for checksum
+										memcpy(data,event_strc->buffer,CHECKSUM_BIN_LEN); // prefix the checksum
+										message_send(event_strc->n,ENUM_PROTOCOL_STICKER_DATA_GIF,data,torx_allocation_len(data)); // note: this is the new length after realloc, do not re-use old value
+										torx_free((void*)&data);
+									}
+									break;
+								}
+							}
+							else
+								error_simple(0,"Peer requested sticker we do not have. Maybe we deleted it.");
+						}
+					}
+					else if(protocol == ENUM_PROTOCOL_STICKER_HASH || protocol == ENUM_PROTOCOL_STICKER_HASH_PRIVATE || protocol == ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED)
+					{ // Received sticker
+						if(torx_allocation_len(event_strc->buffer) >= CHECKSUM_BIN_LEN && (threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all) || !threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all)))
+						{
+							const int s = set_s((unsigned char*)event_strc->buffer);
+							if(s < 0)
+							{ // Don't have sticker, consider requesting it, if we haven't already
+								uint32_t y = 0;
+								torx_write(event_strc->n) // 🟥🟥🟥
+								while(y < torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *) && memcmp(peer[event_strc->n].stickers_requested[y], event_strc->buffer, CHECKSUM_BIN_LEN))
+									y++;
+								if(y == torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *))
+								{ // We haven't yet requested it. Check for an empty slot otherwise realloc a new slot.
+									y = 0; // necessary
+									while(y < torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *) && !is_null(peer[event_strc->n].stickers_requested[y],CHECKSUM_BIN_LEN))
+										y++;
+									if(y == torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *))
+									{ // No empty slot available, must realloc
+										if(peer[event_strc->n].stickers_requested)
+											peer[event_strc->n].stickers_requested = torx_realloc(peer[event_strc->n].stickers_requested,torx_allocation_len(peer[event_strc->n].stickers_requested) + sizeof(unsigned char *));
+										else
+											peer[event_strc->n].stickers_requested = torx_insecure_malloc(sizeof(unsigned char *));
+										peer[event_strc->n].stickers_requested[y] = torx_secure_malloc(CHECKSUM_BIN_LEN);
+									}
+									memcpy(peer[event_strc->n].stickers_requested[y],event_strc->buffer,CHECKSUM_BIN_LEN);
+									torx_unlock(event_strc->n) // 🟩🟩🟩
+									message_send(event_strc->n,ENUM_PROTOCOL_STICKER_REQUEST,event_strc->buffer,CHECKSUM_BIN_LEN);
+								}
+								else // Requested this sticker already. Not requesting again.
+									torx_unlock(event_strc->n) // 🟩🟩🟩
+							}
+						}
+					}
+					#endif // NO_STICKERS
 					else if(null_terminated_len && utf8 && !utf8_valid(event_strc->buffer,buffer_len - (null_terminated_len + date_len + signature_len)))
 					{
 						error_simple(0,"Non-UTF8 message received. Discarding entire message.");
@@ -1395,8 +1504,149 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					if(stream)
 					{ // certain protocols discarded after processing, others stream_cb to UI
+						const uint32_t data_len = buffer_len - (/*null_terminated_len + */date_len + signature_len); // TODO unclear why we don't do this after if(complete) and only do it in if(stream)
 						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST && protocol != ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
-							stream_cb(nn,p_iter,event_strc->buffer,buffer_len - (/*null_terminated_len + */date_len + signature_len));
+						{
+							#ifndef NO_AUDIO_CALL
+							if(data_len >= 8 && (protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE))
+							{
+								const time_t time = be32toh(align_uint32((void*)event_strc->buffer)); // this is for the CALL, not MESSAGE
+								const time_t nstime = be32toh(align_uint32((void*)&event_strc->buffer[4])); // this is for the CALL, not MESSAGE
+								if(!time && !nstime)
+								{
+									error_simple(0,"Received a AUDIO_STREAM protocol with zero times. Disgarding. Peer is buggy.");
+									continue;
+								}
+								int call_n = event_strc->n;
+								int call_c = -1;
+								int group_n = -1;
+								torx_read(call_n) // 🟧🟧🟧
+								for(int c = 0; (size_t)c < torx_allocation_len(peer[call_n].call)/sizeof(struct call_list); c++)
+									if(peer[call_n].call[c].start_time == time && peer[call_n].call[c].start_nstime == nstime)
+										call_c = c;
+								torx_unlock(call_n) // 🟩🟩🟩
+								if(call_c == -1 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
+								{ // Try group_n instead
+									const int g = set_g(event_strc->n, NULL);
+									group_n = getter_group_int(g, offsetof(struct group_list, n));
+									call_n = group_n;
+									torx_read(call_n) // 🟧🟧🟧
+									for(int c = 0; (size_t)c < torx_allocation_len(peer[call_n].call)/sizeof(struct call_list); c++)
+										if(peer[call_n].call[c].start_time == time && peer[call_n].call[c].start_nstime == nstime)
+											call_c = c;
+									torx_unlock(call_n) // 🟩🟩🟩
+								} // NOT else if
+								if(call_c == -1 && (protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE))
+								{ // Received offer to join a new call
+									if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE)
+										call_n = event_strc->n;
+									call_c = set_c(call_n,time,nstime); // reserve
+									if(call_c > -1)
+									{ // This check should be unnecessary
+										torx_write(call_n) // 🟥🟥🟥
+										peer[call_n].call[call_c].waiting = 1;
+										torx_unlock(call_n) // 🟩🟩🟩
+										call_peer_joining(call_n, call_c, event_strc->n);
+									}
+								}
+								else if(call_c > -1)
+								{ // Existing call
+									if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE)
+									{
+										torx_read(call_n) // 🟧🟧🟧
+										size_t iter = 0; // NOTE: copy of call_participant_iter_by_n
+										for( ; iter < torx_allocation_len(peer[call_n].call[call_c].participating)/sizeof(int) ; iter++)
+											if(peer[call_n].call[call_c].participating[iter] == event_strc->n)
+												break;
+										if(iter == torx_allocation_len(peer[call_n].call[call_c].participating)/sizeof(int))
+										{ // WARNING: Do not use iter for anything because it might change in call_peer_leaving
+											torx_unlock(call_n) // 🟩🟩🟩
+											error_simple(0,"Peer mistakenly sending AUDIO before joining or after leaving a call. Coding error. Report this.");
+											continue;
+										}
+										torx_unlock(call_n) // 🟩🟩🟩
+										if(getter_call_uint8(call_n,call_c,-1,offsetof(struct call_list,speaker_on)) && getter_call_uint8(call_n,call_c,event_strc->n,offsetof(struct call_list,participant_speaker)))
+										{ // We want this audio
+											const time_t audio_time = be32toh(align_uint32((void*)&event_strc->buffer[data_len])); // NOTE: this is intentionally reading outside data_len because that is where *message* date/time is stored by library
+											const time_t audio_nstime = be32toh(align_uint32((void*)&event_strc->buffer[data_len+sizeof(uint32_t)])); // NOTE: this is intentionally reading outside data_len because that is where *message* date/time is stored by library
+											audio_cache_add(event_strc->n,audio_time,audio_nstime,&event_strc->buffer[8],data_len-8);
+										}
+										else
+											error_printf(0,"Checkpoint Disgarding streaming audio because speaker is off");
+									}
+									else if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE)
+										call_peer_leaving(call_n, call_c, event_strc->n);
+									else // if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE)
+										call_peer_joining(call_n, call_c, event_strc->n);
+								}
+								else
+									error_printf(0, "Received a audio stream related message for an unknown call: %lu %lu",time,nstime); // If DATA, consider sending _LEAVE once. Otherwise it is _LEAVE, so ignore.
+							}
+							else
+							#endif // NO_AUDIO_CALL
+							#ifndef NO_STICKERS
+							if(data_len >= CHECKSUM_BIN_LEN && protocol == ENUM_PROTOCOL_STICKER_DATA_GIF)
+							{
+								int s = set_s((unsigned char*)event_strc->buffer);
+								if(s > -1)
+									error_simple(0,"We already have this sticker data, not registering it again.");
+								else
+								{ // Fresh sticker data. Save it and print it
+									unsigned char checksum[CHECKSUM_BIN_LEN];
+									if(b3sum_bin(checksum,NULL,(unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],0,data_len - CHECKSUM_BIN_LEN) != data_len - CHECKSUM_BIN_LEN || memcmp(checksum,event_strc->buffer,sizeof(checksum)))
+										error_simple(0,"Received bunk sticker data from peer. Checksum failed. Disgarding sticker.");
+									else
+									{
+										s = sticker_register((unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],data_len - CHECKSUM_BIN_LEN);
+										const uint8_t stickers_save_all_local = threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all);
+										const uint8_t stickers_offload_all_local = threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all);
+										if(stickers_save_all_local || !stickers_offload_all_local)
+										{ // Be careful if modifying the logic in this block
+											pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+											sticker[s].data = torx_secure_malloc(data_len - CHECKSUM_BIN_LEN);
+											memcpy(sticker[s].data,(unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],data_len - CHECKSUM_BIN_LEN);
+											pthread_rwlock_unlock(&mutex_sticker); // 🟩
+											if(stickers_save_all_local)
+												sticker_save(s);
+											if(stickers_offload_all_local)
+												sticker_offload(s);
+										}
+										uint32_t y = 0;
+										torx_write(event_strc->n) // 🟥🟥🟥
+										while(y < torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *) && memcmp(peer[event_strc->n].stickers_requested[y],checksum,sizeof(checksum)))
+											y++;
+										if(y < torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *))
+											sodium_memzero(peer[event_strc->n].stickers_requested[y],CHECKSUM_BIN_LEN);
+										torx_unlock(event_strc->n) // 🟩🟩🟩
+										torx_read(event_strc->n) // 🟧🟧🟧
+										for(int i = peer[event_strc->n].max_i; i > peer[event_strc->n].min_i - 1 ; i--)
+										{ // Rebuild any messages that had this sticker
+											const int p_iter_local = peer[event_strc->n].message[i].p_iter;
+											if(p_iter_local > -1)
+											{
+												pthread_rwlock_rdlock(&mutex_protocols); // 🟧
+												const uint16_t protocol_local = protocols[p_iter_local].protocol;
+												pthread_rwlock_unlock(&mutex_protocols); // 🟩
+												if((protocol_local == ENUM_PROTOCOL_STICKER_HASH || protocol_local == ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED || protocol_local == ENUM_PROTOCOL_STICKER_HASH_PRIVATE)
+												&& !memcmp(event_strc->buffer,checksum,CHECKSUM_BIN_LEN))
+												{ // Find the first relevant message and update it TODO this might not work in groups
+													torx_unlock(event_strc->n) // 🟩🟩🟩
+													printf("Checkpoint should be rebuilding a sticker n=%d i=%i (might not work in groups)\n",event_strc->n,i);
+													message_modified_cb(event_strc->n,i);
+													torx_read(event_strc->n) // 🟧🟧🟧
+													break;
+												}
+											}
+										}
+										torx_unlock(event_strc->n) // 🟩🟩🟩
+									}
+									sodium_memzero(checksum,sizeof(checksum));
+								}
+							}
+							else
+							#endif // NO_STICKERS
+								stream_cb(nn,p_iter,event_strc->buffer,data_len);
+						}
 					}
 					else if(protocol == ENUM_PROTOCOL_KILL_CODE)
 					{ // Receive Kill Code (note: it is here, not above, because we want the utf8_valid check) NOTE: Will not be saved, like stream.
