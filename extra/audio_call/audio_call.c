@@ -427,9 +427,9 @@ void call_join(const int call_n,const int call_c)
 	unsigned char message[8];
 	torx_read(call_n) // 🟧🟧🟧
 	if(peer[call_n].owner == ENUM_OWNER_GROUP_PEER)
-		protocol = ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE;
+		protocol = ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE;
 	else
-		protocol = ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN;
+		protocol = ENUM_PROTOCOL_AUDIO_STREAM_JOIN;
 	uint32_t trash = htobe32((uint32_t)peer[call_n].call[call_c].start_time);
 	memcpy(message,&trash,sizeof(trash));
 	trash = htobe32((uint32_t)peer[call_n].call[call_c].start_nstime);
@@ -484,12 +484,12 @@ void call_leave(const int call_n,const int call_c)
 		uint32_t participant_count = 0;
 		int *participant_list = call_participant_list(&participant_count,call_n,call_c); // All participants, including those with mic off
 		if(participant_list)
-			message_send_select(participant_count,participant_list,ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE,message,sizeof(message));
+			message_send_select(participant_count,participant_list,ENUM_PROTOCOL_AUDIO_STREAM_LEAVE,message,sizeof(message));
 		torx_free((void*)&participant_list);
 		send_count += participant_count;
 	}
 	if(send_count == 0 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
-		message_send(call_n,ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE,message,sizeof(message)); // Reject a call from a single peer, or cancel an outbound call
+		message_send(call_n,ENUM_PROTOCOL_AUDIO_STREAM_LEAVE,message,sizeof(message)); // Reject a call from a single peer, or cancel an outbound call
 	sodium_memzero(message,sizeof(message));
 	call_ignore(call_n,call_c);
 }
@@ -521,7 +521,7 @@ void call_peer_joining(const int call_n,const int call_c,const int participant_n
 			if(peer[call_n].call[call_c].participating[iter] > -1) // BEWARE iter != count
 				memcpy(&message[8+count++*56], peer[peer[call_n].call[call_c].participating[iter]].peeronion, 56);
 		torx_unlock(call_n) // 🟩🟩🟩
-		message_send(participant_n,ENUM_PROTOCOL_AAC_AUDIO_STREAM_PEERS,message,message_len);
+		message_send(participant_n,ENUM_PROTOCOL_AUDIO_STREAM_PEERS,message,message_len);
 		sodium_memzero(message,sizeof(message));
 	}
 	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
@@ -614,7 +614,7 @@ void call_peer_leaving_all_except(const int participant_n,const int except_n,con
 }
 
 void audio_cache_add(const int participant_n,const time_t time,const time_t nstime,const char *data,const size_t data_len)
-{ // Handles ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE data
+{ // Handles ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC data
 	if(participant_n < 0 || !data || !data_len)
 		return; // Sanity check
 	torx_write(participant_n) // 🟥🟥🟥
@@ -808,7 +808,7 @@ int record_cache_add(const int call_n,const int call_c,const uint32_t cache_mini
 		}
 		memcpy(&message[8 + current_cache_size],data,data_len);
 		torx_unlock(call_n) // 🟩🟩🟩
-		message_send_select(recipient_count,recipient_list,ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE,message,message_len);
+		message_send_select(recipient_count,recipient_list,ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC,message,message_len);
 		torx_write(call_n) // 🟥🟥🟥
 		sodium_memzero(message,sizeof(message));
 		record_cache_clear_nolocks(call_n);

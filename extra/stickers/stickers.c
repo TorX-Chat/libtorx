@@ -62,8 +62,24 @@ severable if found in contradiction with the License or applicable law.
 
 #include "torx_internal.h"
 
+/*
+ Deleted stickers will not be re-requested in the same session, but will be re-requested in future sessions, if not saved.
+ This could be prevented by simply zeroing the sticker-gif-* value/len, instead of deleting the setting
+ However, that would leave a permanent/unremovable "cookie" in the client that would exist even after all peers and message history is deleted.
+
+ TODO TODO TODO Issue:
+ A unique sticker can be sent to two peers suspected to be the same client.
+ If one requests the sticker and the subsequent doesn't, while still requesting *other* stickers, it's basically confirmation that they are the same client.
+ This could be also utilized in group chats to determine who is who across multiple group chats.
+
+ Proposed solution:
+ Stickers must track the sender(s) and request complete data from *every* sender at least one time.
+
+ UI clients should probably also have a toggle to disable receiving stickers altogether.
+*/
+
 static inline int8_t sticker_invalid(const int s)
-{ // Sanity check
+{ // Sanity check. DO NOT NULL CHECK. A deleted sticker is not an invalid one.
 	int8_t ret = 0;
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
 	if(s < 0 || (uint32_t)s >= torx_allocation_len(sticker)/sizeof(struct sticker_list))
@@ -117,7 +133,7 @@ void sticker_save(const int s)
 }
 
 void sticker_delete(const int s)
-{
+{ // Do not clear .checksum or sticker will be repeatedly re-requested next time it is sent.
 	if(sticker_invalid(s))
 		return;
 	char setting_name[256];
@@ -130,6 +146,8 @@ void sticker_delete(const int s)
 	sodium_memzero(setting_name,sizeof(setting_name));
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 	torx_free((void*)&sticker[s].data);
+	torx_free((void*)&sticker[s].peers);
+	sticker[s].saved = 0;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 }
 
@@ -208,9 +226,14 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 		pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 		sticker[s].data = setting_value;
 	}
-	const size_t len = torx_allocation_len(sticker[s].data);
-	unsigned char *data_copy = torx_secure_malloc(len);
-	memcpy(data_copy,sticker[s].data,len);
+	size_t len = 0;
+	unsigned char *data_copy = NULL;
+	if(sticker[s].data)
+	{ // Necessary check because setting_value could be null
+		len = torx_allocation_len(sticker[s].data);
+		data_copy = torx_secure_malloc(len);
+		memcpy(data_copy,sticker[s].data,len);
+	}
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	if(threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all))
 		sticker_offload(s);
@@ -220,7 +243,7 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 }
 
 uint32_t sticker_retrieve_count(void)
-{
+{ // Note: This includes deleted stickers.
 	uint32_t count;
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
 	count = torx_allocation_len(sticker)/sizeof(struct sticker_list);

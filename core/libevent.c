@@ -199,23 +199,26 @@ static inline void peer_offline(struct event_strc *event_strc)
 	disconnect(event_strc);
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
+	consider_transfers_paused(event_strc);
 	const time_t last_seen = time(NULL); // current time
 	setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
-	peer_offline_cb(event_strc->n);
+	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
+	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
+	const uint8_t online = recvfd_connected + sendfd_connected;
 	const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	#ifndef NO_AUDIO_CALL
+	if(!online || peer_index < 0)
+		call_peer_leaving_all_except(event_strc->n,-1,-1);
+	#endif // NO_AUDIO_CALL
+	peer_offline_cb(event_strc->n); // must be after setting last_seen in memory
+	if(peer_index < 0) // Peer has been deleted (and possibly killed)
+		return;
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
 		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
-	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-	const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
-	const uint8_t online = recvfd_connected + sendfd_connected;
-	#ifndef NO_AUDIO_CALL
-	if(!online)
-		call_peer_leaving_all_except(event_strc->n,-1,-1);
-	#endif // NO_AUDIO_CALL
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(uint8_t cycle = 0; cycle < 2; cycle++)
@@ -244,7 +247,6 @@ static inline void peer_offline(struct event_strc *event_strc)
 				}
 			}
 		}
-	consider_transfers_paused(event_strc);
 }
 
 /*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *ctx)
@@ -1465,7 +1467,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					else if(protocol == ENUM_PROTOCOL_STICKER_HASH || protocol == ENUM_PROTOCOL_STICKER_HASH_PRIVATE || protocol == ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED)
 					{ // Received sticker
-						if(torx_allocation_len(event_strc->buffer) >= CHECKSUM_BIN_LEN && (threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all) || !threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all)))
+						if(torx_allocation_len(event_strc->buffer) >= CHECKSUM_BIN_LEN && threadsafe_read_uint8(&mutex_global_variable,&stickers_request_data) && (threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all) || !threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all)))
 						{
 							const int s = set_s((unsigned char*)event_strc->buffer);
 							if(s < 0)
@@ -1508,7 +1510,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST && protocol != ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
 						{
 							#ifndef NO_AUDIO_CALL
-							if(data_len >= 8 && (protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE))
+							if(data_len >= 8 && (protocol == ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE || protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE))
 							{
 								const time_t time = be32toh(align_uint32((void*)event_strc->buffer)); // this is for the CALL, not MESSAGE
 								const time_t nstime = be32toh(align_uint32((void*)&event_strc->buffer[4])); // this is for the CALL, not MESSAGE
@@ -1536,9 +1538,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 											call_c = c;
 									torx_unlock(call_n) // 🟩🟩🟩
 								} // NOT else if
-								if(call_c == -1 && (protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE))
+								if(call_c == -1 && (protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE))
 								{ // Received offer to join a new call
-									if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE)
+									if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE)
 										call_n = event_strc->n;
 									call_c = set_c(call_n,time,nstime); // reserve
 									if(call_c > -1)
@@ -1551,7 +1553,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								else if(call_c > -1)
 								{ // Existing call
-									if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE)
+									if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC)
 									{
 										torx_read(call_n) // 🟧🟧🟧
 										size_t iter = 0; // NOTE: copy of call_participant_iter_by_n
@@ -1574,9 +1576,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										else
 											error_printf(0,"Checkpoint Disgarding streaming audio because speaker is off");
 									}
-									else if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE)
+									else if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE)
 										call_peer_leaving(call_n, call_c, event_strc->n);
-									else // if(protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE)
+									else // if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE)
 										call_peer_joining(call_n, call_c, event_strc->n);
 								}
 								else

@@ -444,11 +444,11 @@ enum stream_types { // Stream > 0 is not stored in struct longer than necessary.
 enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed upon each message):
 		XXX New Method:	echo $(($RANDOM*2-$RANDOM%2)) */
 	#ifndef NO_AUDIO_CALL
-	ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN = 65303, // Start Time + nstime // This is also offer
-	ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE = 33037, // Start Time + nstime // This is also offer
-	ENUM_PROTOCOL_AAC_AUDIO_STREAM_PEERS = 16343, // Start Time + nstime + 56*participating
-	ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE = 23602, // Start Time + nstime
-	ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE = 54254, // Start Time + nstime + data
+	ENUM_PROTOCOL_AUDIO_STREAM_JOIN = 65303, // Start Time + nstime // This is also offer
+	ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE = 33037, // Start Time + nstime // This is also offer
+	ENUM_PROTOCOL_AUDIO_STREAM_PEERS = 16343, // Start Time + nstime + 56*participating
+	ENUM_PROTOCOL_AUDIO_STREAM_LEAVE = 23602, // Start Time + nstime
+	ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC = 54254, // Start Time + nstime + data (AAC)
 	#endif // NO_AUDIO_CALL
 	#ifndef NO_STICKERS
 	ENUM_PROTOCOL_STICKER_HASH = 29812,		// Sticker will be sending a sticker hash. If peer doesn't have the sticker, request.
@@ -943,6 +943,7 @@ extern uint8_t censored_region;
 #ifndef NO_STICKERS
 extern uint8_t stickers_save_all; // formerly called save_all_stickers
 extern uint8_t stickers_offload_all; // formerly called offload_all_stickers
+extern uint8_t stickers_request_data;
 extern uint8_t stickers_send_data; // formerly called send_sticker_data
 #endif // NO_STICKERS
 

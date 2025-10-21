@@ -232,8 +232,9 @@ sqlite3 *db_encrypted = {0};
 sqlite3 *db_messages = {0};
 uint8_t censored_region = 0;
 #ifndef NO_STICKERS
-uint8_t stickers_save_all = 0; // Do not default to 1 for legal reasons
+uint8_t stickers_save_all = 0; // (UI toggleable) Do not default to 1 for legal reasons
 uint8_t stickers_offload_all = 0; // Do not cache stickers in RAM. NOTE: If !stickers_save_all && stickers_offload_all, stickers data will not be requested.
+uint8_t stickers_request_data = 1; // (UI toggleable) request data from peers when they send a sticker, subject to above condition
 uint8_t stickers_send_data = 1; // not really that useful because if we don't send stickers, people can't request stickers.
 struct sticker_list *sticker = {0};
 #endif // NO_STICKERS
@@ -4701,11 +4702,11 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
 	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
 	#ifndef NO_AUDIO_CALL
-	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN, "AAC Audio Stream Join", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_MSG, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_JOIN_PRIVATE, "AAC Audio Stream Join Private", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_PM, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_PEERS, "AAC Audio Stream Peers", "", 0, 0, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_LEAVE, "AAC Audio Stream Leave", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AAC_AUDIO_STREAM_DATA_DATE, "AAC Audio Data Date", "", 0, 1, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_JOIN, "Audio Stream Join", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_MSG, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE, "Audio Stream Join Private", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_PM, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_PEERS, "Audio Stream Peers", "", 0, 0, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_LEAVE, "Audio Stream Leave", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC, "Audio Data Date AAC", "", 0, 1, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
 	#endif // NO_AUDIO_CALL
 	#ifndef NO_STICKERS
 	protocol_registration(ENUM_PROTOCOL_STICKER_HASH,"Sticker","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
