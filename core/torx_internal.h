@@ -98,17 +98,16 @@ severable if found in contradiction with the License or applicable law.
 #define AUTOMATICALLY_LOAD_CTRL 1 // 1 yes, 0 no. 1 is effectively default for -q mode. This is not a viable solution because adversaries can still monitor your disconnection times. 
 #define TOR_CTRL_IP "127.0.0.1" // Allowing this to be set by UI would be incredibly dangerous because users could set it to remote and expose their keys to unencrypted networks. Note: in *nix, we could use unix sockets.
 #define TOR_SOCKS_IP "127.0.0.1" // See above. If system tor is not using this IP for their socks port, we won't be able to connect because extract_port doesn't account for it.
-#define SPLIT_DELAY 1 // 0 is writing checkpoint every packet, 1 is every 120kb, 2 is every 240kb, ... Recommend 1+. XXX 0 may cause divide by zero errors/crash?
 #define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
-#define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
-#define REALISTIC_PEAK_TRANSFER_SPEED 50*1024*1024 // In bytes/s. Throws away bytes_per_second calculations above this level, for the purpose of calculating average transfer speed. It's fine and effective to set this as high as 1024*1024*1024 (1gb/s).
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
 #define BROADCAST_MAX_INBOUND_PER_PEER BROADCAST_QUEUE_SIZE/16 // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
 
 struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
+	#ifndef NO_FILE_TRANSFER
 	int file_n;
+	#endif // NO_FILE_TRANSFER
 	int f_i; // f value or i value, as appropriate? (cannot be required)
 	uint16_t packet_len; // size of packet, or unsent size of packet if partial
 	int p_iter; // initialize at -1
@@ -138,12 +137,6 @@ struct tor_call_strc {
 	void (*callback)(char*);
 	char *msg;
 };
-struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
-	int n;
-	char *path;
-	time_t modified;
-	size_t size;
-};
 struct pass_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	char *password_old;
 	char *password_new;
@@ -168,6 +161,7 @@ struct int_char { // XXX Do not sodium_malloc structs unless they contain sensit
 	const char *p;
 	const unsigned char *up;
 };
+#ifndef NO_FILE_TRANSFER
 struct file_request_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	int f;
@@ -176,24 +170,15 @@ struct file_request_strc { // XXX Do not sodium_malloc structs unless they conta
 	uint64_t start;
 	uint64_t end;
 };
-/* Internal Use Functions */
-void blake3_init(struct blake3 *);
-void blake3_update(struct blake3 *, const void *, size_t);
-void blake3_out(struct blake3 *, unsigned char *restrict, size_t);
-//int blake3_test(void);
+#endif // NO_FILE_TRANSFER
 
 /* torx_core.c */
-void zero_o(const int n,const int f,const int o);
-void zero_r(const int n,const int f,const int r);
-void zero_f(const int n,const int f);
 int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
 time_t message_find_since(const int n)__attribute__((warn_unused_result));
-void transfer_progress(const int n,const int f);
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
 char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
-uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
 void zero_n(const int n); // must be called from within locks
@@ -231,21 +216,8 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 int sql_delete_history(const int peer_index);
 int sql_delete_peer(const int peer_index);
 
-/* file_magic.c */
-void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
-int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
-int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
-void *peer_init(void *arg);
-int initialize_split_info(const int n,const int f);
-void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
-
 /* client_init.c */
-int file_remove_offer(const int file_n,const int f,const int peer_n);
-int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
-int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
-void file_request_internal(const int n,const int f,const int8_t fd_type);
-void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial);
-unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)__attribute__((warn_unused_result));
+void *peer_init(void *arg);
 
 /* serv_init.c */
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
@@ -267,6 +239,12 @@ evutil_socket_t socks_connect(const char *host, const char *port)__attribute__((
 #define DIGEST 32 // 256-bit digest in bytes.
 void sha3_hash(uint8_t digest[DIGEST], const uint64_t len, const uint8_t data[len]);
 
+/* blake3.c */
+void blake3_init(struct blake3 *);
+void blake3_update(struct blake3 *, const void *, size_t);
+void blake3_out(struct blake3 *, unsigned char *restrict, size_t);
+size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
+
 /* base32.c */
 typedef enum _baseencode_errno {
 	SUCCESS = 0,
@@ -279,6 +257,29 @@ typedef enum _baseencode_errno {
 } baseencode_error_t;
 size_t base32_encode(unsigned char *encoded_data,const unsigned char *user_data,const size_t data_len);
 unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err)__attribute__((warn_unused_result));
+
+#ifndef NO_FILE_TRANSFER
+extern int file_piece_p_iter;
+void initialize_f(const int n,const int f);
+void zero_o(const int n,const int f,const int o);
+void zero_r(const int n,const int f,const int r);
+void zero_f(const int n,const int f);
+void transfer_progress(const int n,const int f);
+uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
+void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
+int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
+int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
+int initialize_split_info(const int n,const int f);
+int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)__attribute__((warn_unused_result));
+void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
+int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,const int f,const int o,const int16_t section)__attribute__((warn_unused_result));
+int file_remove_offer(const int file_n,const int f,const int peer_n);
+int file_remove_request(const int file_n,const int f,const int peer_n,const int8_t fd_type);
+int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type);
+void file_request_internal(const int n,const int f,const int8_t fd_type);
+void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial);
+unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)__attribute__((warn_unused_result));
+#endif // NO_FILE_TRANSFER
 
 #ifndef NO_AUDIO_CALL
 int set_c(const int call_n,const time_t time,const time_t nstime)__attribute__((warn_unused_result));
@@ -307,7 +308,6 @@ extern char control_password_hash[61+1];
 extern evutil_socket_t tor_ctrl_socket;
 extern uint8_t sodium_initialized;
 extern int highest_ever_o;
-extern int file_piece_p_iter;
 extern unsigned char decryption_key[crypto_box_SEEDBYTES];
 extern uint32_t broadcast_history[BROADCAST_HISTORY_SIZE];
 extern pthread_rwlock_t mutex_packet;

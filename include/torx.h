@@ -157,8 +157,12 @@ severable if found in contradiction with the License or applicable law.
 #define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
 
 /* The following DO NOT CONTAIN + '\0' + [Time] + [NSTime] + Protocol + Signature */
+#ifndef NO_FILE_TRANSFER
 #define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
 #define FILE_REQUEST_LEN		CHECKSUM_BIN_LEN+sizeof(uint64_t)*2
+#define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
+#define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) *(splits + 1))
+#endif // NO_FILE_TRANSFER
 #define GROUP_OFFER_LEN			GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)
 #define GROUP_OFFER_FIRST_LEN		GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t) + 56 + crypto_sign_PUBLICKEYBYTES
 #define GROUP_OFFER_ACCEPT_LEN		GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES
@@ -169,8 +173,6 @@ severable if found in contradiction with the License or applicable law.
 #define GROUP_PRIVATE_ENTRY_REQUEST_LEN	56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES
 #define GROUP_BROADCAST_DECRYPTED_LEN	crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES
 #define GROUP_BROADCAST_LEN		crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN
-#define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
-#define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) *(splits + 1))
 #define PIPE_AUTH_LEN			56
 #define DATE_SIGN_LEN			sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES // time + nstime + sig
 
@@ -194,6 +196,7 @@ severable if found in contradiction with the License or applicable law.
 }
 
 /* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. XXX Note: Necessary to NOT wrap _mutex_lock in a torx_read because it WILL result in lock-order-inversion */
+#ifndef NO_FILE_TRANSFER
 #define torx_fd_lock(n,f) \
 { \
 	torx_read(n) \
@@ -209,6 +212,7 @@ severable if found in contradiction with the License or applicable law.
 	torx_unlock(n) \
 	pthread_mutex_unlock(mutex); \
 }
+#endif // NO_FILE_TRANSFER
 /* Convenience function for cloning a page */ // WARNING: Do not make a "torx_page_save". That would be a very bad thing because very much could change elsewhere between open and close.
 /* Usage example:
 	peer[0].owner = 6;
@@ -235,6 +239,7 @@ severable if found in contradiction with the License or applicable law.
 	if(fd) { fclose(fd); fd = NULL; } \
 }
 /* XXX This is the CORRECT order, do not modify. torx_fd_lock, THEN torx_read, localize, close, torx_write, globalize, torx_fd_unlock, otherwise races could occur. XXX */
+#ifndef NO_FILE_TRANSFER
 #define close_sockets(n,f) \
 { \
 	torx_fd_lock(n,f) \
@@ -247,7 +252,7 @@ severable if found in contradiction with the License or applicable law.
 	torx_unlock(n) \
 	torx_fd_unlock(n,f) \
 } // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
-
+#endif // NO_FILE_TRANSFER
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
 	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
@@ -282,6 +287,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint32_t pos; // amount sent TODO utilize for amount received also
 		time_t nstime; // nanoseconds (essentially after a decimal point of time)
 	} *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
+	#ifndef NO_FILE_TRANSFER
 	struct file_list { // XXX Group file transfers are held by GROUP_CTRL, whereas PM transfers are held by GROUP_PEER XXX
 		unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
 		char *filename;
@@ -319,10 +325,11 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 			uint64_t previously_sent; // Do not reset to 0. From exhausted requests. This ONLY updated when a request's transferred is reset to 0 (such as when a new request overtakes it on the same socket)
 		} *request;
 	} *file;
+	uint8_t blacklisted; // blacklisted for giving us corrupt file sections in group transfers // note: alternative names:  denylist/disallowed https://web.archive.org/web/20221219160303/https://itcommunity.stanford.edu/ehli
+	#endif // NO_FILE_TRANSFER
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES]; // ONLY use for CTRL + GROUP_PEER, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char invitation[crypto_sign_BYTES]; // PRIVATE groups only. ONLY for GROUP_PEER, 64 this the SIGNATURE on our onion, from who invited us, which we will need when connecting to other peers.
-	uint8_t blacklisted; // blacklisted for giving us corrupt file sections in group transfers // note: alternative names:  denylist/disallowed https://web.archive.org/web/20221219160303/https://itcommunity.stanford.edu/ehli
 	pthread_rwlock_t mutex_page;
 	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
 	pthread_t thrd_recv; // for torx_events (recv)
@@ -371,16 +378,6 @@ struct group_list { // XXX NOTE: individual peers will be in peer struct but pee
 	struct msg_list *msg_last;
 }; // NOTE: creator of the group will never ask anyone for peer_list because creator is always on everyone's peer list. Other users can periodically poll people for peer_list.
 extern struct group_list *group;
-
-#ifndef NO_STICKERS
-struct sticker_list {
-	unsigned char checksum[CHECKSUM_BIN_LEN];
-	int *peers; // Only these peers can request data, to prevent fingerprinting by sticker list.
-	unsigned char *data; // Cached
-	uint8_t saved; // Whether data exists on disk
-};
-extern struct sticker_list *sticker;
-#endif // NO_STICKERS
 
 struct protocol_info {
 	uint16_t protocol;
@@ -457,11 +454,11 @@ enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed up
 	ENUM_PROTOCOL_STICKER_REQUEST = 24931,		// hash
 	ENUM_PROTOCOL_STICKER_DATA_GIF = 46093,		// hash + data
 	#endif // NO_STICKERS
+	#ifndef NO_FILE_TRANSFER
 /*	ENUM_PROTOCOL_FILE_PREVIEW_PNG = 32343,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_PNG_DATE_SIGNED = 17878,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_GIF = 54526,			// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data
 	ENUM_PROTOCOL_FILE_PREVIEW_GIF_DATE_SIGNED = 47334,	// TODO TODO TODO small size preview. associated FILE_HASH + size_of_preview + data	*/
-	ENUM_PROTOCOL_UTF8_TEXT = 32896,
 	ENUM_PROTOCOL_FILE_OFFER = 44443,
 	ENUM_PROTOCOL_FILE_OFFER_PRIVATE = 62747,
 	ENUM_PROTOCOL_FILE_OFFER_GROUP = 32918,			// Uses hash of section hashes, not whole file hash, unlike normal file_offer
@@ -473,8 +470,10 @@ enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed up
 	ENUM_PROTOCOL_FILE_REQUEST = 27493,
 	ENUM_PROTOCOL_FILE_PAUSE = 38490,
 	ENUM_PROTOCOL_FILE_CANCEL = 22461, // cancel or reject
+	#endif // NO_FILE_TRANSFER
 	ENUM_PROTOCOL_PROPOSE_UPGRADE = 57382, // propose, counter offer, or accept version upgrade TODO implement using change_nick() which has an untested version upgrade functionality
 	ENUM_PROTOCOL_KILL_CODE = 41342,
+	ENUM_PROTOCOL_UTF8_TEXT = 32896,
 //	ENUM_PROTOCOL_UTF8_TEXT_SIGNED = 19150,
 	ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED = 47208, // Timestamp acts as a salt to prevent relay attacks, Tor project does this with all signed messages.
 
@@ -534,7 +533,7 @@ enum message_statuses
 //	ENUM_MESSAGE_DONE = 5 // file related (BAD, too vague)
 // TODO these are saved to disk... for file related, we need more than this. We need all file statuses, not just done. Not sure how to implement yet
 };/* TODO set other .status, such as finished (ifin,ofin) and paused (ipau,opau) */
-
+#ifndef NO_FILE_TRANSFER
 enum file_statuses
 { // NOTE: We don't have a paused status, currently. Paused is ENUM_FILE_INACTIVE_ACCEPTED, which is the default as soon as file_path is set. There is no pause.
 	ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND = 0,
@@ -545,18 +544,15 @@ enum file_statuses
 	ENUM_FILE_INACTIVE_CANCELLED = 5,
 	ENUM_FILE_INACTIVE_COMPLETE = 6
 };
-
+#endif // NO_FILE_TRANSFER
 /* Callbacks */
 extern void (*initialize_n_registered)(const int n);
 extern void (*initialize_i_registered)(const int n,const int i);
-extern void (*initialize_f_registered)(const int n,const int f);
 extern void (*initialize_g_registered)(const int g);
 extern void (*shrinkage_registered)(const int n,const int shrinkage);
-extern void (*expand_file_struc_registered)(const int n,const int f);
 extern void (*expand_message_struc_registered)(const int n,const int i);
 extern void (*expand_peer_struc_registered)(const int n);
 extern void (*expand_group_struc_registered)(const int g);
-extern void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred);
 extern void (*change_password_registered)(const int value);
 extern void (*incoming_friend_request_registered)(const int n);
 extern void (*onion_deleted_registered)(const uint8_t owner,const int n);
@@ -582,14 +578,11 @@ extern void (*unknown_registered)(const int n,const uint16_t protocol,char *data
 /* Callback Setters */
 void initialize_n_setter(void (*callback)(int));
 void initialize_i_setter(void (*callback)(int,int));
-void initialize_f_setter(void (*callback)(int,int));
 void initialize_g_setter(void (*callback)(int));
 void shrinkage_setter(void (*callback)(int,int));
-void expand_file_struc_setter(void (*callback)(int,int));
 void expand_message_struc_setter(void (*callback)(int,int));
 void expand_peer_struc_setter(void (*callback)(int));
 void expand_group_struc_setter(void (*callback)(int));
-void transfer_progress_setter(void (*callback)(int, int, uint64_t));
 void change_password_setter(void (*callback)(int));
 void incoming_friend_request_setter(void (*callback)(int));
 void onion_deleted_setter(void (*callback)(uint8_t,int));
@@ -615,14 +608,11 @@ void unknown_setter(void (*callback)(int,uint16_t,char*,uint32_t));
 /* WARNING: All callbacks *must* allocate data for pointers and rely on the receiver to free because the callback may not be triggered syncronously (ex: Flutter) */
 void initialize_n_cb(const int n);
 void initialize_i_cb(const int n,const int i);
-void initialize_f_cb(const int n,const int f);
 void initialize_g_cb(const int g);
 void shrinkage_cb(const int n,const int shrinkage);
-void expand_file_struc_cb(const int n,const int f);
 void expand_message_struc_cb(const int n,const int i);
 void expand_peer_struc_cb(const int n);
 void expand_group_struc_cb(const int g);
-void transfer_progress_cb(const int n,const int f,const uint64_t transferred);
 void change_password_cb(const int value);
 void incoming_friend_request_cb(const int n);
 void onion_deleted_cb(const uint8_t owner,const int n);
@@ -726,19 +716,11 @@ int message_load_more(const int n);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)__attribute__((warn_unused_result));
 void set_time(time_t *time,time_t *nstime);
 char *message_time_string(const int n,const int i)__attribute__((warn_unused_result));
-char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
-uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
-uint64_t calculate_transferred_inbound(const int n,const int f)__attribute__((warn_unused_result));
-uint64_t calculate_transferred_outbound(const int n,const int f,const int r)__attribute__((warn_unused_result));
 int vptoi(const void* arg)__attribute__((warn_unused_result));
 void *itovp(const int i)__attribute__((warn_unused_result));
 int set_n(const int peer_index,const char *onion)__attribute__((warn_unused_result));
 int set_g(const int n,const void *arg)__attribute__((warn_unused_result));
-int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)__attribute__((warn_unused_result));
 int set_g_from_i(uint32_t *untrusted_peercount,const int n,const int i)__attribute__((warn_unused_result));
-int set_f_from_i(int *file_n,const int n,const int i)__attribute__((warn_unused_result));
-int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
-int set_r(const int n,const int f,const int passed_requester_n)__attribute__((warn_unused_result));
 void random_string(char *destination,const size_t destination_size);
 int pid_kill(const pid_t pid,const int signal);
 void torrc_save(const char *torrc_content_local);
@@ -772,6 +754,14 @@ char *onion_from_privkey(const char *privkey)__attribute__((warn_unused_result))
 char *torxid_from_onion(const char *onion)__attribute__((warn_unused_result));
 char *onion_from_torxid(const char *torxid)__attribute__((warn_unused_result));
 int custom_input(const uint8_t owner,const char *identifier,const char *privkey);
+int peer_save(const char *unstripped_peerid,const char *peernick);
+void peer_accept(const int n);
+void change_nick(const int n,const char *freshpeernick);
+uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
+void destroy_file(const char *file_path); // do not use directly for deleting history
+char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
+void takedown_onion(const int peer_index,const int delete);
+void block_peer(const int n);
 
 /* sql.c */
 void message_offload(const int n);
@@ -783,30 +773,11 @@ void message_extra(const int n,const int i,const void *data,const uint32_t data_
 void sql_populate_setting(const int force_plaintext);
 int sql_delete_setting(const int force_plaintext,const int peer_index,const char *setting_name);
 
-/* file_magic.c */
-int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
-int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
-int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
-int file_status_get(const int n,const int f)__attribute__((warn_unused_result));
-int peer_save(const char *unstripped_peerid,const char *peernick);
-void peer_accept(const int n);
-void change_nick(const int n,const char *freshpeernick);
-uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
-void destroy_file(const char *file_path); // do not use directly for deleting history
-size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
-char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
-void takedown_onion(const int peer_index,const int delete);
-void block_peer(const int n);
-
 /* client_init.c */
 int message_resend(const int n,const int i);
 int message_send_select(const uint32_t target_count,const int *target_list,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 int message_send(const int target_n,const uint16_t protocol,const void *arg,const uint32_t base_message_len);
 void kill_code(const int n,const char *explanation); // must accept -1
-int file_send(const int n,const char *path);
-void file_set_path(const int n,const int f,const char *path);
-void file_accept(const int n,const int f);
-void file_cancel(const int n,const int f);
 
 /* onion_gen.c */
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick);
@@ -837,6 +808,38 @@ uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_un
 	void *return_png(size_t *size_ptr,const struct qr_data *arg)__attribute__((warn_unused_result));
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
 #endif // NO_QR_GENERATOR
+
+#ifndef NO_FILE_TRANSFER
+extern char *download_dir;
+extern char *split_folder;
+extern uint8_t auto_resume_inbound;
+extern double file_progress_delay;
+extern void (*initialize_f_registered)(const int n,const int f);
+extern void (*expand_file_struc_registered)(const int n,const int f);
+extern void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred);
+void initialize_f_setter(void (*callback)(int,int));
+void initialize_f_cb(const int n,const int f);
+void expand_file_struc_setter(void (*callback)(int,int));
+void expand_file_struc_cb(const int n,const int f);
+void transfer_progress_setter(void (*callback)(int, int, uint64_t));
+void transfer_progress_cb(const int n,const int f,const uint64_t transferred);
+char *file_progress_string(const int n,const int f)__attribute__((warn_unused_result));
+uint64_t calculate_transferred_inbound(const int n,const int f)__attribute__((warn_unused_result));
+uint64_t calculate_transferred_outbound(const int n,const int f,const int r)__attribute__((warn_unused_result));
+uint64_t calculate_transferred(const int n,const int f)__attribute__((warn_unused_result));
+int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)__attribute__((warn_unused_result));
+int set_f_from_i(int *file_n,const int n,const int i)__attribute__((warn_unused_result));
+int set_o(const int n,const int f,const int passed_offerer_n)__attribute__((warn_unused_result));
+int set_r(const int n,const int f,const int passed_requester_n)__attribute__((warn_unused_result));
+int file_is_active(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_cancelled(const int n,const int f)__attribute__((warn_unused_result));
+int file_is_complete(const int n,const int f)__attribute__((warn_unused_result));
+int file_status_get(const int n,const int f)__attribute__((warn_unused_result));
+int file_send(const int n,const char *path);
+void file_set_path(const int n,const int f,const char *path);
+void file_accept(const int n,const int f);
+void file_cancel(const int n,const int f);
+#endif // NO_FILE_TRANSFER
 
 #ifndef NO_AUDIO_CALL
 extern void (*initialize_peer_call_registered)(const int call_n,const int call_c);
@@ -872,6 +875,17 @@ int record_cache_add(const int call_n,const int call_c,const uint32_t cache_mini
 #endif // NO_AUDIO_CALL
 
 #ifndef NO_STICKERS
+struct sticker_list {
+	unsigned char checksum[CHECKSUM_BIN_LEN];
+	int *peers; // Only these peers can request data, to prevent fingerprinting by sticker list.
+	unsigned char *data; // Cached
+	uint8_t saved; // Whether data exists on disk
+};
+extern struct sticker_list *sticker;
+extern uint8_t stickers_save_all;
+extern uint8_t stickers_offload_all;
+extern uint8_t stickers_request_data;
+extern uint8_t stickers_send_data;
 int set_s(const unsigned char checksum[CHECKSUM_BIN_LEN])__attribute__((warn_unused_result));
 void sticker_save(const int s);
 void sticker_delete(const int s);
@@ -916,8 +930,6 @@ extern char *conjure_location;
 extern char *native_library_directory;
 extern char *tor_data_directory;
 extern char *tor_location;
-extern char *download_dir;
-extern char *split_folder;
 extern uint32_t sing_expiration_days;
 extern uint32_t mult_expiration_days;
 extern uint32_t show_log_messages;
@@ -928,11 +940,9 @@ extern uint8_t shorten_torxids;
 extern uint8_t suffix_length;
 extern uint32_t global_threads;
 extern uint32_t threads_max;
-extern uint8_t auto_resume_inbound;
 extern uint8_t kill_delete;
 extern uint8_t hide_blocked_group_peer_messages;
 extern uint8_t log_pm_according_to_group_setting;
-extern double file_progress_delay;
 extern pthread_attr_t ATTR_DETACHED;
 extern pthread_rwlock_t mutex_debug_level;
 extern pthread_rwlock_t mutex_global_variable;
@@ -940,11 +950,5 @@ extern pthread_rwlock_t mutex_protocols;
 extern pthread_rwlock_t mutex_expand;
 extern pthread_rwlock_t mutex_expand_group;
 extern uint8_t censored_region;
-#ifndef NO_STICKERS
-extern uint8_t stickers_save_all; // formerly called save_all_stickers
-extern uint8_t stickers_offload_all; // formerly called offload_all_stickers
-extern uint8_t stickers_request_data;
-extern uint8_t stickers_send_data; // formerly called send_sticker_data
-#endif // NO_STICKERS
 
 #endif // TORX_PUBLIC_HEADERS

@@ -71,7 +71,7 @@ cd /usr/include/event2/ ; grep -a evbuffer_free *
 re: evbuffer_lock "You only need to lock the evbuffer manually when you have more than one operation that need to execute without another thread butting in." https://libevent.org/libevent-book/Ref7_evbuffer.html
 
 XXX	To Do		XXX
-	* having functions that read/write file data to disk on the same thread as libevent might be a bottleneck, considering the presumably limited buffer size of sockets
+	* having functions that read/write file data to disk on the same thread as libevent might be a bottleneck, considering the limited buffer size of sockets
 	* test sending the same file to multiple people at once. not sure what will happen. should be OK because they have different .fd
 	* delete SING from file without taking down ( takedown_onion(onion,2); ) after receiving connection. Ensures that no funny business can happen. Then takedown_onion(onion,0); after handshake.
 	* we noted that some messages get sent on sockets that are in fact down (but tor binary doesn't know it yet)
@@ -84,17 +84,6 @@ XXX	To Do		XXX
 
 //TODO: see "KNOWN BUG:" On a successful sing or MULT, the socket does not close due to the CTRL coming up. It is not the same socket nor the same port. We don't know what is going on.
 // Something to do with serv_init being a child process, I think. The socket doesn't close until the child process that called it ends.
-
-static inline int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)
-{ // WARNING: Must handle -1 return by disgarding packet. Note: packet_start is 0 offset byte number.
-	if(packet_start >= size)
-		return -1;
-	int16_t section = splits+1;
-	uint64_t section_start = 0;
-	while(packet_start < (section_start = calculate_section_start(NULL,size,splits,section)))
-		section--; // XXX DO NOT MODIFY WITHOUT EXTENSIVE TESTING XXX
-	return section;
-}
 
 static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 { // Internal Function only. For handling or initializing a disconnection
@@ -155,6 +144,7 @@ static inline void peer_online(struct event_strc *event_strc)
 		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
 	}
+	#ifndef NO_FILE_TRANSFER
 	if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound)) // XXX Experimental 2023/10/29: Might need to prevent FILE_REQUEST from being sent when we are potentially already receiving data... not sure if this will be an issue
 		for(uint8_t cycle = 0; cycle < 2; cycle++)
 		{ // First event_strc->n, then event_strc->group_n if applicable
@@ -172,19 +162,7 @@ static inline void peer_online(struct event_strc *event_strc)
 			}
 			torx_unlock(file_n) // 🟩🟩🟩
 		}
-}
-
-static inline void consider_transfers_paused(struct event_strc *event_strc)
-{ // TODO Question: we typically call section_unclaim before we call file_remove_request. Is that the ideal order?
-	if(!event_strc) // Sanity check
-		return;
-	if(event_strc->group_n > -1) // Unclaim any sections on this socket. (should go last)
-	{
-		section_unclaim(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound Group transfers from this peer
-		file_remove_request(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound Group transfers to this peer
-	}
-	section_unclaim(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound PM or P2P transfers from this peer
-	file_remove_request(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound PM or P2P transfers to this peer
+	#endif // NO_FILE_TRANSFER
 }
 
 static inline void peer_offline(struct event_strc *event_strc)
@@ -199,7 +177,15 @@ static inline void peer_offline(struct event_strc *event_strc)
 	disconnect(event_strc);
 	if(event_strc->owner != ENUM_OWNER_CTRL && event_strc->owner != ENUM_OWNER_GROUP_PEER)
 		return; // not CTRL
-	consider_transfers_paused(event_strc);
+	#ifndef NO_FILE_TRANSFER // was consider_transfers_paused()
+	if(event_strc->group_n > -1) // Unclaim any sections on this socket. (should go last)
+	{ // TODO Question: we typically call section_unclaim before we call file_remove_request. Is that the ideal order?
+		section_unclaim(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound Group transfers from this peer
+		file_remove_request(event_strc->group_n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound Group transfers to this peer
+	}
+	section_unclaim(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all inbound PM or P2P transfers from this peer
+	file_remove_request(event_strc->n,-1,event_strc->n,event_strc->fd_type); // Pause all outbound PM or P2P transfers to this peer
+	#endif // NO_FILE_TRANSFER
 	const time_t last_seen = time(NULL); // current time
 	setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
 	const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
@@ -358,26 +344,35 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 		const int p_iter = packet[o].p_iter;
 		if(p_iter < 0) // Should never happen. No good way to handle other than to disconnect and return.
 			error_simple(-1,"p_iter is negative in packet_removal. Potentially serious coding error. Report this.");
-		const int8_t packet_fd_type = packet[o].fd_type;
-		const int packet_file_n = packet[o].file_n;
 		const int packet_f_i = packet[o].f_i;
 		const uint16_t packet_len = packet[o].packet_len;
 		const time_t packet_time = packet[o].time;
 		const time_t packet_nstime = packet[o].nstime;
-		if(!drain_len && packet[o].p_iter != file_piece_p_iter && socket_utilized != packet_f_i)
+		if(!drain_len && socket_utilized != packet_f_i)
 		{ // Supposed to remove a non-file packet, but the socket_utilized doesn't match
-			int other_socket_utilized;
-			torx_read(event_strc->n) // 🟧🟧🟧
-			if(event_strc->fd_type)
-				other_socket_utilized = peer[event_strc->n].socket_utilized[0];
-			else
-				other_socket_utilized = peer[event_strc->n].socket_utilized[1];
-			torx_unlock(event_strc->n) // 🟩🟩🟩
-			error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%ld nstime=%ld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,packet[o].time,packet[o].nstime);
-			break;
+			#ifndef NO_FILE_TRANSFER
+			if(packet[o].p_iter != file_piece_p_iter)
+			{
+			#endif // NO_FILE_TRANSFER
+				int other_socket_utilized;
+				torx_read(event_strc->n) // 🟧🟧🟧
+				if(event_strc->fd_type)
+					other_socket_utilized = peer[event_strc->n].socket_utilized[0];
+				else
+					other_socket_utilized = peer[event_strc->n].socket_utilized[1];
+				torx_unlock(event_strc->n) // 🟩🟩🟩
+				error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%ld nstime=%ld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,packet[o].time,packet[o].nstime);
+				break;
+			#ifndef NO_FILE_TRANSFER
+			}
+			#endif // NO_FILE_TRANSFER
 		}
-		packet[o].n = -1; // release it for re-use.
+		#ifndef NO_FILE_TRANSFER
+		const int8_t packet_fd_type = packet[o].fd_type;
+		const int packet_file_n = packet[o].file_n;
 		packet[o].file_n = -1;
+		#endif // NO_FILE_TRANSFER
+		packet[o].n = -1; // release it for re-use.
 		packet[o].f_i = INT_MIN; // release it for re-use.
 		packet[o].packet_len = 0; // release it for re-use.
 		packet[o].p_iter = -1; // release it for re-use.
@@ -398,6 +393,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 			const char *name = protocols[p_iter].name;
 			const uint8_t logged = protocols[p_iter].logged;
 			pthread_rwlock_unlock(&mutex_protocols); // 🟩
+			#ifndef NO_FILE_TRANSFER
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{
 				const int f = packet_f_i;
@@ -433,6 +429,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 			}
 			else
 			{ // All protocols that contain a message size on the first packet of a message
+			#endif // NO_FILE_TRANSFER
 				const int i = packet_f_i;
 				torx_write(event_strc->n) // 🟥🟥🟥 Warning: don't use getter/setter for ++/+= operations. Increases likelihood of race condition.
 				if(peer[event_strc->n].message[i].pos == 0) // first packet of a message, has message_len prefix
@@ -546,17 +543,19 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							printf("-------------Same n, same fd_type-------------\n");
 							printf("Checkpoint packet[%d].name:	%s\n",ooo,o_name);
 							printf("Checkpoint packet[%d].n:		%d\n",ooo,packet[ooo].n);
+							#ifndef NO_FILE_TRANSFER
 							printf("Checkpoint packet[%d].file_n:		%d\n",ooo,packet[ooo].file_n);
+							#endif // NO_FILE_TRANSFER
 							printf("Checkpoint packet[%d].f_i:		%d\n",ooo,packet[ooo].f_i);
 							printf("Checkpoint packet[%d].packet_len:	%u\n",ooo,packet[ooo].packet_len);
 							printf("Checkpoint packet[%d].fd_type:		%d\n",ooo,packet[ooo].fd_type);
 							printf("Checkpoint packet[%d].time:		%ld\n",ooo,(long)packet[ooo].time);
 							printf("Checkpoint packet[%d].nstime:		%ld\n",ooo,(long)packet[ooo].nstime);
 							printf("-----------If not _FILE_PIECE, bug!-----------\n");
+							#ifndef NO_FILE_TRANSFER
 							if(packet[ooo].p_iter != file_piece_p_iter) // Severe coding error
 								error_simple(0,"socket_utilized failed to prevent two non-file packets on the same n+fd_type from getting into our packet struct. Severe coding error. Report this.");
-							else
-								error_simple(0,"Error cause unknown. Coding error. Report this.");
+							#endif // NO_FILE_TRANSFER
 						}
 					pthread_rwlock_unlock(&mutex_packet); // 🟩
 					goto carry_on_regardless; // SOMETIMES prevents illegal read in send_prep (beyond message len)
@@ -565,9 +564,15 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				{
 				//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
 				//	printf("."); fflush(stdout);
+					#ifndef NO_FILE_TRANSFER
 					send_prep(event_strc->n,packet_file_n,i,p_iter,event_strc->fd_type); // send next packet on same fd
+					#else
+					send_prep(event_strc->n,-1,i,p_iter,event_strc->fd_type); // send next packet on same fd
+					#endif // NO_FILE_TRANSFER
 				}
+			#ifndef NO_FILE_TRANSFER
 			}
+			#endif // NO_FILE_TRANSFER
 		}
 		pthread_rwlock_wrlock(&mutex_packet); // 🟥
 	}
@@ -707,7 +712,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			if(continued == 1)
 			{// we came here from continue, so we should flush out whatever complete (but worthless) packet was in the buffer
 				sodium_memzero(read_buffer,packet_len);
+				#ifndef NO_FILE_TRANSFER
 				if(protocol != ENUM_PROTOCOL_FILE_PIECE) // Must not 0 on ENUM_PROTOCOL_FILE_PIECE because it doesn't use buffer. Zeroing will interfere with other protocols which do.
+				#endif // NO_FILE_TRANSFER
 					torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
 			}
 			else
@@ -733,9 +740,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			}
 			protocol = be16toh(align_uint16((void*)&read_buffer[cur]));
 			cur += 2; // 2 --> 4
+			#ifndef NO_FILE_TRANSFER
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 				minimum_length += 4 + 8; // truncated checksum + start (starting position for file piece)
-			else if(torx_allocation_len(event_strc->buffer) == 0)
+			else // XXX NOTE: This becomes 'else if' (tested fine with clang/GCC)
+			#endif // NO_FILE_TRANSFER
+				if(torx_allocation_len(event_strc->buffer) == 0)
 				minimum_length += 4; // length of message, if we don't already have a partial message in buffer
 			if(packet_len < minimum_length)
 			{ // TODO make protocol specific minimum lengths?
@@ -756,6 +766,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 				}
 			}
+			#ifndef NO_FILE_TRANSFER
 			if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 			{ // Received Message type: Raw File data // TODO we do too much processing here. this might get CPU intensive.
 				int file_n = event_strc->n;
@@ -869,6 +880,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			}
 			else
 			{ // Process messages
+			#endif // NO_FILE_TRANSFER
 				int8_t complete = 0; // if incomplete, do not print it or save it to file yet
 				uint32_t buffer_len = torx_allocation_len(event_strc->buffer);
 				if(buffer_len == 0)
@@ -905,7 +917,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
 					const uint32_t date_len = protocols[p_iter].date_len;
 					const uint32_t signature_len = protocols[p_iter].signature_len;
+					#ifndef NO_FILE_TRANSFER
 					const uint8_t file_offer = protocols[p_iter].file_offer;
+					#endif // NO_FILE_TRANSFER
 					const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
 					const uint8_t utf8 = protocols[p_iter].utf8;
 					const uint8_t group_pm = protocols[p_iter].group_pm;
@@ -913,6 +927,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					const uint8_t stream = protocols[p_iter].stream;
 					const char *name = protocols[p_iter].name;
 					pthread_rwlock_unlock(&mutex_protocols); // 🟩
+					uint8_t discard_after_processing = 0; // Certain protocols are utilized by library only and do not need to be notified to the UI
 					if(buffer_len < null_terminated_len + date_len + signature_len)
 					{
 						error_printf(0,"Unreasonably short message received from peer. Discarding entire message protocol: %u owner: %u size: %u of reported: %u",protocol,event_strc->owner,buffer_len,event_strc->untrusted_message_len);
@@ -968,6 +983,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								/* TODO If ANY issues EVER arise due to race conditions in this block, replace ALL locks/unlocks with a single pthread_rwlock_unlock(&mutex_expand); TODO */ 
 								begin_cascade(event_strc);
 								peer_online(event_strc);
+								discard_after_processing = 1;
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST) // TODO some rate limiting might be prudent
 							{
@@ -1092,10 +1108,32 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						nn = group_peer_n; // save message to GROUP_PEER not GROUP_CTRL so that we know who sent it without having to determine it again
 					else
 						nn = event_strc->n;
-					if(file_offer)
+					if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
+					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
+						if(buffer_len != sizeof(uint16_t) + crypto_sign_BYTES)
+						{
+							error_simple(0,"Propose upgrade of bad size received.");
+							continue;
+						}
+						const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
+						const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
+						if(new_peerversion > peerversion)
+						{ // Note: currently not facilitating downgrades because we would have to take down sendfd
+							error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
+							setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
+							sql_update_peer(event_strc->n);
+						/*	if(event_strc->fd_type == 0 && new_peerversion < 2)
+								event_strc->authenticated = 0; */
+						}
+						discard_after_processing = 1;
+					}
+					#ifndef NO_FILE_TRANSFER
+					else if(file_offer)
 					{ // Receive File offer, any type
 						if(process_file_offer_inbound(nn,p_iter,event_strc->buffer,buffer_len) == -1)
 							continue; // important to discard invalid offer
+						if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+							discard_after_processing = 1;
 					}
 					else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 					{ // Receive File Request (acceptance) // TODO possible source of race conditions if actively transferring when received? (common scenario, not sure how dangerous)
@@ -1224,7 +1262,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							continue;
 						}
 						if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST)
+						{
 							file_offer_internal(event_strc->n,file_n,f,0); // Respond with an offer so that the peer can get the info they need
+							discard_after_processing = 1;
+						}
 						else if(protocol == ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
 						{ // Respond with a _PARTIAL if we have the file
 							torx_read(file_n) // 🟧🟧🟧
@@ -1238,28 +1279,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								file_request_strc.f = f;
 								message_send(event_strc->n,ENUM_PROTOCOL_FILE_OFFER_PARTIAL,&file_request_strc,FILE_OFFER_PARTIAL_LEN);
 							}
+							discard_after_processing = 1;
 						}
 						else // if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 							process_pause_cancel(event_strc->n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
 					}
-					else if(protocol == ENUM_PROTOCOL_PROPOSE_UPGRADE)
-					{ // Receive Upgrade Proposal // Note: as of current, the effect of this will likely be delayed until next program start
-						if(buffer_len != sizeof(uint16_t) + crypto_sign_BYTES)
-						{
-							error_simple(0,"Propose upgrade of bad size received.");
-							continue;
-						}
-						const uint16_t new_peerversion = be16toh(align_uint16((void*)&event_strc->buffer[0]));
-						const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
-						if(new_peerversion > peerversion)
-						{ // Note: currently not facilitating downgrades because we would have to take down sendfd
-							error_printf(0,"Received an upgrade proposal: %u > %u",new_peerversion,peerversion);
-							setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion),&new_peerversion,sizeof(new_peerversion));
-							sql_update_peer(event_strc->n);
-						/*	if(event_strc->fd_type == 0 && new_peerversion < 2)
-								event_strc->authenticated = 0; */
-						}
-					}
+					#endif // NO_FILE_TRANSFER
 					else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
 					{ // Receive GROUP_OFFER
 						if((protocol == ENUM_PROTOCOL_GROUP_OFFER && buffer_len != GROUP_OFFER_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST && buffer_len != GROUP_OFFER_FIRST_LEN))
@@ -1507,8 +1532,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					if(stream)
 					{ // certain protocols discarded after processing, others stream_cb to UI
 						const uint32_t data_len = buffer_len - (/*null_terminated_len + */date_len + signature_len); // TODO unclear why we don't do this after if(complete) and only do it in if(stream)
-						if(protocol != ENUM_PROTOCOL_PIPE_AUTH && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL && protocol != ENUM_PROTOCOL_PROPOSE_UPGRADE && protocol != ENUM_PROTOCOL_FILE_INFO_REQUEST && protocol != ENUM_PROTOCOL_FILE_PARTIAL_REQUEST)
-						{
+						if(!discard_after_processing)
+						{ // Further processing or stream_cb
 							#ifndef NO_AUDIO_CALL
 							if(data_len >= 8 && (protocol == ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE || protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE))
 							{
@@ -1718,7 +1743,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				else
 					continued = 0; // important or oversized messages will break
+			#ifndef NO_FILE_TRANSFER
 			}
+			#endif // NO_FILE_TRANSFER
 		} // We only leave while() in the event of an error (via break;)
 		breakpoint();
 		torx_free((void*)&event_strc->buffer); // Necessary because this will be re-used on fd_type = 0

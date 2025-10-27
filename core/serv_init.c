@@ -69,7 +69,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		error_printf(0,"Sanity check failure 1 in send_prep: %d %d %d %d %d. Coding error. Report this.",n,file_n,f_i,p_iter,fd_type);
 		return -1;
 	}
-	int f = -1, i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
+	#ifndef NO_FILE_TRANSFER
+	int f = -1;
+	#endif // NO_FILE_TRANSFER
+	int i = INT_MIN; // DO NOT INITIALIZE, we want the warnings... but clang is not playing nice so we have to
 	uint64_t start = 0;
 	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
@@ -82,6 +85,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		error_printf(0,"Questionable action in send_prep, possibly caused by a protocol being sent to a GROUP_CTRL without being registered as group_msg / ENUM_EXCLUSIVE_GROUP_MSG. Target owner=%u. Coding error. Report this.",owner);
 		goto error;
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 	{
 		f = f_i;
@@ -91,6 +95,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			goto error;
 		}
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		i = f_i;
@@ -179,6 +184,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	if(getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status)) == ENUM_STATUS_FRIEND)
 	{ // TODO 2024/03/24 there can be a race on output. it can be free'd by libevent between earlier check and usage.
 		uint16_t packet_len = 0;
+		#ifndef NO_FILE_TRANSFER
 		if(protocol == ENUM_PROTOCOL_FILE_PIECE)
 		{ // only f is initialized
 			const int r = set_r(file_n,f,n);
@@ -242,6 +248,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		}
 		else
 		{ // only i is initialized
+		#endif // NO_FILE_TRANSFER
 			// printf(YELLOW"Checkpoint send_prep: n=%d i=%d\n"RESET,n,i); // FSojoasfoSO
 			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_mechanics = protocols[p_iter].group_mechanics;
@@ -291,7 +298,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_read(n) // 🟧🟧🟧
 			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
 			torx_unlock(n) // 🟩🟩🟩
+		#ifndef NO_FILE_TRANSFER
 		}
+		#endif // NO_FILE_TRANSFER
 		struct evbuffer *output = NULL; // XXX If getting issues at bufferevent_get_output in valgrind, it means .bev_recv or .bev_send is not being NULL'd properly in libevent after closing
 		struct bufferevent *bev = NULL;
 		torx_read(n) // 🟧🟧🟧
@@ -321,7 +330,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				error_simple(-1,"Fatal error. Exceeded size of SIZE_PACKET_STRC. Report this.");
 			}
 			packet[o].n = n; // claim it. set first.
+			#ifndef NO_FILE_TRANSFER
 			packet[o].file_n = file_n;
+			#endif // NO_FILE_TRANSFER
 			packet[o].packet_len = packet_len;
 			packet[o].fd_type = fd_type;
 			packet[o].f_i = f_i;
@@ -344,7 +355,11 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 	else
 		error_simple(0,"Send prep failed for reasons.");
 	error: {}
-	if(protocol != ENUM_PROTOCOL_FILE_PIECE && fd_type > -1)
+	#ifndef NO_FILE_TRANSFER
+	if(protocol == ENUM_PROTOCOL_FILE_PIECE)
+		return -1; // ENUM_PROTOCOL_FILE_PIECE does not utilize socket_utilized
+	#endif // NO_FILE_TRANSFER
+	if(fd_type > -1)
 	{
 		torx_read(n) // 🟧🟧🟧
 		const int socket_utilized = peer[n].socket_utilized[fd_type];

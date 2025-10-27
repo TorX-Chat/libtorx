@@ -453,7 +453,9 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 	const uint32_t date_len = protocols[p_iter].date_len;
 	const uint32_t signature_len = protocols[p_iter].signature_len;
 	const uint8_t group_msg = protocols[p_iter].group_msg;
+	#ifndef NO_FILE_TRANSFER
 	const uint8_t file_offer = protocols[p_iter].file_offer;
+	#endif // NO_FILE_TRANSFER
 	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	uint32_t message_len;
 	char *tmp_message;
@@ -505,7 +507,13 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		}
 		if(signature_len)
 			memcpy(&tmp_message[message_len - signature_length],signature,signature_length); // affix signature, if applicable
-		if(file_offer)
+		if((protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST) && stat != ENUM_MESSAGE_RECV)
+		{ // Outbound group offer. Must add target peer to invitees.
+			const int g = set_g(-1,tmp_message);
+			invitee_add(g,n);
+		}
+		#ifndef NO_FILE_TRANSFER
+		else if(file_offer)
 		{
 			if(stat == ENUM_MESSAGE_RECV)
 			{
@@ -537,11 +545,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 				}
 			}
 		}
-		else if((protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST) && stat != ENUM_MESSAGE_RECV)
-		{ // Outbound group offer. Must add target peer to invitees.
-			const int g = set_g(-1,tmp_message);
-			invitee_add(g,n);
-		}
+		#endif // NO_FILE_TRANSFER
 	}
 	return increment_i(n,offset,time,nstime,stat,-1,p_iter,tmp_message);
 }
@@ -746,30 +750,38 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	return val;
 }
 
-/* TODO this triggers far more often than necessary. Triggers once for every outbound file request, which occurs for every split. Ideally should just trigger upon first and then again after unpause perhaps... */
-#define sql_message_tail_section \
-	if(signature_len) /* Update signature (only) */ \
-		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES); \
-	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV) \
-	{ /* save file_path as extraneous */ /* goat */ \
-		int file_n = n; \
-		int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1); \
-		if(f < 0) \
-		{ /* not pm/p2p, must be group transfer */ \
-			const int g = set_g(n,NULL); \
-			file_n = getter_group_int(g,offsetof(struct group_list,n)); \
-			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN); \
-		} \
-		if(f > -1) /* NOT else if */ \
-		{ \
-			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path)); \
-			if(file_path) /* not always true */ \
-			{ \
-				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path)); \
-				torx_free((void*)&file_path); \
-			} \
-		} \
+static inline void sql_message_tail_section(const int peer_index,const int n,const time_t time,const time_t nstime,const uint8_t stat,const uint16_t protocol,const uint8_t file_offer,const char *message,const uint32_t message_len,const uint32_t signature_len)
+{ // Warning: no error checks, this is a macro converted to a function. TODO this triggers far more often than necessary. Triggers once for every outbound file request, which occurs for every split. Ideally should just trigger upon first and then again after unpause perhaps...
+	if(signature_len) // Update signature (only)
+		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES);
+	#ifndef NO_FILE_TRANSFER
+	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV)
+	{ // save file_path as extraneous
+		int file_n = n;
+		int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
+		if(f < 0)
+		{ // not pm/p2p, must be group transfer
+			const int g = set_g(n,NULL);
+			file_n = getter_group_int(g,offsetof(struct group_list,n));
+			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+		}
+		if(f > -1) // NOT else if
+		{
+			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			if(file_path) // not always true
+			{
+				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path));
+				torx_free((void*)&file_path);
+			}
+		}
 	}
+	#else
+	(void)n;
+	(void)stat;
+	(void)protocol;
+	(void)file_offer;
+	#endif // NO_FILE_TRANSFER
+}
 
 static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol)
 {
@@ -836,7 +848,7 @@ int sql_insert_message(const int n,const int i)
 		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol,message_txt) VALUES (%lld,%lld,%d,%d,%d,?);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
-		sql_message_tail_section // XXX
+		sql_message_tail_section(peer_index,n,time,nstime,stat,protocol,file_offer,message,message_len,signature_len);
 	}
 	torx_free((void*)&message);
 	return val;
@@ -871,7 +883,7 @@ int sql_update_message(const int n,const int i)
 	sodium_memzero(command,sizeof(command));
 	uint32_t message_len;
 	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
-	sql_message_tail_section // XXX
+	sql_message_tail_section(peer_index,n,time,nstime,stat,protocol,file_offer,message,message_len,signature_len);
 	torx_free((void*)&message);
 	return val;
 }
@@ -1017,8 +1029,10 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 		const uint8_t logged = protocols[p_iter].logged;
 		const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
+		#ifndef NO_FILE_TRANSFER
 		const uint8_t file_offer = protocols[p_iter].file_offer;
 		const uint8_t file_checksum = protocols[p_iter].file_checksum;
+		#endif // NO_FILE_TRANSFER
 		const uint8_t group_msg = protocols[p_iter].group_msg;
 		pthread_rwlock_unlock(&mutex_protocols); // 🟩
 		if(null_terminated_len == 0 && logged)
@@ -1031,6 +1045,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const size_t signature_length = (size_t)sqlite3_column_bytes(stmt, 7);
 		const char *extraneous;
 		uint32_t extraneous_len = (uint32_t)sqlite3_column_bytes(stmt, 8);
+		#ifndef NO_FILE_TRANSFER
 		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 		{ // Probably important to verify !offset
 			if(offset)
@@ -1056,8 +1071,10 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			process_pause_cancel(file_n,f,n,protocol,message_stat);
 		}
+		#endif // NO_FILE_TRANSFER
 		if(extraneous_len)
 		{
+			#ifndef NO_FILE_TRANSFER
 			int file_n = n;
 			int f = -1;
 			if(file_checksum && message_stat != ENUM_MESSAGE_RECV)
@@ -1124,6 +1141,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				}
 			}
 			else
+			#endif // NO_FILE_TRANSFER
 				extraneous = (const char *)sqlite3_column_blob(stmt, 8);
 		}
 		else
@@ -1521,20 +1539,24 @@ void sql_populate_setting(const int force_plaintext)
 				error_printf(3,"Encrypted Setting: peer_index=%d %s",peer_index,setting_name);
 				if(peer_index < 0) // global variable
 					pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-				if(!strncmp(setting_name,"download_dir",12))
-				{
-					torx_free((void*)&download_dir);
-					download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(download_dir,setting_value,setting_value_len);
-					download_dir[setting_value_len] = '\0';
-				}
-				else if(!strncmp(setting_name,"torrc",5))
+				if(!strncmp(setting_name,"torrc",5))
 				{
 					torx_free((void*)&torrc_content);
 					torrc_content = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 					memcpy(torrc_content,setting_value,setting_value_len);
 					torrc_content[setting_value_len] = '\0';
 				}
+				#ifndef NO_FILE_TRANSFER
+				else if(!strncmp(setting_name,"download_dir",12))
+				{
+					torx_free((void*)&download_dir);
+					download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+					memcpy(download_dir,setting_value,setting_value_len);
+					download_dir[setting_value_len] = '\0';
+				}
+				else if(!strncmp(setting_name,"auto_resume_inbound",19))
+					auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
+				#endif // NO_FILE_TRANSFER
 				else if(!strncmp(setting_name,"shorten_torxids",15))
 					shorten_torxids = (uint8_t)strtoull(setting_value, NULL, 10); // A bunch of casts here is not wonderful but should not be harmful either since we control
 				else if(!strncmp(setting_name,"suffix_length",13))
@@ -1553,8 +1575,6 @@ void sql_populate_setting(const int force_plaintext)
 					destroy_input = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"reduced_memory",14))
 					reduced_memory = (uint8_t)strtoull(setting_value, NULL, 10);
-				else if(!strncmp(setting_name,"auto_resume_inbound",19))
-					auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"log_last_seen",13))
 					log_last_seen = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"last_seen",9))

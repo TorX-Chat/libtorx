@@ -317,3 +317,50 @@ blake3_test(void)
 	return fail;
 }
 */
+
+size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len)
+{ // Generates Blake3 checksum in binary and returns file size in bytes. Pass data OR file_path, not both, for hashing. If no end is passed, it is treated as until EOF for file.
+	if(checksum == NULL || (file_path == NULL && data == NULL) || (file_path != NULL && data != NULL) || (data && len == 0))
+	{
+		error_simple(0,"Checksum failed due to sanity check fail");
+		return 0;
+	}
+	uint64_t size = 0;
+	struct blake3 ctx;
+	blake3_init(&ctx);
+	if(file_path)
+	{
+		FILE *fp = fopen(file_path, "r");
+		if(!fp || fseek(fp,(long int)start,SEEK_SET) == -1) // TODO bad cast
+		{
+			error_simple(0,"Failed to open file for generating blake checksum.");
+			return 0;
+		}
+		unsigned char buf[4096];
+		while(!feof(fp) && (!len || size < len))
+		{
+			size_t to_read = sizeof(buf);
+			if(len && len - size < sizeof(buf))
+				to_read = len - size;
+			const size_t read = fread(buf, 1, to_read, fp);
+			if(len && read != to_read)
+			{
+				close_sockets_nolock(fp)
+				error_simple(0,"Read less than expected when calculating checksum. Coding or disk error.");
+			//	printf("Checkpoint read: %lu\nCheckpoint to_read: %lu\nCheckpoint size: %lu\n",read,to_read,size);
+				return 0;
+			}
+			blake3_update(&ctx, buf, read);
+			size += read;
+		}
+		sodium_memzero(buf,sizeof(buf));
+		close_sockets_nolock(fp)
+	}
+	else /* if(data) */
+	{
+		blake3_update(&ctx, &data[start], len);
+		size = len;
+	}
+	blake3_out(&ctx, checksum, CHECKSUM_BIN_LEN);
+	return (size_t)size; // XXX will return -1 if cannot open or fully read file
+}

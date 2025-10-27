@@ -88,6 +88,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 		else
 			error_printf(-1,"Invalid offset passed to getter_length1: %lu. Coding error. Report this.",offset);
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 	{
 		if(offset == offsetof(struct file_list,filename))
@@ -113,6 +114,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 				error_printf(-1,"Invalid offset passed to getter_length2: %lu. Coding error. Report this.",offset);
 		}
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		if(offset == offsetof(struct peer_list,peernick))
@@ -160,6 +162,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		else
 			error_printf(-1,"Invalid offset passed to getter_string1: %lu. Coding error. Report this.",offset);
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 	{
 		if(offset == offsetof(struct file_list,filename))
@@ -187,6 +190,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 			memcpy(string,(char*)&peer[n] + offset,len);
 		}
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		if(offset == offsetof(struct peer_list,peernick))
@@ -262,7 +266,9 @@ struct offsets offsets_peer[] = {
 	offsize(peer_list,sign_sk,"sign_sk"),
 	offsize(peer_list,peer_sign_pk,"peer_sign_pk"),
 	offsize(peer_list,invitation,"invitation"),
+	#ifndef NO_FILE_TRANSFER
 	offsize(peer_list,blacklisted,"blacklisted"),
+	#endif // NO_FILE_TRANSFER
 	offsize(peer_list,broadcasts_inbound,"broadcasts_inbound")
 };
 
@@ -275,7 +281,7 @@ struct offsets offsets_message[] = {
 	offsize(message_list,pos,"pos"),
 	offsize(message_list,nstime,"nstime")
 };
-
+#ifndef NO_FILE_TRANSFER
 struct offsets offsets_file[] = {
 	offsize(file_list,checksum,"checksum"),
 	offsize(file_list,filename,"filename"),
@@ -298,7 +304,7 @@ struct offsets offsets_file[] = {
 	offsize(file_list,speed_iter,"speed_iter"),
 	offsize(file_list,last_speeds,"last_speeds")
 };
-
+#endif // NO_FILE_TRANSFER
 struct offsets offsets_group[] = {
 	offsize(group_list,id,"id"),
 	offsize(group_list,n,"n"),
@@ -507,8 +513,10 @@ size_t getter_size(const char *parent,const char *member)
 		getter_offset_return_size(offsets_peer)
 	else if(!strcmp(parent,"message"))
 		getter_offset_return_size(offsets_message)
+	#ifndef NO_FILE_TRANSFER
 	else if(!strcmp(parent,"file"))
 		getter_offset_return_size(offsets_file)
+	#endif // NO_FILE_TRANSFER
 	else if(!strcmp(parent,"group"))
 		getter_offset_return_size(offsets_group)
 	else if(!strcmp(parent,"packet"))
@@ -547,8 +555,10 @@ size_t getter_offset(const char *parent,const char *member)
 		getter_offset_return_offset(offsets_peer)
 	else if(!strcmp(parent,"message"))
 		getter_offset_return_offset(offsets_message)
+	#ifndef NO_FILE_TRANSFER
 	else if(!strcmp(parent,"file"))
 		getter_offset_return_offset(offsets_file)
+	#endif // NO_FILE_TRANSFER
 	else if(!strcmp(parent,"group"))
 		getter_offset_return_offset(offsets_group)
 	else if(!strcmp(parent,"packet"))
@@ -580,8 +590,10 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	torx_read(n) // 🟧🟧🟧
 	if(i > INT_MIN)
 		memcpy(&value,(char*)&peer[n].message[i] + offset,sizeof(value));
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 		memcpy(&value,(char*)&peer[n].file[f] + offset,sizeof(value));
+	#endif // NO_FILE_TRANSFER
 	else
 		memcpy(&value,(char*)&peer[n] + offset,sizeof(value));
 	torx_unlock(n) // 🟩🟩🟩
@@ -630,6 +642,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 		else
 			memcpy(array,(char*)&peer[n].message[i] + offset,size);
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 	{
 		getter_array_sanity_check(offsets_file)
@@ -641,6 +654,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 		else
 			memcpy(array,(char*)&peer[n].file[f] + offset,size);
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		getter_array_sanity_check(offsets_peer)
@@ -676,12 +690,14 @@ static inline union types getter_peer_union(const int n,const int i,const int f,
 		torx_read(n)
 		memcpy(&value,(char*)&peer[n].message[i] + offset,anticipated_size);
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 	{
 		getter_sanity_check(offsets_file)
 		torx_read(n)
 		memcpy(&value,(char*)&peer[n].file[f] + offset,anticipated_size);
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		getter_sanity_check(offsets_peer)
@@ -769,12 +785,14 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 		torx_write(n) // 🟥🟥🟥
 		memcpy((char*)&peer[n].message[i] + offset,value,size);
 	}
+	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
 	{
 		getter_array_sanity_check(offsets_file)
 		torx_write(n) // 🟥🟥🟥
 		memcpy((char*)&peer[n].file[f] + offset,value,size);
 	}
+	#endif // NO_FILE_TRANSFER
 	else
 	{
 		getter_array_sanity_check(offsets_peer)
