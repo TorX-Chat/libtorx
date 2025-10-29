@@ -1484,7 +1484,7 @@ static inline int inline_load_array(const int g,const int n,int *loaded_array_n,
 			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 			const uint8_t group_msg = protocols[p_iter].group_msg;
 			pthread_rwlock_unlock(&mutex_protocols); // 🟩
-			if(!(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
+			if(message_stat == ENUM_MESSAGE_RECV || !group_msg || owner != ENUM_OWNER_GROUP_PEER)
 			{ // XXX j2fjq0fiofg WARNING: This MUST be the same as in sql_populate_message
 				loaded_array_n[loaded + discovered] = n;
 				loaded_array_i[loaded + discovered++] = i;

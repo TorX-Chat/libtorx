@@ -789,14 +789,14 @@ static inline int log_check(const int n,const uint8_t group_pm,const uint16_t pr
 		return 1; // Entry requests MUST always be logged.
 	const int8_t log_messages = getter_int8(n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
 	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
-	if(!(log_messages != -1 && (global > 0 || log_messages > 0)))
+	if(log_messages == -1 || (global < 1 && log_messages < 1))
 		return 0; // do not log these
 	if(group_pm && threadsafe_read_uint8(&mutex_global_variable,&log_pm_according_to_group_setting))
 	{
 		const int g = set_g(n,NULL);
 		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 		const int8_t group_log_messages = getter_int8(group_n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
-		if(!(group_log_messages != -1 && (global > 0 || group_log_messages > 0)))
+		if(group_log_messages == -1 || (global < 1 && group_log_messages < 1))
 			return 0;
 	}
 	return 1;	
@@ -1147,7 +1147,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		else
 			extraneous = NULL;
 		const int i = load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
-		if(i != INT_MIN && !(message_stat != ENUM_MESSAGE_RECV && group_msg && owner == ENUM_OWNER_GROUP_PEER))
+		if(i != INT_MIN && (message_stat == ENUM_MESSAGE_RECV || !group_msg || owner != ENUM_OWNER_GROUP_PEER))
 			loaded++; // XXX j2fjq0fiofg WARNING: The second part of this if statement MUST be the same as in inline_load_array
 		if(extraneous_len && i != INT_MIN)
 		{ // Must allocate because _cb is probably asyncronous
