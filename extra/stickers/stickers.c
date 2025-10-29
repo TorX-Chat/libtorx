@@ -67,15 +67,9 @@ severable if found in contradiction with the License or applicable law.
  This could be prevented by simply zeroing the sticker-gif-* value/len, instead of deleting the setting
  However, that would leave a permanent/unremovable "cookie" in the client that would exist even after all peers and message history is deleted.
 
- TODO TODO TODO Issue:
- A unique sticker can be sent to two peers suspected to be the same client.
- If one requests the sticker and the subsequent doesn't, while still requesting *other* stickers, it's basically confirmation that they are the same client.
- This could be also utilized in group chats to determine who is who across multiple group chats.
+ Note:
+ Stickers track the sender(s) and request complete data from *every* sender at least one time to prevent allowing unique stickers to be used to correlate identities across groups/peers.
 
- Proposed solution:
- Stickers must track the sender(s) and request complete data from *every* sender at least one time.
-
- UI clients should probably also have a toggle to disable receiving stickers altogether.
 */
 
 pthread_rwlock_t mutex_sticker = PTHREAD_RWLOCK_INITIALIZER;
@@ -89,7 +83,8 @@ static inline int8_t sticker_invalid(const int s)
 { // Sanity check. DO NOT NULL CHECK. A deleted sticker is not an invalid one.
 	int8_t ret = 0;
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
-	if(s < 0 || (uint32_t)s >= torx_allocation_len(sticker)/sizeof(struct sticker_list))
+	const size_t sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
+	if(s < 0 || (uint32_t)s >= sticker_count)
 		ret = -1;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	return ret;
@@ -105,12 +100,109 @@ int set_s(const unsigned char checksum[CHECKSUM_BIN_LEN])
 	}
 	int s = 0;
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
-	while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
+	const size_t sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
+	while((uint32_t)s < sticker_count && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
 		s++;
-	if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
+	if((uint32_t)s == sticker_count)
 		s = -1; // Sticker not found.
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	return s;
+}
+
+static inline void sticker_save_peers(const int s)
+{ // Save, update, or delete sticker-peers- as a list of peer_index. Do not check if sticker is saved or whether data exists. It may have been deleted.
+	if(sticker_invalid(s))
+		return;
+	char setting_name[256];
+	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
+	char *encoded = b64_encode(sticker[s].checksum,sizeof(sticker[s].checksum));
+	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	snprintf(setting_name,sizeof(setting_name),"sticker-peers-%s",encoded);
+	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
+	if(peer_count)
+	{
+		uint32_t *peer_index_list = torx_insecure_malloc(peer_count*sizeof(int));
+		pthread_rwlock_rdlock(&mutex_sticker); // 🟧
+		for(size_t iter = 0; iter < peer_count ; iter++)
+			peer_index_list[iter] = htobe32((uint32_t)getter_int(sticker[s].peers[iter],INT_MIN,-1,offsetof(struct peer_list,peer_index)));
+		pthread_rwlock_unlock(&mutex_sticker); // 🟩
+		sql_setting(0,-1,setting_name,(const char*)peer_index_list,torx_allocation_len(peer_index_list));
+		torx_free((void*)&peer_index_list);
+	}
+	else
+		sql_delete_setting(0,-1,setting_name);
+	sodium_memzero(setting_name,sizeof(setting_name));
+	torx_free((void*)&encoded);
+}
+
+void sticker_add_peer(const int s,const int n)
+{ // Register a new sender/receiver of sticker when we send a hash, or someone sends us data.
+	if(sticker_invalid(s) || n < 0)
+		return;
+	uint32_t iter = 0;
+	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
+	while(iter < peer_count && sticker[s].peers[iter] != n)
+		iter++;
+	if(iter == peer_count)
+	{
+		if(sticker[s].peers)
+			sticker[s].peers = torx_realloc(sticker[s].peers,torx_allocation_len(sticker[s].peers) + sizeof(int));
+		else
+			sticker[s].peers = torx_insecure_malloc(sizeof(int));
+		sticker[s].peers[iter] = n;
+	}
+	const uint8_t saved = sticker[s].saved;
+	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	if(iter == peer_count && saved) // must update saved .peer
+		sticker_save_peers(s);
+}
+
+void sticker_remove_peer(const int s,const int n)
+{
+	if(sticker_invalid(s) || n < 0)
+		return;
+	int iter = 0;
+	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+	const int peer_count = (int)(torx_allocation_len(sticker[s].peers)/sizeof(int));
+	while(iter < peer_count && sticker[s].peers[iter] != n)
+		iter++;
+	if(iter < peer_count)
+	{ // Move everything after the deleted n backwards one then shrink .peers
+		for(int higher_iter = (int)peer_count - 1; higher_iter > iter ; higher_iter--)
+			sticker[s].peers[higher_iter-1] = sticker[s].peers[higher_iter];
+		sticker[s].peers = torx_realloc(sticker[s].peers,torx_allocation_len(sticker[s].peers) - sizeof(int)); // shrink or free
+	}
+	const uint8_t saved = sticker[s].saved;
+	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	if(iter < peer_count && saved) // must update saved .peer, even if 0 length (delete the setting)
+		sticker_save_peers(s);
+}
+
+void sticker_remove_peer_from_all(const int n)
+{ // Must call when deleting CTRL
+	if(n < 0)
+		return;
+	const int sticker_count = (int)sticker_retrieve_count();
+	for(int s = 0; s < sticker_count; s++)
+		if(sticker_has_peer(s,n))
+			sticker_remove_peer(s,n);
+}
+
+uint8_t sticker_has_peer(const int s,const int n)
+{ // Check that a particular peer, or group_n, already knows that we have a sticker because we previously send them the hash or they sent us the data.
+	if(sticker_invalid(s) || n < 0)
+		return 0;
+	uint8_t has_peer = 0;
+	uint32_t iter = 0;
+	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
+	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
+	while(iter < peer_count && sticker[s].peers[iter] != n)
+		iter++;
+	if(iter < peer_count)
+		has_peer = 1;
+	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	return has_peer;
 }
 
 void sticker_save(const int s)
@@ -127,6 +219,7 @@ void sticker_save(const int s)
 	}
 	unsigned char* data_copy = torx_copy(NULL,sticker[s].data); // copying rather than wrapping sql_setting with a mutex
 	char *encoded = b64_encode(sticker[s].checksum,sizeof(sticker[s].checksum));
+	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	char setting_name[256];
 	snprintf(setting_name,sizeof(setting_name),"sticker-gif-%s",encoded);
@@ -137,6 +230,8 @@ void sticker_save(const int s)
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 	sticker[s].saved = 1;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	if(peer_count)
+		sticker_save_peers(s);
 }
 
 void sticker_delete(const int s)
@@ -147,15 +242,18 @@ void sticker_delete(const int s)
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
 	char *encoded = b64_encode(sticker[s].checksum,sizeof(sticker[s].checksum));
 	snprintf(setting_name,sizeof(setting_name),"sticker-gif-%s",encoded);
+	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int); // must be before freeing .peers
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	torx_free((void*)&encoded);
 	sql_delete_setting(0,-1,setting_name);
 	sodium_memzero(setting_name,sizeof(setting_name));
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 	torx_free((void*)&sticker[s].data);
-	torx_free((void*)&sticker[s].peers);
+	torx_free((void*)&sticker[s].peers); // must be after getting peer_count
 	sticker[s].saved = 0;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
+	if(peer_count)
+		sticker_save_peers(s); // will delete setting
 }
 
 int sticker_register(const unsigned char *data,const size_t data_len)
@@ -168,19 +266,23 @@ int sticker_register(const unsigned char *data,const size_t data_len)
 	}
 	int s = 0;
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-	while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
+	const size_t sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
+	while((uint32_t)s < sticker_count && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
 		s++;
-	if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
-	{ // Register new sticker
-		if(sticker)
-			sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
-		else
-			sticker = torx_secure_malloc(sizeof(struct sticker_list));
-		memcpy(sticker[s].checksum,checksum,sizeof(checksum));
+	if((uint32_t)s == sticker_count || !sticker[s].data)
+	{ // Register new sticker, or place its data if checksum was already set by a loaded sticker-peers- setting
+		if((uint32_t)s == sticker_count)
+		{ // Checksum NOT yet in place
+			if(sticker)
+				sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
+			else
+				sticker = torx_secure_malloc(sizeof(struct sticker_list));
+			memcpy(sticker[s].checksum,checksum,sizeof(checksum));
+			sticker[s].peers = NULL; // has not yet been set by sticker-peers-
+		}
 		sticker[s].data = torx_secure_malloc(data_len);
 		memcpy(sticker[s].data,data,data_len);
-		sticker[s].peers = NULL; // should be already initialized
-		sticker[s].saved = 0; // should be already initialized TODO must subsequently set if we just loaded from disk
+		sticker[s].saved = 0; // XXX NOTE: must subsequently set if we just loaded from disk
 	}
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	sodium_memzero(checksum,sizeof(checksum));
@@ -251,11 +353,11 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 
 uint32_t sticker_retrieve_count(void)
 { // Note: This includes deleted stickers.
-	uint32_t count;
+	uint32_t sticker_count;
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
-	count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
+	sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
-	return count;
+	return sticker_count;
 }
 
 void sticker_offload(const int s)
@@ -273,7 +375,8 @@ void sticker_offload(const int s)
 void sticker_offload_saved(void)
 { // Rapidly offload all saved stickers. Useful to save RAM when minimizing or going to the background.
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-	for(uint32_t s = 0; s < torx_allocation_len(sticker)/sizeof(struct sticker_list); s++)
+	const size_t sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
+	for(uint32_t s = 0; s < sticker_count; s++)
 		if(sticker[s].saved)
 			torx_free((void*)&sticker[s].data);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩

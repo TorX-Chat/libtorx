@@ -489,22 +489,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							memcpy(checksum,peer[event_strc->n].message[i].message,CHECKSUM_BIN_LEN);
 							torx_unlock(event_strc->n) // 🟩🟩🟩
 							const int s = set_s(checksum);
-							if(s > -1)
-							{
-								uint32_t iter = 0;
-								pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-								while(iter < torx_allocation_len(sticker[s].peers)/sizeof(int) && sticker[s].peers[iter] != relevent_n)
-									iter++;
-								if(iter == torx_allocation_len(sticker[s].peers)/sizeof(int))
-								{ // Register a new recipient of sticker so that they can request data
-									if(sticker[s].peers)
-										sticker[s].peers = torx_realloc(sticker[s].peers,torx_allocation_len(sticker[s].peers) + sizeof(int));
-									else
-										sticker[s].peers = torx_insecure_malloc(sizeof(int));
-									sticker[s].peers[iter] = relevent_n;
-								}
-								pthread_rwlock_unlock(&mutex_sticker); // 🟩
-							}
+							sticker_add_peer(s,relevent_n);
 							sodium_memzero(checksum,sizeof(checksum));
 						}
 						#endif // NO_STICKERS
@@ -1461,9 +1446,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									const uint8_t owner = getter_uint8(relevant_n,INT_MIN,-1,offsetof(struct peer_list,owner));
 									uint32_t iter = 0;
 									pthread_rwlock_rdlock(&mutex_sticker); // 🟧
-									while(iter < torx_allocation_len(sticker[s].peers)/sizeof(int) && sticker[s].peers[iter] != relevant_n)
+									const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
+									while(iter < peer_count && sticker[s].peers[iter] != relevant_n)
 										iter++;
-									if(iter == torx_allocation_len(sticker[s].peers)/sizeof(int))
+									if(iter == peer_count)
 									{ // We didn't previously offer this sticker to this peer
 										pthread_rwlock_unlock(&mutex_sticker); // 🟩
 										if(owner == ENUM_OWNER_GROUP_PEER)
@@ -1495,8 +1481,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(torx_allocation_len(event_strc->buffer) >= CHECKSUM_BIN_LEN && threadsafe_read_uint8(&mutex_global_variable,&stickers_request_data) && (threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all) || !threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all)))
 						{
 							const int s = set_s((unsigned char*)event_strc->buffer);
-							if(s < 0)
-							{ // Don't have sticker, consider requesting it, if we haven't already
+							if(s < 0 || (!sticker_has_peer(s,event_strc->n) && !sticker_has_peer(s,event_strc->group_n)))
+							{ // Don't have sticker, or sticker is not on .peer list (redudantly request sticker prevent sticker based identity correlation), consider requesting it
 								uint32_t y = 0;
 								torx_write(event_strc->n) // 🟥🟥🟥
 								while(y < torx_allocation_len(peer[event_strc->n].stickers_requested)/sizeof(unsigned char *) && memcmp(peer[event_strc->n].stickers_requested[y], event_strc->buffer, CHECKSUM_BIN_LEN))
@@ -1625,6 +1611,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									else
 									{
 										s = sticker_register((unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],data_len - CHECKSUM_BIN_LEN);
+										const int relevent_n = (event_strc->group_n > -1) ? event_strc->group_n : event_strc->n; // we don't have a way of determining whether this data was related to a PM or public message, so we register group_n on the principle of "one group, one identity"
+										sticker_add_peer(s,relevent_n);
 										const uint8_t stickers_save_all_local = threadsafe_read_uint8(&mutex_global_variable,&stickers_save_all);
 										const uint8_t stickers_offload_all_local = threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all);
 										if(stickers_save_all_local || !stickers_offload_all_local)

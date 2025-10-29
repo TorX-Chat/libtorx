@@ -5334,6 +5334,10 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		if(owner == ENUM_OWNER_GROUP_PEER) // This if statement saves a bit of IO/processing but only makes sense if we never delete GROUP_PEER without deleting GROUP_CTRL at he same time
 			delete_log(n); // when called with GROUP_CTRL, it should delete GROUP_PEER, so no need to call it twice.
 		sql_delete_peer(peer_index); // This should cascading delete anything delete_log missed, or in case we were wrong above
+		#ifndef NO_STICKERS
+		if(owner != ENUM_OWNER_PEER)
+			sticker_remove_peer_from_all(n);
+		#endif // NO_STICKERS
 	}
 	if(delete != 2 && owner != ENUM_OWNER_PEER)
 	{ // 2==delete from file but don't take down // != ENUM_OWNER_PEER because OWNER_PEER doesn't use peer [n]. sendfd

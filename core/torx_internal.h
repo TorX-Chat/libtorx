@@ -293,6 +293,13 @@ void audio_cache_clear_all(const int call_n,const int call_c);
 uint32_t record_cache_clear_nolocks(const int call_n);
 #endif // NO_AUDIO_CALL
 
+#ifndef NO_STICKERS
+void sticker_add_peer(const int s,const int n);
+uint8_t sticker_has_peer(const int s,const int n)__attribute__((warn_unused_result));
+void sticker_remove_peer(const int s,const int n);
+void sticker_remove_peer_from_all(const int n);
+#endif // NO_STICKERS
+
 /* Global variables (defined here, declared elsewhere, primarily in torx_core.c) */
 extern uint8_t v3auth_enabled;
 extern size_t tor_calls;

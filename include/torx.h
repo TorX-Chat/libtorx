@@ -258,7 +258,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
 	uint8_t status; // 0 blocked, 1 friend, 2 pending acceptance
 	char privkey[88+1];
-	int peer_index; // For use with SQL functions only
+	int peer_index; // For use with SQL functions only. Will *always* be unique, for the life of the database. Will never be re-used, even in the case of vacuuming or peer deletion.
 	char onion[56+1]; // our onion derrived from privkey, except for "peer", where it is peeronion, because this must ALWAYS exist
 	char torxid[52+1];
 	uint16_t peerversion;

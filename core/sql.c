@@ -1652,14 +1652,46 @@ void sql_populate_setting(const int force_plaintext)
 				else if(!strncmp(setting_name,"stickers_save_all",17))
 					stickers_save_all = (uint8_t)strtoull(setting_value, NULL, 10);
 				else if(!strncmp(setting_name,"sticker-gif-",12))
-				{ // NOTE: the following CANNOT be locked by mutex_global_variable
+				{ // NOTE: the following CANNOT be locked by mutex_global_variable because sticker_register utilizes it
 					if(peer_index < 0) // should always be true
 						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const int s = sticker_register((const unsigned char *)setting_value,setting_value_len);
 					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 					sticker[s].saved = 1; // we got this from disk, so we must mark it as saved
 					pthread_rwlock_unlock(&mutex_sticker); // 🟩
-					if(peer_index < 0) // should always be true.
+					if(peer_index < 0) // should always be true
+						pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+				}
+				else if(!strncmp(setting_name,"sticker-peers-",14))
+				{ // Cannot use sticker_add_peer() because it calls sticker_save_peers
+					if(peer_index < 0) // should always be true
+						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+					const size_t peer_count = setting_value_len/sizeof(int); // NOTE: where we get the size from
+					unsigned char checksum[CHECKSUM_BIN_LEN];
+					b64_decode(checksum,sizeof(checksum),&setting_value[14]); // we depend on this to be null terminated, which it is guarantee to be
+					int s = 0;
+					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+					while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
+						s++;
+					if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
+					{ // Checksum hasn't been placed by sticker_register yet, need to place checksum.
+						if(sticker)
+							sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
+						else
+							sticker = torx_secure_malloc(sizeof(struct sticker_list));
+						memcpy(sticker[s].checksum,checksum,sizeof(checksum));
+					}
+					sticker[s].peers = torx_insecure_malloc(sizeof(int)*peer_count); // NOTE: we assume this is so-far unallocated
+					for(size_t iter = 0; iter < peer_count; iter++)
+					{
+						const int peer_index_from_list = (int)be32toh(align_uint32((const void*)&setting_value[iter*sizeof(int)]));
+						const int n_from_list = set_n(peer_index_from_list,NULL);
+						if(n_from_list > -1)
+							sticker[s].peers[iter] = n_from_list;
+					}
+					pthread_rwlock_unlock(&mutex_sticker); // 🟩
+					sodium_memzero(checksum,sizeof(checksum));
+					if(peer_index < 0) // should always be true
 						pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				}
 				#endif // NO_STICKERS
