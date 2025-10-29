@@ -3139,7 +3139,7 @@ size_t b64_decode(unsigned char *out,const size_t destination_size,const char *i
 	const size_t outlen = b64_decoded_size(in);
 	if(outlen > destination_size)
 	{ // avoid illegal writes
-		error_simple(0,"b64_decode destination is too small");
+		error_printf(0,"b64_decode destination is too small: %lu > %lu",outlen,destination_size);
 		return 0;
 	}
 	size_t len = strlen(in);

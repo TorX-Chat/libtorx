@@ -1644,9 +1644,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 												pthread_rwlock_unlock(&mutex_protocols); // 🟩
 												if((protocol_local == ENUM_PROTOCOL_STICKER_HASH || protocol_local == ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED || protocol_local == ENUM_PROTOCOL_STICKER_HASH_PRIVATE)
 												&& !memcmp(event_strc->buffer,checksum,CHECKSUM_BIN_LEN))
-												{ // Find the first relevant message and update it TODO this might not work in groups
+												{ // Rebuild sticker by finding the first relevant message and update it
 													torx_unlock(event_strc->n) // 🟩🟩🟩
-													printf("Checkpoint should be rebuilding a sticker n=%d i=%i (might not work in groups)\n",event_strc->n,i);
 													message_modified_cb(event_strc->n,i);
 													torx_read(event_strc->n) // 🟧🟧🟧
 													break;

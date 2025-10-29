@@ -317,7 +317,7 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 { // First check if we already loaded it, then retrieve if from SQL if we don't. UI should follow this call with a call to sticker_offload if it don't desire library to cache, or set stickers_offload_all=1.
 	if(sticker_invalid(s))
 	{
-		error_simple(0,"Unable to retrieve invalid sticker");
+		error_printf(0,"Unable to retrieve invalid sticker: %d",s);
 		if(len_p)
 			*len_p = 0;
 		return NULL;

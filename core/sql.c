@@ -1668,18 +1668,20 @@ void sql_populate_setting(const int force_plaintext)
 						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const size_t peer_count = setting_value_len/sizeof(int); // NOTE: where we get the size from
 					unsigned char checksum[CHECKSUM_BIN_LEN];
-					b64_decode(checksum,sizeof(checksum),&setting_value[14]); // we depend on this to be null terminated, which it is guarantee to be
+					b64_decode(checksum,sizeof(checksum),&setting_name[14]); // we depend on setting_name to be null terminated, which it is guaranteed to be
 					int s = 0;
 					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 					while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
 						s++;
 					if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
-					{ // Checksum hasn't been placed by sticker_register yet, need to place checksum.
+					{ // Checksum hasn't been placed by sticker_register yet, need to place checksum and initialize
 						if(sticker)
 							sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
 						else
 							sticker = torx_secure_malloc(sizeof(struct sticker_list));
 						memcpy(sticker[s].checksum,checksum,sizeof(checksum));
+						sticker[s].saved = 0; // initializing
+						sticker[s].data = NULL; // initializing
 					}
 					sticker[s].peers = torx_insecure_malloc(sizeof(int)*peer_count); // NOTE: we assume this is so-far unallocated
 					for(size_t iter = 0; iter < peer_count; iter++)
