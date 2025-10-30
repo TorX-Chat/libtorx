@@ -102,6 +102,9 @@ Legal:
 //TODO	shrink_message_struct_cb(n); // TODO remember to remove message_deleted_cb from delete_log
 } */
 
+static uint8_t library_settings_loaded_plaintext = 0; // prevent loading library settings twice if sql_populate_setting(1) is called repeatedly (Android)
+static uint8_t library_settings_loaded_encrypted = 0; // prevent loading library settings twice if sql_populate_setting(0) is called repeatedly (Android)
+
 void message_offload(const int n)
 { // Unload all messages from RAM.
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -1473,48 +1476,76 @@ void sql_populate_setting(const int force_plaintext)
 			if(force_plaintext)
 			{
 				error_printf(2,"Plaintext Setting: %s",setting_name);
-				pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-				if(!strncmp(setting_name,"salt",4) && setting_value_len == sizeof(saltbuffer))
-					memcpy(saltbuffer,setting_value,sizeof(saltbuffer));
+				if(!library_settings_loaded_plaintext)
+					pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+				if(!strncmp(setting_name,"salt",4) && setting_value_len == sizeof(saltbuffer)) // NOT else if
+				{
+					if(!library_settings_loaded_plaintext)
+						memcpy(saltbuffer,setting_value,sizeof(saltbuffer));
+				}
 				else if(!strncmp(setting_name,"crypto_pwhash_OPSLIMIT",22))
-					crypto_pwhash_OPSLIMIT = strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_plaintext)
+						crypto_pwhash_OPSLIMIT = strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"crypto_pwhash_MEMLIMIT",22))
-					crypto_pwhash_MEMLIMIT = strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_plaintext)
+						crypto_pwhash_MEMLIMIT = strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"crypto_pwhash_ALG",17))
-					crypto_pwhash_ALG = (int)strtoll(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_plaintext)
+						crypto_pwhash_ALG = (int)strtoll(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"tor_location",12))
 				{
-					torx_free((void*)&tor_location);
-					tor_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(tor_location,setting_value,setting_value_len);
-					tor_location[setting_value_len] = '\0';
+					if(!library_settings_loaded_plaintext)
+					{
+						torx_free((void*)&tor_location);
+						tor_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(tor_location,setting_value,setting_value_len);
+						tor_location[setting_value_len] = '\0';
+					}
 				}
 				else if(!strncmp(setting_name,"snowflake_location",18))
 				{
-					torx_free((void*)&snowflake_location);
-					snowflake_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(snowflake_location,setting_value,setting_value_len);
-					snowflake_location[setting_value_len] = '\0';
+					if(!library_settings_loaded_plaintext)
+					{
+						torx_free((void*)&snowflake_location);
+						snowflake_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(snowflake_location,setting_value,setting_value_len);
+						snowflake_location[setting_value_len] = '\0';
+					}
 				}
 				else if(!strncmp(setting_name,"lyrebird_location",17))
 				{
-					torx_free((void*)&lyrebird_location);
-					lyrebird_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(lyrebird_location,setting_value,setting_value_len);
-					lyrebird_location[setting_value_len] = '\0';
+					if(!library_settings_loaded_plaintext)
+					{
+						torx_free((void*)&lyrebird_location);
+						lyrebird_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(lyrebird_location,setting_value,setting_value_len);
+						lyrebird_location[setting_value_len] = '\0';
+					}
 				}
 				else if(!strncmp(setting_name,"conjure_location",16))
 				{
-					torx_free((void*)&conjure_location);
-					conjure_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(conjure_location,setting_value,setting_value_len);
-					conjure_location[setting_value_len] = '\0';
+					if(!library_settings_loaded_plaintext)
+					{
+						torx_free((void*)&conjure_location);
+						conjure_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(conjure_location,setting_value,setting_value_len);
+						conjure_location[setting_value_len] = '\0';
+					}
 				}
 				else if(!strncmp(setting_name,"censored_region",15))
-					censored_region = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_plaintext)
+						censored_region = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"decryption_key",14))
 				{
-					if(!keyed && setting_value_len > 0 && setting_value_len <= sizeof(decryption_key))
+					if(!library_settings_loaded_plaintext && !keyed && setting_value_len > 0 && setting_value_len <= sizeof(decryption_key))
 					{
 						memcpy(decryption_key,setting_value,sizeof(decryption_key));
 						attempt_login = 1;
@@ -1522,7 +1553,8 @@ void sql_populate_setting(const int force_plaintext)
 				}
 				else
 				{
-					pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+					if(!library_settings_loaded_plaintext)
+						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const size_t len = strlen(setting_name);
 					char *setting_name_allocated = torx_secure_malloc(len+1);
 					snprintf(setting_name_allocated,len+1,"%s",setting_name);
@@ -1530,176 +1562,250 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(peer_index,setting_name_allocated,setting_value_allocated,setting_value_len,1);
-					pthread_rwlock_rdlock(&mutex_global_variable); // 🟧 // yes rdlock is correct here, because we have no more actions upon it
+					if(!library_settings_loaded_plaintext)
+						pthread_rwlock_rdlock(&mutex_global_variable); // 🟧 // yes rdlock is correct here, because we have no more actions upon it
 				}
-				pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+				if(!library_settings_loaded_plaintext)
+					pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 			else /* encrypted */
 			{
 				error_printf(3,"Encrypted Setting: peer_index=%d %s",peer_index,setting_name);
-				if(peer_index < 0) // global variable
+				if(!library_settings_loaded_encrypted && peer_index < 0) // global variable
 					pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-				if(!strncmp(setting_name,"torrc",5))
+				if(!strncmp(setting_name,"torrc",5)) // NOT else if
 				{
-					torx_free((void*)&torrc_content);
-					torrc_content = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(torrc_content,setting_value,setting_value_len);
-					torrc_content[setting_value_len] = '\0';
+					if(!library_settings_loaded_encrypted)
+					{
+						torx_free((void*)&torrc_content);
+						torrc_content = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(torrc_content,setting_value,setting_value_len);
+						torrc_content[setting_value_len] = '\0';
+					}
 				}
 				#ifndef NO_FILE_TRANSFER
 				else if(!strncmp(setting_name,"download_dir",12))
 				{
-					torx_free((void*)&download_dir);
-					download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-					memcpy(download_dir,setting_value,setting_value_len);
-					download_dir[setting_value_len] = '\0';
+					if(!library_settings_loaded_encrypted)
+					{
+						torx_free((void*)&download_dir);
+						download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
+						memcpy(download_dir,setting_value,setting_value_len);
+						download_dir[setting_value_len] = '\0';
+					}
 				}
 				else if(!strncmp(setting_name,"auto_resume_inbound",19))
-					auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						auto_resume_inbound = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				#endif // NO_FILE_TRANSFER
 				else if(!strncmp(setting_name,"shorten_torxids",15))
-					shorten_torxids = (uint8_t)strtoull(setting_value, NULL, 10); // A bunch of casts here is not wonderful but should not be harmful either since we control
+				{
+					if(!library_settings_loaded_encrypted)
+						shorten_torxids = (uint8_t)strtoull(setting_value, NULL, 10); // A bunch of casts here is not wonderful but should not be harmful either since we control
+				}
 				else if(!strncmp(setting_name,"suffix_length",13))
-					suffix_length = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						suffix_length = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"global_threads",14))
-					global_threads = (uint32_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						global_threads = (uint32_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"global_log_messages",19))
-					global_log_messages = (uint8_t)strtoull(setting_value, NULL, 10); // SIGNED
+				{
+					if(!library_settings_loaded_encrypted)
+						global_log_messages = (uint8_t)strtoull(setting_value, NULL, 10); // SIGNED
+				}
 				else if(!strncmp(setting_name,"sing_expiration_days",20))
-					sing_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						sing_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"mult_expiration_days",20))
-					mult_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						mult_expiration_days = (uint32_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"auto_accept_mult",16))
-					auto_accept_mult = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						auto_accept_mult = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"destroy_input",13))
-					destroy_input = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						destroy_input = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"reduced_memory",14))
-					reduced_memory = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						reduced_memory = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"log_last_seen",13))
-					log_last_seen = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						log_last_seen = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"last_seen",9))
 				{
-					sanity_check
-					const int n = set_n(peer_index,NULL);
-					const time_t last_seen = strtoll(setting_value, NULL, 10);
-					setter(n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
+					if(!library_settings_loaded_encrypted)
+					{
+						sanity_check
+						const int n = set_n(peer_index,NULL);
+						const time_t last_seen = strtoll(setting_value, NULL, 10);
+						setter(n,INT_MIN,-1,offsetof(struct peer_list,last_seen),&last_seen,sizeof(last_seen));
+					}
 				}
 				else if(!strncmp(setting_name,"logging",7))
 				{
-					sanity_check
-					const int n = set_n(peer_index,NULL);
-					const int8_t log_messages = (int8_t)strtoll(setting_value, NULL, 10);
-					setter(n,INT_MIN,-1,offsetof(struct peer_list,log_messages),&log_messages,sizeof(log_messages));
+					if(!library_settings_loaded_encrypted)
+					{
+						sanity_check
+						const int n = set_n(peer_index,NULL);
+						const int8_t log_messages = (int8_t)strtoll(setting_value, NULL, 10);
+						setter(n,INT_MIN,-1,offsetof(struct peer_list,log_messages),&log_messages,sizeof(log_messages));
+					}
 				}
 				else if(!strncmp(setting_name,"group_id",8))
-				{ // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
-					unsigned char id[GROUP_ID_SIZE];
-					sanity_check
-					if(setting_value_len != GROUP_ID_SIZE)
-					{
-						error_simple(0,"Invalid group id loaded from sql. Report this."); // TODO should probably skip the next steps
-						continue;
+				{
+					if(!library_settings_loaded_encrypted)
+					{ // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
+						unsigned char id[GROUP_ID_SIZE];
+						sanity_check
+						if(setting_value_len != GROUP_ID_SIZE)
+						{
+							error_simple(0,"Invalid group id loaded from sql. Report this."); // TODO should probably skip the next steps
+							continue;
+						}
+						memcpy(id,setting_value,sizeof(id));
+						const int ctrl_n = set_n(peer_index,NULL);
+						const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
+						setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+				/*int g = */	const int g = set_g(ctrl_n,id); // just for reserving
+						(void)g;
+						sodium_memzero(id,GROUP_ID_SIZE);
 					}
-					memcpy(id,setting_value,sizeof(id));
-					const int ctrl_n = set_n(peer_index,NULL);
-					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
-			/*int g = */	const int g = set_g(ctrl_n,id); // just for reserving
-					(void)g;
-					sodium_memzero(id,GROUP_ID_SIZE);
 				}
 				else if(!strncmp(setting_name,"invite_required",15))
-				{ // DO NOT assume any specific group setting will be read before any other
-					sanity_check
-					const int ctrl_n = set_n(peer_index,NULL);
-					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
-					const int g = set_g(ctrl_n,NULL); // reserved
-					const uint8_t invite_required = (uint8_t)strtoull(setting_value, NULL, 10);
-					setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
+				{
+					if(!library_settings_loaded_encrypted)
+					{ // DO NOT assume any specific group setting will be read before any other
+						sanity_check
+						const int ctrl_n = set_n(peer_index,NULL);
+						const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
+						setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+						const int g = set_g(ctrl_n,NULL); // reserved
+						const uint8_t invite_required = (uint8_t)strtoull(setting_value, NULL, 10);
+						setter_group(g,offsetof(struct group_list,invite_required),&invite_required,sizeof(invite_required));
+					}
 				}
 				else if(!strncmp(setting_name,"group_peer",10))
-				{ // Onion of a peer, associated with peer_index XXX NOTE: can only compare first 10 letters. what follows is peer_index of the GROUP_PEER, for uniqueness // XXX do use setting_value, its trash XXX
-					sanity_check
-					const int ctrl_n = set_n(peer_index,NULL); // this is group_n's peer_index, not group_peer's
-					const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
-					setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
-					const int g = set_g(ctrl_n,NULL); // reserved
-					const int stripped_peer_index = (int)strtoull(&setting_name[10], NULL, 10);
-					const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
-					pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-					if(group[g].peerlist)
-						group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)group[g].peercount+1)*sizeof(int));
-					else
-						group[g].peerlist = torx_insecure_malloc(((size_t)group[g].peercount+1)*sizeof(int));
-					group[g].peerlist[group[g].peercount] = peer_n;
-					group[g].peercount++; // so, this grows as we load more
-				//	printf("Checkpoint sql_populate_setting g==%d peercount==%u\n",g,group[g].peercount);
-					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+				{
+					if(!library_settings_loaded_encrypted)
+					{ // Onion of a peer, associated with peer_index XXX NOTE: can only compare first 10 letters. what follows is peer_index of the GROUP_PEER, for uniqueness // XXX do use setting_value, its trash XXX
+						sanity_check
+						const int ctrl_n = set_n(peer_index,NULL); // this is group_n's peer_index, not group_peer's
+						const uint8_t owner = ENUM_OWNER_GROUP_CTRL;
+						setter(ctrl_n,INT_MIN,-1,offsetof(struct peer_list,owner),&owner,sizeof(owner)); // XXX HAVE TO set this because set_g relies on it
+						const int g = set_g(ctrl_n,NULL); // reserved
+						const int stripped_peer_index = (int)strtoull(&setting_name[10], NULL, 10);
+						const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
+						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
+						if(group[g].peerlist)
+							group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)group[g].peercount+1)*sizeof(int));
+						else
+							group[g].peerlist = torx_insecure_malloc(((size_t)group[g].peercount+1)*sizeof(int));
+						group[g].peerlist[group[g].peercount] = peer_n;
+						group[g].peercount++; // so, this grows as we load more
+					//	printf("Checkpoint sql_populate_setting g==%d peercount==%u\n",g,group[g].peercount);
+						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+					}
 				}
 				else if(!strncmp(setting_name,"tor_socks_port",14))
-					tor_socks_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						tor_socks_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"tor_ctrl_port",13))
-					tor_ctrl_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						tor_ctrl_port = (uint16_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"control_password_clear",22))
 				{
-					torx_free((void*)&control_password_clear);
-					control_password_clear = torx_secure_malloc(setting_value_len+1);
-					memcpy(control_password_clear,setting_value,setting_value_len);
-					control_password_clear[setting_value_len] = '\0';
+					if(!library_settings_loaded_encrypted)
+					{
+						torx_free((void*)&control_password_clear);
+						control_password_clear = torx_secure_malloc(setting_value_len+1);
+						memcpy(control_password_clear,setting_value,setting_value_len);
+						control_password_clear[setting_value_len] = '\0';
+					}
 				}
 				#ifndef NO_STICKERS
 				else if(!strncmp(setting_name,"stickers_save_all",17))
-					stickers_save_all = (uint8_t)strtoull(setting_value, NULL, 10);
+				{
+					if(!library_settings_loaded_encrypted)
+						stickers_save_all = (uint8_t)strtoull(setting_value, NULL, 10);
+				}
 				else if(!strncmp(setting_name,"sticker-gif-",12))
-				{ // NOTE: the following CANNOT be locked by mutex_global_variable because sticker_register utilizes it
-					if(peer_index < 0) // should always be true
-						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-					const int s = sticker_register((const unsigned char *)setting_value,setting_value_len);
-					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-					sticker[s].saved = 1; // we got this from disk, so we must mark it as saved
-					pthread_rwlock_unlock(&mutex_sticker); // 🟩
-					if(peer_index < 0) // should always be true
-						pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+				{
+					if(!library_settings_loaded_encrypted)
+					{ // NOTE: the following CANNOT be locked by mutex_global_variable because sticker_register utilizes it
+						if(peer_index < 0) // should always be true
+							pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+						const int s = sticker_register((const unsigned char *)setting_value,setting_value_len);
+						pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+						sticker[s].saved = 1; // we got this from disk, so we must mark it as saved
+						pthread_rwlock_unlock(&mutex_sticker); // 🟩
+						if(peer_index < 0) // should always be true
+							pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+					}
 				}
 				else if(!strncmp(setting_name,"sticker-peers-",14))
-				{ // Cannot use sticker_add_peer() because it calls sticker_save_peers
-					if(peer_index < 0) // should always be true
-						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-					const size_t peer_count = setting_value_len/sizeof(int); // NOTE: where we get the size from
-					unsigned char checksum[CHECKSUM_BIN_LEN];
-					b64_decode(checksum,sizeof(checksum),&setting_name[14]); // we depend on setting_name to be null terminated, which it is guaranteed to be
-					int s = 0;
-					pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-					while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
-						s++;
-					if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
-					{ // Checksum hasn't been placed by sticker_register yet, need to place checksum and initialize
-						if(sticker)
-							sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
-						else
-							sticker = torx_secure_malloc(sizeof(struct sticker_list));
-						memcpy(sticker[s].checksum,checksum,sizeof(checksum));
-						sticker[s].saved = 0; // initializing
-						sticker[s].data = NULL; // initializing
+				{
+					if(!library_settings_loaded_encrypted)
+					{ // Cannot use sticker_add_peer() because it calls sticker_save_peers
+						if(peer_index < 0) // should always be true
+							pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+						const size_t peer_count = setting_value_len/sizeof(int); // NOTE: where we get the size from
+						unsigned char checksum[CHECKSUM_BIN_LEN];
+						b64_decode(checksum,sizeof(checksum),&setting_name[14]); // we depend on setting_name to be null terminated, which it is guaranteed to be
+						int s = 0;
+						pthread_rwlock_wrlock(&mutex_sticker); // 🟥
+						while((uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list) && memcmp(sticker[s].checksum,checksum,CHECKSUM_BIN_LEN))
+							s++;
+						if((uint32_t)s == torx_allocation_len(sticker)/sizeof(struct sticker_list))
+						{ // Checksum hasn't been placed by sticker_register yet, need to place checksum and initialize
+							if(sticker)
+								sticker = torx_realloc(sticker,torx_allocation_len(sticker) + sizeof(struct sticker_list));
+							else
+								sticker = torx_secure_malloc(sizeof(struct sticker_list));
+							memcpy(sticker[s].checksum,checksum,sizeof(checksum));
+							sticker[s].saved = 0; // initializing
+							sticker[s].data = NULL; // initializing
+						}
+						sticker[s].peers = torx_insecure_malloc(sizeof(int)*peer_count); // NOTE: we assume this is so-far unallocated
+						for(size_t iter = 0; iter < peer_count; iter++)
+						{
+							const int peer_index_from_list = (int)be32toh(align_uint32((const void*)&setting_value[iter*sizeof(int)]));
+							const int n_from_list = set_n(peer_index_from_list,NULL);
+							if(n_from_list > -1)
+								sticker[s].peers[iter] = n_from_list;
+						}
+						pthread_rwlock_unlock(&mutex_sticker); // 🟩
+						sodium_memzero(checksum,sizeof(checksum));
+						if(peer_index < 0) // should always be true
+							pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 					}
-					sticker[s].peers = torx_insecure_malloc(sizeof(int)*peer_count); // NOTE: we assume this is so-far unallocated
-					for(size_t iter = 0; iter < peer_count; iter++)
-					{
-						const int peer_index_from_list = (int)be32toh(align_uint32((const void*)&setting_value[iter*sizeof(int)]));
-						const int n_from_list = set_n(peer_index_from_list,NULL);
-						if(n_from_list > -1)
-							sticker[s].peers[iter] = n_from_list;
-					}
-					pthread_rwlock_unlock(&mutex_sticker); // 🟩
-					sodium_memzero(checksum,sizeof(checksum));
-					if(peer_index < 0) // should always be true
-						pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 				}
 				#endif // NO_STICKERS
 				else
 				{ // Send unrecognized settings to UI
-					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
+					if(!library_settings_loaded_encrypted && peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
 						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const int n = set_n(peer_index,NULL); // XXX WARNING: N could be negative, indicating a global value
 					const size_t len = strlen(setting_name);
@@ -1709,10 +1815,10 @@ void sql_populate_setting(const int force_plaintext)
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
 					custom_setting_cb(n,setting_name_allocated,setting_value_allocated,setting_value_len,0);
-					if(peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
+					if(!library_settings_loaded_encrypted && peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
 						pthread_rwlock_rdlock(&mutex_global_variable); // 🟧 // yes rdlock is correct here, because we have no more actions upon it
 				}
-				if(peer_index < 0) // global variable
+				if(!library_settings_loaded_encrypted && peer_index < 0) // global variable
 					pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			}
 		}
@@ -1723,11 +1829,18 @@ void sql_populate_setting(const int force_plaintext)
 	pthread_mutex_unlock(mutex); // 🟩🟩
 	if(force_plaintext)
 	{
-		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+		library_settings_loaded_plaintext = 1;
 		const char *tor_location_local_pointer = tor_location;
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		if(tor_location_local_pointer && attempt_login)
 			login_start("");
+	}
+	else
+	{
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+		library_settings_loaded_encrypted = 1;
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 }
 
