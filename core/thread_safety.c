@@ -483,7 +483,7 @@ void *protocol_access(const int p_iter,const size_t offset)
 }
 
 #define getter_offset_sanity_check(offsets_struc) /* Cannot be converted to function */ \
-{ \
+do { \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets); \
 	while(iter < pages && strcmp(offsets_struc[iter].name,member)) \
 		iter++; \
@@ -491,14 +491,14 @@ void *protocol_access(const int p_iter,const size_t offset)
 		error_printf(-1,"Illegal offset name: %s. Coding error. Report this.",member); \
 	if(strcmp(offsets_struc[iter].name,member)) \
 		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this.",member); \
-}
+} while(0);
 
 #define getter_offset_return_size(offsets_struc) /* Cannot be converted to function */ \
-{ \
+do { \
 	size_t iter = 0; \
 	getter_offset_sanity_check(offsets_struc) \
 	return offsets_struc[iter].size; \
-}
+} while(0);
 
 size_t getter_size(const char *parent,const char *member)
 { // Returns size of a member. You may be looking for getter_length instead.
@@ -536,11 +536,11 @@ size_t getter_size(const char *parent,const char *member)
 }
 
 #define getter_offset_return_offset(offsets_struc) /* Cannot be converted to function */ \
-{ \
+do { \
 	size_t iter = 0; \
 	getter_offset_sanity_check(offsets_struc); \
 	return offsets_struc[iter].offset; \
-}
+} while(0);
 
 size_t getter_offset(const char *parent,const char *member)
 { // Returns offset of a member
@@ -601,6 +601,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 }
 
 #define getter_array_sanity_check(offsets_struc) /* Cannot be converted to function */ \
+do { \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
 	size_t iter = 0;\
 	while(iter < pages && offset != offsets_struc[iter].offset)\
@@ -614,7 +615,8 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 			error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.2 %lu < %lu",offset,offsets_struc[iter].size,size);\
 	}\
 	else if(offsets_struc[iter].size < size)\
-		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size);
+		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size); \
+} while(0);
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset)
 { // Be careful on size. Could actually use this on integers, not just arrays. It needs re-writing and better sanity checks. See getter_string as an example.
@@ -665,6 +667,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 }
 
 #define getter_sanity_check(offsets_struc) /* Cannot be converted to function */ \
+do { \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
 	size_t iter = 0;\
 	while(iter < pages && offset != offsets_struc[iter].offset)\
@@ -672,7 +675,8 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset. Coding error. Report this.");\
 	if(offsets_struc[iter].size != anticipated_size)\
-		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this. %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,anticipated_size);
+		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this. %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,anticipated_size); \
+} while(0);
 
 static inline union types getter_peer_union(const int n,const int i,const int f,const size_t offset,const size_t anticipated_size)
 {
@@ -867,6 +871,7 @@ int getter_group_int(const int g,const size_t offset)
 }
 
 #define getter_group_array_sanity_check(offsets_struc) /* Cannot be converted to function */ \
+do { \
 	const size_t pages = sizeof(offsets_struc) / sizeof(struct offsets);\
 	size_t iter = 0;\
 	while(iter < pages && offset != offsets_struc[iter].offset)\
@@ -874,7 +879,8 @@ int getter_group_int(const int g,const size_t offset)
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.6",offset);\
 	if(offsets_struc[iter].size < size)\
-		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.7 %lu < %lu",offset,offsets_struc[iter].size,size);
+		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.7 %lu < %lu",offset,offsets_struc[iter].size,size);\
+} while(0);
 
 void setter_group(const int g,const size_t offset,const void *value,const size_t size)
 { /* Suitable for ALL datatypes (string, int, void*, NULL, etc). Note: The (char*) is necessary because otherwise the offset is treated as an addition to the iterator: &group[g+offset]. https://www.iso-9899.info/n1570.html#6.5.2.1p2

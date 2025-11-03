@@ -101,7 +101,7 @@ severable if found in contradiction with the License or applicable law.
 #define RETRIES_MAX 300 // Maximum amount of tries for tor_call() (to compensate for slow startups, usually takes only 1 but might take more on slow devices when starting up (up to around 9 on android emulator)
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
-#define BROADCAST_MAX_INBOUND_PER_PEER BROADCAST_QUEUE_SIZE/16 // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
+#define BROADCAST_MAX_INBOUND_PER_PEER (BROADCAST_QUEUE_SIZE/16) // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
 
 struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM

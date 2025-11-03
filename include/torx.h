@@ -87,10 +87,10 @@ severable if found in contradiction with the License or applicable law.
 	typedef u_short in_port_t;
 	#define OPTVAL_CAST (const char *)
 	#define pusher(F,A) \
-	{ \
+	do { \
 		pthread_cleanup_push(F,A); \
 		pthread_cleanup_pop(1); \
-	}
+	} while(0);
 	#define htobe16(x) _byteswap_ushort((uint16_t)(x))
 	#define htobe32(x) _byteswap_ulong((uint32_t)(x))
 	#define htobe64(x) _byteswap_uint64((uint64_t)(x))
@@ -110,10 +110,10 @@ severable if found in contradiction with the License or applicable law.
 	#define SOCKET_WRITE_SIZE
 	#define OPTVAL_CAST
 	#define pusher(F,A) \
-	{ \
+	do { \
 		pthread_cleanup_push(F,A) \
 		pthread_cleanup_pop(1); \
-	}
+	} while(0);
 #endif
 
 #ifdef __ANDROID__
@@ -153,65 +153,65 @@ severable if found in contradiction with the License or applicable law.
 #define SIZE_PACKET_STRC 1024 // Seems to not limit the size of individual outbound messages. One for every packet in outbound buffer. So far single-file outbound transfers show this never gets above 1-2. The space it takes at 10,000 is only ~2mb
 #define MAX_INVITEES 4096
 #define BROADCAST_QUEUE_SIZE 4096
-#define BROADCAST_HISTORY_SIZE BROADCAST_QUEUE_SIZE*2 // should be equal to or larger than queue size
+#define BROADCAST_HISTORY_SIZE (BROADCAST_QUEUE_SIZE*2) // should be equal to or larger than queue size
 #define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
 
 /* The following DO NOT CONTAIN + '\0' + [Time] + [NSTime] + Protocol + Signature */
 #ifndef NO_FILE_TRANSFER
 #define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
-#define FILE_REQUEST_LEN		CHECKSUM_BIN_LEN+sizeof(uint64_t)*2
+#define FILE_REQUEST_LEN		(CHECKSUM_BIN_LEN+sizeof(uint64_t)*2)
 #define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
 #define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) *(splits + 1))
 #endif // NO_FILE_TRANSFER
-#define GROUP_OFFER_LEN			GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)
-#define GROUP_OFFER_FIRST_LEN		GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t) + 56 + crypto_sign_PUBLICKEYBYTES
-#define GROUP_OFFER_ACCEPT_LEN		GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES
-#define GROUP_OFFER_ACCEPT_REPLY_LEN	GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2
-#define GROUP_OFFER_ACCEPT_FIRST_LEN	GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES
-#define GROUP_PEERLIST_PUBLIC_LEN	sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES)
-#define GROUP_PEERLIST_PRIVATE_LEN	sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)
-#define GROUP_PRIVATE_ENTRY_REQUEST_LEN	56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES
-#define GROUP_BROADCAST_DECRYPTED_LEN	crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES
-#define GROUP_BROADCAST_LEN		crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN
+#define GROUP_OFFER_LEN			(GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t))
+#define GROUP_OFFER_FIRST_LEN		(GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t) + 56 + crypto_sign_PUBLICKEYBYTES)
+#define GROUP_OFFER_ACCEPT_LEN		(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES)
+#define GROUP_OFFER_ACCEPT_REPLY_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2)
+#define GROUP_OFFER_ACCEPT_FIRST_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES)
+#define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES))
+#define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
+#define GROUP_PRIVATE_ENTRY_REQUEST_LEN	(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)
+#define GROUP_BROADCAST_DECRYPTED_LEN	(crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES)
+#define GROUP_BROADCAST_LEN		(crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN)
 #define PIPE_AUTH_LEN			56
-#define DATE_SIGN_LEN			sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES // time + nstime + sig
+#define DATE_SIGN_LEN			(sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES) // time + nstime + sig
 
 /* Macros for wrapping access to peer struct, especially where not accessing an integer */
 #define torx_read(n) \
-{ \
+do { \
 	pthread_rwlock_rdlock(&mutex_expand); \
 	pthread_rwlock_rdlock(&peer[n].mutex_page); \
-}
+} while(0);
 
 #define torx_write(n) \
-{ \
+do { \
 	pthread_rwlock_rdlock(&mutex_expand); \
 	pthread_rwlock_wrlock(&peer[n].mutex_page); \
-}
+} while(0);
 
 #define torx_unlock(n) \
-{ \
+do { \
 	pthread_rwlock_unlock(&peer[n].mutex_page); \
 	pthread_rwlock_unlock(&mutex_expand); \
-}
+} while(0);
 
 /* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. XXX Note: Necessary to NOT wrap _mutex_lock in a torx_read because it WILL result in lock-order-inversion */
 #ifndef NO_FILE_TRANSFER
 #define torx_fd_lock(n,f) \
-{ \
+do { \
 	torx_read(n) \
 	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
 	pthread_mutex_lock(mutex); \
-}
+} while(0);
 
 #define torx_fd_unlock(n,f) \
-{ \
+do { \
 	torx_read(n) \
 	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
 	pthread_mutex_unlock(mutex); \
-}
+} while(0);
 #endif // NO_FILE_TRANSFER
 /* Convenience function for cloning a page */ // WARNING: Do not make a "torx_page_save". That would be a very bad thing because very much could change elsewhere between open and close.
 /* Usage example:
@@ -222,12 +222,12 @@ severable if found in contradiction with the License or applicable law.
 	torx_page_close
 */
 #define torx_page_open(n) \
-{ \
+do { \
 	struct peer_list peer_page; \
 	torx_read(n) \
 	memcpy(&peer_page,&peer[n],sizeof(peer_page)); \
 	torx_unlock(n) \
-}
+} while(0);
 
 #define torx_page_close \
 	sodium_memzero(&peer_page,sizeof(peer_page));
@@ -235,13 +235,13 @@ severable if found in contradiction with the License or applicable law.
 
 /* Close sockets */
 #define close_sockets_nolock(fd) \
-{ \
+do { \
 	if(fd) { fclose(fd); fd = NULL; } \
-}
+} while(0);
 /* XXX This is the CORRECT order, do not modify. torx_fd_lock, THEN torx_read, localize, close, torx_write, globalize, torx_fd_unlock, otherwise races could occur. XXX */
 #ifndef NO_FILE_TRANSFER
 #define close_sockets(n,f) \
-{ \
+do { \
 	torx_fd_lock(n,f) \
 	torx_read(n) \
 	FILE *fd_active_tmp = peer[n].file[f].fd; \
@@ -251,7 +251,7 @@ severable if found in contradiction with the License or applicable law.
 	peer[n].file[f].fd = fd_active_tmp; \
 	torx_unlock(n) \
 	torx_fd_unlock(n,f) \
-} // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
+} while(0); // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
 #endif // NO_FILE_TRANSFER
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"

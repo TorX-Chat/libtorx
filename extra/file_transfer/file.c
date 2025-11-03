@@ -68,8 +68,8 @@ XXX WARNINGS XXX
 */
 
 #define SPLIT_DELAY 1 // 0 is writing checkpoint every packet, 1 is every 120kb, 2 is every 240kb, ... Recommend 1+. XXX 0 may cause divide by zero errors/crash?
-#define MINIMUM_SECTION_SIZE 5*1024*1024 // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
-#define REALISTIC_PEAK_TRANSFER_SPEED 50*1024*1024 // In bytes/s. Throws away bytes_per_second calculations above this level, for the purpose of calculating average transfer speed. It's fine and effective to set this as high as 1024*1024*1024 (1gb/s).
+#define MINIMUM_SECTION_SIZE (5*1024*1024) // Bytes. for groups only, currently, because we don't use split files in P2P. Set by the file offerer exlusively.
+#define REALISTIC_PEAK_TRANSFER_SPEED (50*1024*1024) // In bytes/s. Throws away bytes_per_second calculations above this level, for the purpose of calculating average transfer speed. It's fine and effective to set this as high as 1024*1024*1024 (1gb/s).
 
 void (*initialize_f_registered)(const int n,const int f) = NULL;
 void (*expand_file_struc_registered)(const int n,const int f) = NULL;
@@ -827,7 +827,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 { // Populates peer[n].file[f].{stuff} for outbound ENUM_PROTOCOL_FILE_OFFER
 	if(n < 0 || !checksum || !file_path || !size)
 	{
-		error_simple(0,"Sanity check failed in process_file_offer_outbound. Coding error. Report this.");
+		error_printf(0,"Sanity check failed in process_file_offer_outbound: n=%d size=%llu. Coding error. Report this.",n,size);
 		breakpoint();
 		return -1;
 	}

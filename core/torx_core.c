@@ -3683,11 +3683,8 @@ int set_g(const int n,const void *arg)
 				else
 					break; // winner! set peer[n].associated_group here so that it only need be set once
 			}
-		else
-		{ // MUST BE FATAL or it will cause weird problems. Don't call set_g on non-group peer types.
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+		else // MUST BE FATAL or it will cause weird problems. Don't call set_g on non-group peer types. XXX DO NOT UNLOCK mutex_expand_group without returning
 			error_simple(-1,"set_g called on a non-group peer. Coding error. Report this. (include backtrace in report)"); // NOTE: Highly likely a UI dev error. Get a backtrace.
-		}
 	}
 	else if(group_id)// search by group_id
 		while((group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE)) && memcmp(group[g].id,group_id,GROUP_ID_SIZE))
@@ -5074,8 +5071,7 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 	snprintf(peeronion_or_torxid,sizeof(peeronion_or_torxid),"%s",unstripped_peerid_local);
 	sodium_memzero(unstripped_peerid_local,sizeof(unstripped_peerid_local));
 	char *peeronion = {0}; // must set null in case of error
-	while(1)
-	{ // not a real while loop, just don't want to use goto
+	do { // not a real while loop, just don't want to use goto
 		if(id_len == 56)
 		{ // onion, check the checksum
 			char *torxid = torxid_from_onion(peeronion_or_torxid);
@@ -5136,7 +5132,7 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		if(pthread_create(thrd_send,&ATTR_DETACHED,&peer_init,itovp(n)))
 			error_simple(-1,"Failed to create thread1");
 		return 0;
-	}
+	} while(0);
 	sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
 	torx_free((void*)&peeronion);
 	return -1;

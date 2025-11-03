@@ -176,7 +176,7 @@ int message_edit(const int n,const int i,const char *message)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.3");
+		error_printf(0,"Message's p_iter is <0 which indicates it is deleted or buggy.3 n=%d i=%d",n,i);
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -630,7 +630,10 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration)
 { // not filling 'peer_sign_pk' and 'sign_sk', leaving them as NULL. Fill them during handshake with sql_update_peer.
 	if(!privkey || !peeronion || !peernick) // TODO could add some additional checks here
+	{
 		error_simple(-1,"Sanity check failed in sql_insert_peer. Coding error. Report this.");
+		return -1;
+	}
 	char command[1024]; // size is arbitrary
 	snprintf(command,sizeof(command),"INSERT OR ABORT INTO peer (owner,status,peerversion,privkey,peeronion,peernick,expiration) VALUES (%u,%u,%u,'%s','%s',?,%d);",owner,status,peerversion,privkey,peeronion,expiration);
 	int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
@@ -691,8 +694,7 @@ static int sql_update_blob(sqlite3** db,const char* table_name,const char* colum
 		return result;
 	}
 	result = sqlite3_bind_blob(stmt, 1, data, size, SQLITE_TRANSIENT);
-	while(1)
-	{ // not a real loop... just to avoid goto
+	do { // not a real loop... just to avoid goto
 		if(result != SQLITE_OK)
 		{
 			error_printf(0, "Error binding parameter: %s",sqlite3_errmsg(*db));
@@ -704,10 +706,8 @@ static int sql_update_blob(sqlite3** db,const char* table_name,const char* colum
 			error_printf(0, "Error executing statement: %s",sqlite3_errmsg(*db));
 			break;
 		}
-	//	printf("Checkpoint sql_update_blob: %s\n",b649_encode(data,size));
 		result = SQLITE_OK;
-		break;
-	}
+	} while(0);
 	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	pthread_mutex_unlock(mutex); // 🟩🟩
 	sqlite3_free(table_sql);
@@ -719,7 +719,7 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.0");
+		error_printf(0,"Message's p_iter is <0 which indicates it is deleted or buggy.0 n=%d i=%d",n,i);
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -810,7 +810,7 @@ int sql_insert_message(const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.1");
+		error_printf(0,"Message's p_iter is <0 which indicates it is deleted or buggy.1 n=%d i=%d",n,i);
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -862,7 +862,7 @@ int sql_update_message(const int n,const int i)
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
 	{
-		error_simple(0,"Message's p_iter is <0 which indicates it is deleted or buggy.2");
+		error_printf(0,"Message's p_iter is <0 which indicates it is deleted or buggy.2 n=%d i=%d",n,i);
 		breakpoint();
 		return -1; // message is deleted or buggy
 	}
@@ -1414,12 +1414,13 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 
 void sql_populate_setting(const int force_plaintext)
 {
-	#define sanity_check if(peer_index < 0) \
-		{ \
-			error_simple(0,"Invalid peer_index in sql_populate_setting. Bailing. Report this."); \
-			breakpoint(); \
-			continue; \
-		}
+	#define sanity_check /* can not wrap in do while(0) because of continue */\
+	if(peer_index < 0) \
+	{ \
+		error_simple(0,"Invalid peer_index in sql_populate_setting. Bailing. Report this."); \
+		breakpoint(); \
+		continue; \
+	}
 	sqlite3 **db;
 	pthread_mutex_t *mutex; // note POINTER to mutex
 	int cycles = 2;

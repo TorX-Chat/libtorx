@@ -103,6 +103,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		if(stat != ENUM_MESSAGE_FAIL)
 		{ // Race condition. This can happen where cascade sends off a message before we anticipated.
 			error_printf(0,"Send_prep message already sent: n=%d i=%d stat=%u.",n,i,stat);
+			breakpoint();
 			goto error;
 		}
 		const int true_p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));

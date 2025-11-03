@@ -103,7 +103,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		const uint32_t trash = htobe32(peercount);
 		memcpy(&base_message[0],&trash,sizeof(uint32_t));
 		size_t cur = sizeof(uint32_t); // current position
-		#define obtain_specific_peer \
+		#define obtain_specific_peer /* cannot use do while(0) because we declare a variable here */\
 			pthread_rwlock_rdlock(&mutex_expand_group);\
 			const int specific_peer = group[g].peerlist[nn];\
 			pthread_rwlock_unlock(&mutex_expand_group);
@@ -661,11 +661,9 @@ void *peer_init(void *arg)
 	else // 2+56+32
 	{ /* Good send, Expecting response */
 		const ssize_t r = recv(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // XXX BLOCKING
-		while(1)
-		{ // not a real while loop... just avoiding goto
+		do { // not a real while loop... just avoiding goto
 			if(r >= (ssize_t) sizeof(buffer))
-			{
-	//printf("Checkpoint correct size reply of %d\n",r);
+			{ // Correct sized reply
 				if(fresh_n > -1) // sanity check of n
 				{ // XXX WARNING: Use fresh_n (ctrl) not n (peer) XXX
 					unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
@@ -698,8 +696,7 @@ void *peer_init(void *arg)
 			}
 			else
 				error_printf(0,"Wrong sized init reply received from peer of length: %ld after sending length: %ld. Handshake failed.",r,s); //  Could consider deleting peer (no, because their onion could be a mult)
-			break;
-		}
+		} while(0);
 		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,1); // delete our PEER XXX after load_onion, otherwise we'll have zeros in our new onion's peernick
 	}
