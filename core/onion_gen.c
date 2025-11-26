@@ -203,7 +203,7 @@ static void *onion_gen(void *arg)
 		if(default_peernick == NULL)
 			error_simple(-1,"Default peernick is null. Coding error. Report this.");
 		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
-		serv_strc->peernick = torx_copy(NULL,default_peernick);
+		serv_strc->peernick = torx_copy(default_peernick);
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧

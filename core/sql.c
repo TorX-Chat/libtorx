@@ -285,8 +285,8 @@ int message_edit(const int n,const int i,const char *message)
 	return 0;
 }
 
-int sql_exec(sqlite3** db,const char *command,const char *setting_value,const size_t setting_value_len)
-{ // XXX THIS CAN ONLY TAKE STRINGS AS ARGUMENTS XXX setting_value is optional but needs to be used if there is possibility of dangerous data in text. NOTE: can still segfault if not string (it calls strlen)
+int sql_exec(sqlite3** db,const char *command,...)
+{ // Usage: sql_exec(&db_plaintext,"command here (?,?)",value1,value1_len,value2,value2_len,NULL);
 	if(command == NULL)
 	{
 		error_simple(0,"NULL command passed to sql_exec. Coding error. Report this.");
@@ -315,13 +315,19 @@ int sql_exec(sqlite3** db,const char *command,const char *setting_value,const si
 		pthread_mutex_unlock(mutex); // 🟩🟩
 		return val;
 	}
-	if(setting_value != NULL && setting_value_len && (val = sqlite3_bind_blob(stmt, 1, setting_value,(int)setting_value_len, SQLITE_TRANSIENT)) != SQLITE_OK) // Bind the parameter, if passed
-	{
-		error_printf(0, "Cannot bind value to parameter: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
-		sqlite3_finalize(stmt);
-		pthread_mutex_unlock(mutex); // 🟩🟩
-		return val;
-	}
+	va_list ap;
+	const char *string_or_blob;
+	size_t string_or_blob_len;
+	va_start(ap, command);
+	for(int wildcard = 1; (string_or_blob = va_arg(ap, const char *)) && (string_or_blob_len = va_arg(ap, size_t)); wildcard++)
+		if((val = sqlite3_bind_blob(stmt, wildcard, string_or_blob,(int)string_or_blob_len, SQLITE_TRANSIENT)) != SQLITE_OK) // Bind the parameter, if passed
+		{
+			error_printf(0, "Cannot bind value to parameter: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
+			sqlite3_finalize(stmt);
+			pthread_mutex_unlock(mutex); // 🟩🟩
+			return val;
+		}
+	va_end(ap);
 	if((val = sqlite3_step(stmt)) != SQLITE_DONE) // Execute the statement
 	{ // Occurs whenever already exists
 		error_printf(4, "Cannot execute statement: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
@@ -348,44 +354,40 @@ static inline int sql_insert_setting(const int force_plaintext,const int peer_in
 		breakpoint();
 		return -1;
 	}
-	char *table_sql;
+	char command[256]; // size is somewhat arbitrary
 	if(force_plaintext)
-		table_sql = sqlite3_mprintf("INSERT OR ABORT INTO setting_clear (setting_name,setting_value) VALUES ('%s',?);",setting_name);
+		snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_clear (setting_name,setting_value) VALUES (?,?);");
 	else if(peer_index == -1)
-		table_sql = sqlite3_mprintf("INSERT OR ABORT INTO setting_global (setting_name,setting_value) VALUES ('%s',?);",setting_name);
+		snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_global (setting_name,setting_value) VALUES (?,?);");
 	else /* encrypted */
 	{ // For plaintext we have a unqiue setting_name, so we don't need to check first with a select whether it exists (find row)
 		sqlite3_stmt *stmt;
-		table_sql = sqlite3_mprintf("SELECT *FROM setting_peer WHERE peer_index = %d AND setting_name = '%s';",peer_index,setting_name);
+		const int len = snprintf(command,sizeof(command),"SELECT *FROM setting_peer WHERE peer_index = %d AND setting_name = (?);",peer_index);
 		pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
-		if(sqlite3_prepare_v2(db_encrypted,table_sql, -1, &stmt, NULL) != SQLITE_OK) // XXX passing length + null terminator for testing because sqlite is weird
+		if(sqlite3_prepare_v2(db_encrypted,command, len, &stmt, NULL) != SQLITE_OK) // XXX passing length + null terminator for testing because sqlite is weird
 		{
 			error_printf(0, "Can't prepare setting statement: %s",sqlite3_errmsg(db_encrypted)); // return value is const, cannot be freed, so leave it as is
 			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			sqlite3_free(table_sql);
+			sodium_memzero(command,sizeof(command));
 			return -1;
 		}
+		sqlite3_bind_text(stmt, 1, setting_name, (int)strlen(setting_name), SQLITE_TRANSIENT);
 		if(sqlite3_step(stmt) == SQLITE_ROW)
 		{
 			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			sqlite3_free(table_sql);
+			sodium_memzero(command,sizeof(command));
 			return SQLITE_CONSTRAINT; // unique failure, same as would be returned by force_plaintext == 1 unique failure
 		}
 		else 
 		{
 			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			sqlite3_free(table_sql);
-			table_sql = sqlite3_mprintf("INSERT OR ABORT INTO setting_peer (peer_index,setting_name,setting_value) VALUES (%d,'%s',?);",peer_index,setting_name);
+			snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_peer (peer_index,setting_name,setting_value) VALUES (%d,?,?);",peer_index);
 		}
 	}
-	int val;
-	if(force_plaintext)
-		val = sql_exec(&db_plaintext,table_sql,setting_value,setting_value_len);
-	else
-		val = sql_exec(&db_encrypted,table_sql,setting_value,setting_value_len);
-	sqlite3_free(table_sql);
+	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_name,strlen(setting_name),setting_value,setting_value_len,NULL);
+	sodium_memzero(command,sizeof(command));
 	return val;
 }
 
@@ -397,18 +399,14 @@ static inline int sql_update_setting(const int force_plaintext,const int peer_in
 		breakpoint();
 		return -1;
 	}
-	char command[strlen(setting_name)+256+2]; // size is somewhat arbitrary
+	char command[256]; // size is somewhat arbitrary
 	if(force_plaintext)
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_clear SET (setting_value) = (?) WHERE setting_name = '%s';",setting_name);
+		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_clear SET (setting_value) = (?) WHERE setting_name = (?);");
 	else if(peer_index == -1)
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_global SET (setting_value) = (?) WHERE setting_name = '%s';",setting_name);
+		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_global SET (setting_value) = (?) WHERE setting_name = (?);");
 	else // encrypted
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_peer SET (setting_value) = (?) WHERE peer_index = %d AND setting_name = '%s';",peer_index,setting_name);
-	int val;
-	if(force_plaintext)
-		val = sql_exec(&db_plaintext,command,setting_value,setting_value_len);
-	else
-		val = sql_exec(&db_encrypted,command,setting_value,setting_value_len);
+		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_peer SET (setting_value) = (?) WHERE peer_index = %d AND setting_name = (?);",peer_index);
+	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_value,setting_value_len,setting_name,strlen(setting_name),NULL);
 	sodium_memzero(command,sizeof(command));
 	return val;
 }
@@ -535,14 +533,14 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 					const int g = set_g(n,NULL);
 					const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 					const int f = set_f(group_n,(const unsigned char*)message,CHECKSUM_BIN_LEN);
-					char *file_path = getter_string(NULL,group_n,INT_MIN,f,offsetof(struct file_list,file_path));
+					char *file_path = getter_string(group_n,INT_MIN,f,offsetof(struct file_list,file_path));
 					process_file_offer_outbound(group_n,(const unsigned char*)message,splits,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)])),file_path);
 					torx_free((void*)&file_path);
 				}
 				else
 				{
 					const int f = set_f(n,(const unsigned char*)message,CHECKSUM_BIN_LEN);
-					char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+					char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 					process_file_offer_outbound(n,(const unsigned char*)message,0,NULL,be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN+sizeof(uint64_t)])),file_path);
 					torx_free((void*)&file_path);
 				}
@@ -634,13 +632,14 @@ int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peer
 		error_simple(-1,"Sanity check failed in sql_insert_peer. Coding error. Report this.");
 		return -1;
 	}
-	char command[1024]; // size is arbitrary
-	snprintf(command,sizeof(command),"INSERT OR ABORT INTO peer (owner,status,peerversion,privkey,peeronion,peernick,expiration) VALUES (%u,%u,%u,'%s','%s',?,%d);",owner,status,peerversion,privkey,peeronion,expiration);
-	int val = sql_exec(&db_encrypted,command,peernick,strlen(peernick));
+	char command[256]; // size is arbitrary
+	snprintf(command,sizeof(command),"INSERT OR ABORT INTO peer (owner,status,peerversion,privkey,peeronion,peernick,expiration) VALUES (%u,%u,%u,?,?,?,%d);",owner,status,peerversion,expiration);
+	int val = sql_exec(&db_encrypted,command,privkey,88,peeronion,56,peernick,strlen(peernick),NULL);
 	sqlite3_stmt *stmt;
-	int len = snprintf(command,sizeof(command),"SELECT peer_index FROM peer WHERE privkey = '%s';",privkey);
+	int len = snprintf(command,sizeof(command),"SELECT peer_index FROM peer WHERE privkey = (?);");
 	pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
-	val = sqlite3_prepare_v2(db_encrypted,command,len, &stmt,NULL); // XXX passing length + null terminator for testing because sqlite is weird
+	val = sqlite3_prepare_v2(db_encrypted,command,len, &stmt,NULL);
+	sqlite3_bind_text(stmt, 1, privkey, 88, SQLITE_TRANSIENT);
 	sodium_memzero(command,sizeof(command));
 	if(val != SQLITE_OK)
 	{
@@ -661,60 +660,7 @@ int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peer
 	return -1;
 }
 
-static int sql_update_blob(sqlite3** db,const char* table_name,const char* column_name,const int peer_index,const time_t time,const time_t nstime,const void* data,const int size)
-{ // Store or update a blob to an existing peer_index row
-	sqlite3_stmt *stmt;
-	pthread_mutex_t *mutex; // note POINTER to mutex
-	if(*db == db_encrypted)
-		mutex = &mutex_sql_encrypted;
-	else if(*db == db_plaintext)
-		mutex = &mutex_sql_plaintext;
-	else if(*db == db_messages)
-		mutex = &mutex_sql_messages;
-	else // coding error
-	{
-		error_simple(0,"Invalid database. Coding error. Report this.");
-		breakpoint();
-		return -1;
-	}
-	char* table_sql;
-	if(!strncmp(table_name,"message",7))
-		table_sql = sqlite3_mprintf("UPDATE OR ABORT '%s' SET ('%s') = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", table_name, column_name, peer_index, time, nstime);
-	else if(!strncmp(table_name,"peer",4))
-		table_sql = sqlite3_mprintf("UPDATE OR ABORT '%s' SET ('%s') = (?) WHERE peer_index = %d;", table_name, column_name, peer_index);
-	else // coding error
-		return -1;
-	pthread_mutex_lock(mutex); // 🟥🟥
-	int result = sqlite3_prepare_v2(*db, table_sql, -1, &stmt, NULL);
-	if(result != SQLITE_OK)
-	{
-		error_printf(0, "Error preparing statement: %s",sqlite3_errmsg(*db));
-		pthread_mutex_unlock(mutex); // 🟩🟩
-		sqlite3_free(table_sql);
-		return result;
-	}
-	result = sqlite3_bind_blob(stmt, 1, data, size, SQLITE_TRANSIENT);
-	do { // not a real loop... just to avoid goto
-		if(result != SQLITE_OK)
-		{
-			error_printf(0, "Error binding parameter: %s",sqlite3_errmsg(*db));
-			break;
-		}
-		result = sqlite3_step(stmt);
-		if(result != SQLITE_DONE)
-		{
-			error_printf(0, "Error executing statement: %s",sqlite3_errmsg(*db));
-			break;
-		}
-		result = SQLITE_OK;
-	} while(0);
-	sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-	pthread_mutex_unlock(mutex); // 🟩🟩
-	sqlite3_free(table_sql);
-	return result;
-}
-
-static int sql_exec_msg(const int n,const int i,const char *command)
+static int sql_exec_msg(const int n,const int i,const char *passed_command)
 {
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 	if(p_iter < 0)
@@ -735,18 +681,21 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 	int val = -1;
-	uint32_t message_len;
-	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
+	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
+	const uint32_t message_len = torx_allocation_len(message);
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
-		val = sql_exec(&db_messages,command,NULL,0); // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
+		val = sql_exec(&db_messages,passed_command,NULL); // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
 	else if(null_terminated_len == 0 && message)
 	{ // Prevent update_blob from triggering on outbound group_public messages, even if binary only
-		val = sql_exec(&db_messages,command,NULL,0);
+		val = sql_exec(&db_messages,passed_command,NULL);
 		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-		sql_update_blob(&db_messages,"message","message_bin",peer_index,time,nstime,message,(int)(message_len - (null_terminated_len + date_len + signature_len)));
+		char command[256]; // size is somewhat arbitrary
+		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET message_bin = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+		sql_exec(&db_messages,command,message,message_len - (null_terminated_len + date_len + signature_len),NULL);
+		sodium_memzero(command,sizeof(command));
 	}
 	else if(null_terminated_len && message)
-		val = sql_exec(&db_messages,command,message,strlen(message));
+		val = sql_exec(&db_messages,passed_command,message,message_len - (null_terminated_len + date_len + signature_len),NULL);
 	else
 		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,message ? 1 : 0);
 	torx_free((void*)&message);
@@ -756,7 +705,12 @@ static int sql_exec_msg(const int n,const int i,const char *command)
 static inline void sql_message_tail_section(const int peer_index,const int n,const time_t time,const time_t nstime,const uint8_t stat,const uint16_t protocol,const uint8_t file_offer,const char *message,const uint32_t message_len,const uint32_t signature_len)
 { // Warning: no error checks, this is a macro converted to a function. TODO this triggers far more often than necessary. Triggers once for every outbound file request, which occurs for every split. Ideally should just trigger upon first and then again after unpause perhaps...
 	if(signature_len) // Update signature (only)
-		sql_update_blob(&db_messages,"message","signature",peer_index,time,nstime,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES);
+	{
+		char command[256]; // size is somewhat arbitrary
+		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET signature = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+		sql_exec(&db_messages,command,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES,NULL);
+		sodium_memzero(command,sizeof(command));
+	}
 	#ifndef NO_FILE_TRANSFER
 	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV)
 	{ // save file_path as extraneous
@@ -770,10 +724,13 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 		}
 		if(f > -1) // NOT else if
 		{
-			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 			if(file_path) // not always true
 			{
-				sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,file_path,(int)strlen(file_path));
+				char command[256]; // size is somewhat arbitrary
+				snprintf(command,sizeof(command),"UPDATE OR ABORT message SET extraneous = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+				sql_exec(&db_messages,command,file_path,torx_allocation_len(file_path)-1,NULL);
+				sodium_memzero(command,sizeof(command));
 				torx_free((void*)&file_path);
 			}
 		}
@@ -824,8 +781,8 @@ int sql_insert_message(const int n,const int i)
 	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	if(logged == 0 || !log_check(n,group_pm,protocol))
 		return 0; // do not log these.
-	uint32_t message_len;
-	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
+	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
+	const uint32_t message_len = torx_allocation_len(message);
 	if(!message)
 	{
 		error_printf(0,"Null message passed to sql_insert_message. Not saving. Report this. Protocol: %u",protocol);
@@ -840,14 +797,14 @@ int sql_insert_message(const int n,const int i)
 	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 	{ // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
-		char command[512]; // size is somewhat arbitrary
+		char command[256]; // size is somewhat arbitrary
 		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol) VALUES (%lld,%lld,%d,%d,%d);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
 	}
 	else
 	{
-		char command[512]; // size is somewhat arbitrary
+		char command[256]; // size is somewhat arbitrary
 		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol,message_txt) VALUES (%lld,%lld,%d,%d,%d,?);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
@@ -880,19 +837,19 @@ int sql_update_message(const int n,const int i)
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
 	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 
-	char command[512]; // size is somewhat arbitrary
+	char command[256]; // size is somewhat arbitrary
 	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET (stat,protocol,message_txt) = (%d,%d,?) WHERE time = %lld AND nstime = %lld AND peer_index = %d;",stat,protocol,(long long)time,(long long)nstime,peer_index);
 	const int val = sql_exec_msg(n,i,command); // Update message
 	sodium_memzero(command,sizeof(command));
-	uint32_t message_len;
-	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
+	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
+	const uint32_t message_len = torx_allocation_len(message);
 	sql_message_tail_section(peer_index,n,time,nstime,stat,protocol,file_offer,message,message_len,signature_len);
 	torx_free((void*)&message);
 	return val;
 }
 
 int sql_update_peer(const int n)
-{ // XXX WARNING: passing sign_sk or peer_sign_pk as NULL will render them null in the database.
+{
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	if(peer_index < 0)
 	{
@@ -903,28 +860,25 @@ int sql_update_peer(const int n)
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
 	const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
-	char privkey[88+1];
+	char privkey[88+1]; // zero'd
 	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
-	char peeronion[56+1];
+	char peeronion[56+1]; // zero'd
 	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
-	char command[1024]; // size is arbitrary
-	snprintf(command,sizeof(command),"UPDATE OR ABORT peer SET (owner,status,peerversion,privkey,peeronion,peernick) = (%u,%u,%u,'%s','%s',?) WHERE peer_index = %d;",owner,status,peerversion,privkey,peeronion,peer_index);
-	sodium_memzero(privkey,sizeof(privkey));
-	sodium_memzero(peeronion,sizeof(peeronion));
-	uint32_t peernick_len;
-	char *peernick = getter_string(&peernick_len,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
-	const int val = sql_exec(&db_encrypted,command,peernick,peernick_len-1); // don't include null byte in the count
-	torx_free((void*)&peernick);
-	sodium_memzero(command,sizeof(command));
+	char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+	const uint32_t peernick_len = torx_allocation_len(peernick);
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
 	getter_array(&sign_sk,sizeof(sign_sk),n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
 	getter_array(&peer_sign_pk,sizeof(peer_sign_pk),n,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
 	unsigned char invitation[crypto_sign_BYTES];
 	getter_array(&invitation,sizeof(invitation),n,INT_MIN,-1,offsetof(struct peer_list,invitation));
-	sql_update_blob(&db_encrypted,"peer","sign_sk",peer_index,0,0,sign_sk,crypto_sign_SECRETKEYBYTES);
-	sql_update_blob(&db_encrypted,"peer","peer_sign_pk",peer_index,0,0,peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
-	sql_update_blob(&db_encrypted,"peer","invitation",peer_index,0,0,invitation,crypto_sign_BYTES);
+	char command[256]; // size is arbitrary
+	snprintf(command,sizeof(command),"UPDATE OR ABORT peer SET (owner,status,peerversion,privkey,peeronion,peernick,sign_sk,peer_sign_pk,invitation) = (%u,%u,%u,?,?,?,?,?,?) WHERE peer_index = %d;",owner,status,peerversion,peer_index);
+	const int val = sql_exec(&db_encrypted,command,privkey,88,peeronion,56,peernick,peernick_len-1,sign_sk,crypto_sign_SECRETKEYBYTES,peer_sign_pk,crypto_sign_PUBLICKEYBYTES,invitation,crypto_sign_BYTES,NULL);
+	torx_free((void*)&peernick);
+	sodium_memzero(privkey,sizeof(privkey));
+	sodium_memzero(peeronion,sizeof(peeronion));
+	sodium_memzero(command,sizeof(command));
 	sodium_memzero(sign_sk,sizeof(sign_sk));
 	sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 	sodium_memzero(invitation,sizeof(invitation));
@@ -959,7 +913,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		return 0; // no messages to retrieve
 	}
 	sqlite3_stmt *stmt;
-	char command[512]; // size is somewhat arbitrary
+	char command[256]; // size is somewhat arbitrary
 	int len = 0; // clang thinks this should be initialized, but I disagree.
 	uint8_t reverse;
 	if(!messages_loaded)
@@ -1177,7 +1131,10 @@ void message_extra(const int n,const int i,const void *data,const uint32_t data_
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
-	sql_update_blob(&db_messages,"message","extraneous",peer_index,time,nstime,data,(int)data_len);
+	char command[256]; // size is somewhat arbitrary
+	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET extraneous = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+	sql_exec(&db_messages,command,data,data_len,NULL);
+	sodium_memzero(command,sizeof(command));
 }
 
 static inline void inline_load_messages(const uint8_t owner,const int peer_index,const int n,const uint32_t local_show_log_messages)
@@ -1224,7 +1181,7 @@ int sql_populate_peer(void)
 	sqlite3_stmt *stmt;
 //	pthread_mutex_lock(&mutex_sql_encrypted);
 	const char command[] = "SELECT *FROM peer";
-	int val = sqlite3_prepare_v2(db_encrypted,command,(int)strlen(command), &stmt, NULL);
+	int val = sqlite3_prepare_v2(db_encrypted,command,(int)sizeof(command)-1, &stmt, NULL);
 	if(val != SQLITE_OK)
 	{
 //		pthread_mutex_unlock(&mutex_sql_encrypted);
@@ -1341,12 +1298,13 @@ int sql_populate_peer(void)
 	return 0;
 }
 
-unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query)
+unsigned char *sql_retrieve_setting(const int force_plaintext,const char *setting_name)
 { // WARNING: only returns the FIRST match
 	size_t setting_value_len = 0;
 	unsigned char *data = NULL;
-	if(query == NULL || strlen(query) == 0)
-		goto fail;
+	size_t setting_name_len;
+	if(setting_name == NULL || (setting_name_len = strlen(setting_name)) == 0)
+		return data;
 	sqlite3 **db;
 	pthread_mutex_t *mutex; // note POINTER to mutex
 	int cycles = 2;
@@ -1365,22 +1323,21 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 	pthread_mutex_lock(mutex); // 🟥🟥
 	while(cycles--)
 	{
-		const size_t allocated = strlen(query) + 64;
-		char *command = torx_secure_malloc(allocated); // size is somewhat arbitrary
+		const char *command;
 		if(force_plaintext)
-			snprintf(command,allocated,"SELECT *FROM setting_clear WHERE setting_name = '%s'",query);
+			command = "SELECT *FROM setting_clear WHERE setting_name = (?)";
 		else if(cycles)
-			snprintf(command,allocated,"SELECT *FROM setting_global WHERE setting_name = '%s'",query);
+			command = "SELECT *FROM setting_global WHERE setting_name = (?)";
 		else
-			snprintf(command,allocated,"SELECT *FROM setting_peer WHERE setting_name = '%s'",query);
+			command = "SELECT *FROM setting_peer WHERE setting_name = (?)";
 		int val = sqlite3_prepare_v2(*db,command,(int)strlen(command), &stmt, NULL);
-		torx_free((void*)&command);
 		if(val != SQLITE_OK)
 		{
 			error_printf(0, "Can't prepare populate setting statement: %s",sqlite3_errmsg(*db));
 			pthread_mutex_unlock(mutex); // 🟩🟩
-			goto fail;
+			return data;
 		}
+		sqlite3_bind_text(stmt, 1, setting_name, (int)setting_name_len, SQLITE_TRANSIENT);
 		const char *setting_value = NULL;
 		if((val = sqlite3_step(stmt)) == SQLITE_ROW)
 		{ // Retrieve data here using sqlite3_column_* functions,
@@ -1405,9 +1362,6 @@ unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const cha
 		sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
 	}
 	pthread_mutex_unlock(mutex); // 🟩🟩
-	fail: {}
-	if(data_len)
-		*data_len = setting_value_len;
 	return data;
 }
 
@@ -1458,10 +1412,12 @@ void sql_populate_setting(const int force_plaintext)
 			int peer_index = -1;
 			const char *setting_name;
 			const char *setting_value;
+			size_t setting_name_len;
 			size_t setting_value_len;
 			if(force_plaintext || cycles) // (force_plaintext)
 			{ // TODO 2024/03/09 consider using sqlite3_column_blob for setting_value
 				setting_name = (const char *)sqlite3_column_text(stmt, 1);
+				setting_name_len = (size_t)sqlite3_column_bytes(stmt, 1);
 				setting_value = (const char *)sqlite3_column_text(stmt, 2);
 				setting_value_len = (size_t)sqlite3_column_bytes(stmt, 2);
 			}
@@ -1469,6 +1425,7 @@ void sql_populate_setting(const int force_plaintext)
 			{
 				peer_index = sqlite3_column_int(stmt, 1);
 				setting_name = (const char *)sqlite3_column_text(stmt, 2);
+				setting_name_len = (size_t)sqlite3_column_bytes(stmt, 2);
 				setting_value = (const char *)sqlite3_column_text(stmt, 3);
 				setting_value_len = (size_t)sqlite3_column_bytes(stmt, 3);
 			}
@@ -1555,9 +1512,8 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_plaintext)
 						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-					const size_t len = strlen(setting_name);
-					char *setting_name_allocated = torx_secure_malloc(len+1);
-					snprintf(setting_name_allocated,len+1,"%s",setting_name);
+					char *setting_name_allocated = torx_secure_malloc(setting_name_len+1);
+					snprintf(setting_name_allocated,setting_name_len+1,"%s",setting_name);
 					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1); // TODO +1/Null termination could interfere with binary interpretation if callback utilizes torx_allocation_len(setting_value_allocated) instead of setting_value_len
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
@@ -1808,9 +1764,8 @@ void sql_populate_setting(const int force_plaintext)
 					if(!library_settings_loaded_encrypted && peer_index < 0) // prevent potential for deadlock by unpredictable contents of custom_setting_cb
 						pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 					const int n = set_n(peer_index,NULL); // XXX WARNING: N could be negative, indicating a global value
-					const size_t len = strlen(setting_name);
-					char *setting_name_allocated = torx_secure_malloc(len+1);
-					snprintf(setting_name_allocated,len+1,"%s",setting_name);
+					char *setting_name_allocated = torx_secure_malloc(setting_name_len+1);
+					snprintf(setting_name_allocated,setting_name_len+1,"%s",setting_name);
 					char *setting_value_allocated = torx_secure_malloc(setting_value_len+1); // TODO +1/Null termination could interfere with binary interpretation if callback utilizes torx_allocation_len(setting_value_allocated) instead of setting_value_len
 					memcpy(setting_value_allocated,setting_value,setting_value_len);
 					setting_value_allocated[setting_value_len] = '\0';
@@ -1852,18 +1807,14 @@ int sql_delete_setting(const int force_plaintext,const int peer_index,const char
 		breakpoint();
 		return -1;
 	}
-	char command[strlen(setting_name)+256+2]; // size is somewhat arbitrary
+	char command[256]; // size is somewhat arbitrary
 	if(force_plaintext)
-		snprintf(command,sizeof(command),"DELETE FROM setting_clear WHERE setting_name = '%s';",setting_name);
+		snprintf(command,sizeof(command),"DELETE FROM setting_clear WHERE setting_name = (?);");
 	else if(peer_index == -1)
-		snprintf(command,sizeof(command),"DELETE FROM setting_global WHERE setting_name = '%s';",setting_name);
+		snprintf(command,sizeof(command),"DELETE FROM setting_global WHERE setting_name = (?);");
 	else // encrypted
-		snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND setting_name = '%s';",peer_index,setting_name);
-	int val;
-	if(force_plaintext)
-		val = sql_exec(&db_plaintext,command,NULL,0);
-	else
-		val = sql_exec(&db_encrypted,command,NULL,0);
+		snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND setting_name = (?);",peer_index);
+	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_name,strlen(setting_name),NULL);
 	sodium_memzero(command,sizeof(command));
 	return val;
 }
@@ -1890,11 +1841,11 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index_other,(long long)time,(long long)nstime);
-			sql_exec(&db_messages,command,NULL,0);
+			sql_exec(&db_messages,command,NULL);
 		}
 	}
 	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index,(long long)time,(long long)nstime);
-	return sql_exec(&db_messages,command,NULL,0);
+	return sql_exec(&db_messages,command,NULL);
 }
 
 int sql_delete_history(const int peer_index)
@@ -1919,11 +1870,11 @@ int sql_delete_history(const int peer_index)
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index_other);
-			sql_exec(&db_messages,command,NULL,0);
+			sql_exec(&db_messages,command,NULL);
 		}
 	}
 	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index);
-	return sql_exec(&db_messages,command,NULL,0);
+	return sql_exec(&db_messages,command,NULL);
 }
 
 int sql_delete_peer(const int peer_index)
@@ -1937,10 +1888,10 @@ int sql_delete_peer(const int peer_index)
 	int val;
 	char command[256]; // size is somewhat arbitrary
 	snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index);
-	val = sql_exec(&db_messages,command,NULL,0);
+	val = sql_exec(&db_messages,command,NULL);
 	snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d;",peer_index);
-	val = sql_exec(&db_encrypted,command,NULL,0);
+	val = sql_exec(&db_encrypted,command,NULL);
 	snprintf(command,sizeof(command),"DELETE FROM peer WHERE peer_index = %d;",peer_index);
-	val = sql_exec(&db_encrypted,command,NULL,0);
+	val = sql_exec(&db_encrypted,command,NULL);
 	return val;
 }

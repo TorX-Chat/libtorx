@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 36 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 37 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -997,7 +997,7 @@ uint32_t torx_allocation_len(const void *arg)
 	return len;
 }
 
-void *torx_copy(uint32_t *len_p,const void *arg)
+void *torx_copy(const void *arg)
 { // Convenience function; typically used where a mutex is involved. DO NOT USE WHERE THE ARGUMENT COULD BE A NON-TORX ALLOCATION.
 	if(arg)
 	{
@@ -1013,13 +1013,9 @@ void *torx_copy(uint32_t *len_p,const void *arg)
 			const uint32_t len = *((const uint32_t *)real_ptr);
 			void *allocation = type == ENUM_MALLOC_TYPE_SECURE ? torx_secure_malloc(len) : torx_insecure_malloc(len);
 			memcpy(allocation,arg,len);
-			if(len_p)
-				*len_p = len;
 			return allocation;
 		}
 	}
-	if(len_p)
-		*len_p = 0;
 	return NULL;
 }
 
@@ -2423,7 +2419,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 					{
 						const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 						const uint8_t recvfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
-						char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+						char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 						if((search == NULL || mit_strcasestr(peernick,search) != NULL)\
 						&& ((z == 0 && (sendfd_connected > 0 && recvfd_connected > 0)) /* green */\
 						|| (z == 1 && (sendfd_connected < 1 && recvfd_connected > 0)) /* orange */\
@@ -2446,7 +2442,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 				const int n = sorted_n[max];
 				const uint8_t local_owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 				const uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
-				char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+				char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(local_owner == owner && status == peer_status && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 				{
 					array[relevant] = n;
@@ -2462,7 +2458,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 		while(max--)
 		{ // effectively newest first order
 			const uint8_t owner_max = getter_uint8(max,INT_MIN,-1,offsetof(struct peer_list,owner));
-			char *peernick = getter_string(NULL,max,INT_MIN,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(max,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			if(owner_max == owner && (search == NULL || mit_strcasestr(peernick,search) != NULL))
 			{
 				array[relevant] = max;
@@ -3021,7 +3017,7 @@ static inline void *start_tor_threaded(void *arg)
 		snprintf(p4,sizeof(p4),"%d, %d",INIT_VPORT,CTRL_VPORT);
 		char *torrc_content_local = replace_substring(torrc_content,"nativeLibraryDir",native_library_directory);
 		if(!torrc_content_local && torrc_content) // Do unnecessary copy operation to allow consistant freeing of torrc_content_local
-			torrc_content_local = torx_copy(NULL,torrc_content);
+			torrc_content_local = torx_copy(torrc_content);
 		char tor_location_local[PATH_MAX]; // not sensitive
 		snprintf(tor_location_local,sizeof(tor_location_local),"%s",tor_location);
 		char *ret;
@@ -3210,17 +3206,19 @@ static inline void sqlcipher_db_configuration(sqlite3** db)
 //error	sql_exec(0,"PRAGMA journal_mode = WAL;",NULL);
 //error	sql_exec(0,"PRAGMA locking_mode = NORMAL;",NULL);
 //error	sql_exec(0,"PRAGMA secure_delete = ON;",NULL); // TODO "Cannot execute statement: unknown error"
-	sql_exec(db,"PRAGMA synchronous = NORMAL;",NULL,0);
-	sql_exec(db,"PRAGMA cipher_memory_security = ON;",NULL,0);
-	sql_exec(db,"PRAGMA foreign_keys = ON;",NULL,0); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
+	sql_exec(db,"PRAGMA synchronous = NORMAL;",NULL);
+	sql_exec(db,"PRAGMA cipher_memory_security = ON;",NULL);
+	sql_exec(db,"PRAGMA foreign_keys = ON;",NULL); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
+	sql_exec(db,"PRAGMA cipher_log_source = NONE;",NULL);
 	if(sql_error_suppression)
-		sql_exec(db,"PRAGMA cipher_log_source = NONE;",NULL,0);
+		return; // do not re-enable other levels after setting cipher_log_source = NONE
 	else if(sqlcipher_library_version[0] == 4 && sqlcipher_library_version[1] == 6 && sqlcipher_library_version[2] >= 1)
 	{ // Mitigate >= 4.6.1 to < 4.7.0 bug, affecting all OSes https://github.com/sqlcipher/sqlcipher/issues/530
-		sql_exec(db,"PRAGMA cipher_log_source = NONE;",NULL,0);
-		sql_exec(db,"PRAGMA cipher_log_source = CORE;",NULL,0);
-		sql_exec(db,"PRAGMA cipher_log_source = PROVIDER;",NULL,0);
+		sql_exec(db,"PRAGMA cipher_log_source = CORE;",NULL);
+		sql_exec(db,"PRAGMA cipher_log_source = PROVIDER;",NULL);
 	}
+	else // This is consistent with 4.6.0 and prior. Especially valuable after 4.7.0.
+		sql_exec(db,"cipher_log_level = ERROR",NULL);
 }
 
 static inline void sqlcipher_determine_version(void)
@@ -3264,12 +3262,12 @@ void initial_keyed(void)
 		sql_populate_setting(0); // encrypted settings
 	else // if(first_run)
 	{
-		sql_exec(&db_encrypted,table_setting_global,NULL,0);
-		sql_exec(&db_encrypted,table_peer,NULL,0);
-		sql_exec(&db_encrypted,table_setting_peer,NULL,0);
+		sql_exec(&db_encrypted,table_setting_global,NULL);
+		sql_exec(&db_encrypted,table_peer,NULL);
+		sql_exec(&db_encrypted,table_setting_peer,NULL);
 	}
 	if(get_file_size(file_db_messages) == 0) // permit recovery after deletion of messages database
-		sql_exec(&db_messages,table_message,NULL,0);
+		sql_exec(&db_messages,table_message,NULL);
 	start_tor(); // XXX NOTE: might need to make this independently called by UI because on mobile it might be a problem to exec binaries within native code
 	sodium_memzero(broadcasts_queued,sizeof(broadcasts_queued));
 	for(int iter_queue = 0; iter_queue < BROADCAST_QUEUE_SIZE; iter_queue++)
@@ -4332,7 +4330,7 @@ void initial(void)
 
 	if(default_peernick == NULL)
 	{
-		const char defname[8+1] = "Nameless";
+		const char defname[] = "Nameless";
 		default_peernick = torx_secure_malloc(sizeof(defname));
 		snprintf(default_peernick,sizeof(defname),"%s",defname);
 	}
@@ -4363,7 +4361,7 @@ void initial(void)
 		}
 		sqlcipher_db_configuration(&db_plaintext);
 		if(first_run)
-			sql_exec(&db_plaintext,table_setting_clear,NULL,0);
+			sql_exec(&db_plaintext,table_setting_clear,NULL);
 		/* Initialize peer struct */
 		pthread_rwlock_wrlock(&mutex_expand); // 🟥
 		peer = torx_secure_malloc(sizeof(struct peer_list) *11);
@@ -5206,7 +5204,7 @@ void block_peer(const int n)
 	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_GROUP_PEER)
 	{
 		uint8_t status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status));
-		char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+		char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 		if(status == ENUM_STATUS_FRIEND)
 		{
 			if(owner == ENUM_OWNER_CTRL)

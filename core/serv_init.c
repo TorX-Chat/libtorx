@@ -209,7 +209,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(file_n) // 🟩🟩🟩
 			if(fd_active == NULL)
 			{
-				char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+				char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 				if((fd_active = fopen(file_path, "r")) == NULL)
 				{
 					torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩

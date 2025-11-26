@@ -140,13 +140,11 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 	return len;
 }
 
-char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)
+char *getter_string(const int n,const int i,const int f,const size_t offset)
 { // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void*)&string);
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
 		error_printf(-1,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
-		if(size)
-			*size = 0;
 		return NULL;
 	}
 	uint32_t len = 0;
@@ -157,7 +155,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct message_list,message))
 		{
 			if(peer[n].message[i].message)
-				string = torx_copy(&len,peer[n].message[i].message);
+				string = torx_copy(peer[n].message[i].message);
 		}
 		else
 			error_printf(-1,"Invalid offset passed to getter_string1: %lu. Coding error. Report this.",offset);
@@ -168,17 +166,17 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct file_list,filename))
 		{
 			if(peer[n].file[f].filename)
-				string = torx_copy(&len,peer[n].file[f].filename);
+				string = torx_copy(peer[n].file[f].filename);
 		}
 		else if(offset == offsetof(struct file_list,file_path))
 		{
 			if(peer[n].file[f].file_path)
-				string = torx_copy(&len,peer[n].file[f].file_path);
+				string = torx_copy(peer[n].file[f].file_path);
 		}
 		else if(offset == offsetof(struct file_list,split_path))
 		{
 			if(peer[n].file[f].split_path)
-				string = torx_copy(&len,peer[n].file[f].split_path);
+				string = torx_copy(peer[n].file[f].split_path);
 		}
 		else
 		{ // Handle arrays or error offsets
@@ -196,7 +194,7 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		if(offset == offsetof(struct peer_list,peernick))
 		{
 			if(peer[n].peernick)
-				string = torx_copy(&len,peer[n].peernick);
+				string = torx_copy(peer[n].peernick);
 		}
 		else
 		{ // Handle arrays or error offsets
@@ -215,8 +213,6 @@ char *getter_string(uint32_t *size,const int n,const int i,const int f,const siz
 		}
 	}
 	torx_unlock(n) // 🟩🟩🟩
-	if(size)
-		*size = len;
 	return string;
 }
 

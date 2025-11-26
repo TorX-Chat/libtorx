@@ -174,7 +174,7 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 			if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
 			{ // Append our group[g].invitation after (which we received from someone else when we joined the group)
 				getter_array(&base_message[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES,group_n,INT_MIN,-1,offsetof(struct peer_list,invitation));
-				char *peernick = getter_string(NULL,target_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+				char *peernick = getter_string(target_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(group_add_peer(g,int_char->p,peernick,int_char->up,invitation) > -1) // we are working with two invitations... this is the correct one
 					error_simple(0,RED"Checkpoint New group peer! (message_prep)"RESET);
 				torx_free((void*)&peernick);
@@ -531,8 +531,8 @@ int message_resend(const int n,const int i)
 		nstime = peer[n].message[i].nstime;
 		torx_unlock(n) // 🟩🟩🟩
 	}
-	uint32_t message_len;
-	char *message = getter_string(&message_len,n,i,-1,offsetof(struct message_list,message));
+	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
+	const uint32_t message_len = torx_allocation_len(message);
 	message_distribute(1,target_count,target_list,p_iter,message,message_len,time,nstime);
 	torx_free((void*)&message);
 	torx_free((void*)&target_list);
@@ -637,7 +637,7 @@ void *peer_init(void *arg)
 	while((proxyfd = socks_connect(suffixonion,port_string)) < 1) // this is blocking
 		sleep(1); // not sure if necessary. could probably be eliminated or reduced without any ill effect
 	char fresh_privkey[88+1] = {0};
-	char *peernick = getter_string(NULL,n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+	char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 	const int fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
 	// generate keypair here, do not store it yet except locally
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
@@ -682,7 +682,7 @@ void *peer_init(void *arg)
 						sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 						break;
 					}
-					char *peernick_fresh_n = getter_string(NULL,fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+					char *peernick_fresh_n = getter_string(fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 					const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
 					setter(fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 					error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);

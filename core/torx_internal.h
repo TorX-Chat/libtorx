@@ -205,7 +205,8 @@ void broadcast_remove(const int g);
 
 /* sql.c */
 int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t status,const char *privkey,const uint16_t peerversion,const char *peeronion,const char *peernick,const unsigned char *sign_sk,const unsigned char *peer_sign_pk,const unsigned char *invitation);
-int sql_exec(sqlite3** db,const char *command,const char *setting_value,const size_t setting_value_len);
+int sql_exec(sqlite3** db,const char *command,...);
+unsigned char *sql_retrieve_setting(const int force_plaintext,const char *setting_name)__attribute__((warn_unused_result));
 int sql_insert_message(const int n,const int i);
 int sql_update_message(const int n,const int i);
 int sql_insert_peer(const uint8_t owner,const uint8_t status,const uint16_t peerversion,const char *privkey,const char *peeronion,const char *peernick,const int expiration);

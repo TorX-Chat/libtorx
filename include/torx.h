@@ -257,7 +257,7 @@ do { \
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
 	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
 	uint8_t status; // 0 blocked, 1 friend, 2 pending acceptance
-	char privkey[88+1];
+	char privkey[88+1]; // base64
 	int peer_index; // For use with SQL functions only. Will *always* be unique, for the life of the database. Will never be re-used, even in the case of vacuuming or peer deletion.
 	char onion[56+1]; // our onion derrived from privkey, except for "peer", where it is peeronion, because this must ALWAYS exist
 	char torxid[52+1];
@@ -647,7 +647,7 @@ void breakpoint(void) __attribute__((optimize("O0")));
 #pragma clang diagnostic pop
 #pragma GCC diagnostic pop
 uint32_t getter_length(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
-char *getter_string(uint32_t *size,const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
+char *getter_string(const int n,const int i,const int f,const size_t offset)__attribute__((warn_unused_result));
 unsigned char *getter_group_id(const int g)__attribute__((warn_unused_result));
 void *group_access(const int g,const size_t offset)__attribute__((warn_unused_result));
 void *group_get_next(int *n,int *i,const void *arg)__attribute__((warn_unused_result));
@@ -727,7 +727,7 @@ void torrc_save(const char *torrc_content_local);
 char *torrc_verify(const char *torrc_content_local)__attribute__((warn_unused_result));
 char *which(const char *binary)__attribute__((warn_unused_result));
 uint32_t torx_allocation_len(const void *arg)__attribute__((warn_unused_result));
-void *torx_copy(uint32_t *len_p,const void *arg)__attribute__((warn_unused_result));
+void *torx_copy(const void *arg)__attribute__((warn_unused_result));
 void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)__attribute__((warn_unused_result));
 void *torx_realloc(void *arg,const size_t len_new)__attribute__((warn_unused_result));
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
@@ -768,7 +768,6 @@ void message_offload(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
 int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len);
-unsigned char *sql_retrieve(size_t *data_len,const int force_plaintext,const char *query)__attribute__((warn_unused_result));
 void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
 void sql_populate_setting(const int force_plaintext);
 int sql_delete_setting(const int force_plaintext,const int peer_index,const char *setting_name);

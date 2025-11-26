@@ -590,7 +590,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 			const uint16_t peerversion = getter_uint16(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
 			char privkey[88+1];
 			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,privkey));
-			char *peernick = getter_string(NULL,event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			const int peer_index_fresh = sql_insert_peer(ENUM_OWNER_CTRL,status_fresh,peerversion,privkey,peeronion,peernick,0);
 			torx_free((void*)&peernick);
 			sodium_memzero(peeronion,sizeof(peeronion));
@@ -821,7 +821,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_unlock(file_n) // 🟩🟩🟩
 				if(fd_active == NULL)
 				{
-					char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+					char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 					if(!file_path)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
@@ -1148,7 +1148,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 						const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
 						const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
-						char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+						char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
 						{ // Sanity check on request. File might not exist if size is 0
 							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
@@ -1372,7 +1372,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								unsigned char invitor_invitation[crypto_sign_BYTES];
 								memcpy(invitor_invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES],crypto_sign_BYTES);
-								char *peernick = getter_string(NULL,event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+								char *peernick = getter_string(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 								const int peer_n = group_add_peer(g,&event_strc->buffer[GROUP_ID_SIZE],peernick,group_peer_ed25519_pk,invitor_invitation);
 								if(peer_n > -1)
 								{
@@ -1751,7 +1751,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		{ // Generate, send, and save ctrl
 			const uint8_t former_owner = event_strc->owner; // use to mitigate race condition caused by deletion of SING
 			char fresh_privkey[88+1] = {0};
-			char *peernick = getter_string(NULL,event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+			char *peernick = getter_string(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			event_strc->fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
 			torx_free((void*)&peernick);
 			if(former_owner == ENUM_OWNER_SING) // XXX DO NOT USE N AFTER THIS or risk race conditon XXX
@@ -1765,7 +1765,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			crypto_sign_keypair(ed25519_pk,ed25519_sk);
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
 			memcpy(peer_sign_pk,&buffer_ln[2+56],sizeof(peer_sign_pk));
-			char *peernick_fresh_n = getter_string(NULL,event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+			char *peernick_fresh_n = getter_string(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			int fresh_n = -1; // for double chcking
 			if(former_owner == ENUM_OWNER_SING || (former_owner == ENUM_OWNER_MULT && threadsafe_read_uint8(&mutex_global_variable,&auto_accept_mult)))
 				fresh_n = load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_privkey,fresh_peerversion,fresh_peeronion,peernick_fresh_n,ed25519_sk,peer_sign_pk,NULL);

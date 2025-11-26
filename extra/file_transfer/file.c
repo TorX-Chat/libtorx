@@ -612,7 +612,7 @@ int file_is_complete(const int n,const int f)
 		return 1; // Saves checking on disk, if this file is already completed.
 //	if(file_is_active(n,f) == ENUM_FILE_ACTIVE_IN) // TODO Still considering. Do not delete. This might be useful because checking size on disk should really be last-ditch because it indicates only that the last section is completed.
 //		return 0;
-	char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+	char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 	const uint64_t size_on_disk = get_file_size(file_path);
 	torx_free((void*)&file_path);
 	if(size == size_on_disk)
@@ -735,7 +735,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 	torx_unlock(n) // 🟩🟩🟩
 	if(splits == 0 || !split_path_exists)
 		return;
-	const char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+	char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
 	{
 		error_printf(0,PINK"Checkpoint DELETING SPLIT PATH"RESET);
@@ -812,7 +812,7 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		close_sockets(file_n,f)
 		if(protocol == ENUM_PROTOCOL_FILE_CANCEL && (is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)) // must go after close_sockets
 		{ // MUST only trigger on files that are actively inbound. DO NOT REMOVE THE CHECK for ACTIVE_IN/ACTIVE_IN_OUT
-			char *file_path = getter_string(NULL,file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 			torx_write(file_n) // 🟥🟥🟥
 			torx_free((void*)&peer[file_n].file[f].file_path); // Free this to be sure no one will write to it after we delete it
 			torx_unlock(file_n) // 🟩🟩🟩
@@ -1049,11 +1049,11 @@ static void set_split_path(const int n,const int f)
 
 static inline int split_read(const int n,const int f)
 { // File is in binary format. Checksum,nos,split_progress
-	char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+	char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(!split_path)
 	{
 		set_split_path(n,f);
-		split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+		split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	}
 	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
 	torx_free((void*)&split_path);
@@ -1130,11 +1130,11 @@ int initialize_split_info(const int n,const int f)
 	{ // Initialize if not already
 		split_read(n,f); // reads split file or initializes in memory
 		struct stat file_stat = {0};
-		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 		const int stat_file = stat(file_path, &file_stat); // Note: file_path cannot be null, but we checked it earlier.
 		torx_free((void*)&file_path);
 		const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
-		char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
+		char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 		if(stat_file && split_path && stat(split_path, &file_stat) && splits > 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // file nor .split exists; write an initialized .split file
 			FILE *fp;
@@ -1198,7 +1198,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 	{ // Section complete. Close file descriptors (flushing data to disk)
 		close_sockets(n,f)
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-		char *file_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(section_complete)
 		{ // Verify checksum
@@ -1563,7 +1563,7 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 		fp = fopen(file_path, "a");
 	else
 	{
-		char *file_path_local = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,file_path));
+		char *file_path_local = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 		fp = fopen(file_path_local, "a");
 		torx_free((void*)&file_path_local);
 	}

@@ -217,7 +217,7 @@ void sticker_save(const int s)
 		breakpoint();
 		return;
 	}
-	unsigned char* data_copy = torx_copy(NULL,sticker[s].data); // copying rather than wrapping sql_setting with a mutex
+	unsigned char* data_copy = torx_copy(sticker[s].data); // copying rather than wrapping sql_setting with a mutex
 	char *encoded = b64_encode(sticker[s].checksum,sizeof(sticker[s].checksum));
 	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
@@ -330,7 +330,7 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 		char query[256]; // somewhat arbitrary size
 		snprintf(query,sizeof(query),"sticker-gif-%s",p);
 		torx_free((void*)&p);
-		unsigned char *setting_value = sql_retrieve(NULL,0,query);
+		unsigned char *setting_value = sql_retrieve_setting(0,query);
 		sodium_memzero(query,sizeof(query));
 		pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 		sticker[s].data = setting_value;
