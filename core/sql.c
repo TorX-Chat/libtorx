@@ -1136,7 +1136,7 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 						torx_write(file_n) // 🟥🟥🟥
 						if(peer[file_n].file[f].split_progress) // sanity check
 							peer[file_n].file[f].split_progress[0] = size_on_disk;
-					//	printf("Checkpoint file_status=%d splits=%u size=%lu size_on_disk=%lu\n",file_status,peer[file_n].file[f].splits,peer[file_n].file[f].size,size_on_disk); // should only initialize if not complete
+					//	error_printf(0,"Checkpoint file_status=%d splits=%u size=%lu size_on_disk=%lu",file_status,peer[file_n].file[f].splits,peer[file_n].file[f].size,size_on_disk); // should only initialize if not complete
 						if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
 							torx_free((void*)&peer[file_n].file[f].split_path);
 					}
@@ -1271,7 +1271,6 @@ int sql_populate_peer(void)
 			{
 				if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 					continue;
-			//	printf("\n\nCheckpoint pre-load_onion p_i==%d n==%d owner==%d\npeernick==%s\npeeronion==%s\nprivkey==%s\n\n\n",peer_index,n,owner,peernick,peeronion,privkey);
 				load_onion(n);
 				inline_load_messages(owner,peer_index,n,local_show_log_messages);
 				if(owner == ENUM_OWNER_GROUP_CTRL)
@@ -1290,9 +1289,9 @@ int sql_populate_peer(void)
 					torx_read(n) // 🟧🟧🟧
 					crypto_sign_ed25519_sk_to_pk(ed25519_pk,peer[n].sign_sk);
 				//	if(g_invite_required)
-				//		printf("Checkpoint PRIVATE group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
+				//		error_printf(0,"Checkpoint PRIVATE group_n: %s group_n_pk: %s",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
 				//	else
-				//		printf("Checkpoint PUBLIC group_n: %s group_n_pk: %s\n",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
+				//		error_printf(0,"Checkpoint PUBLIC group_n: %s group_n_pk: %s",peer[n].onion,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
 					torx_unlock(n) // 🟩🟩🟩
 					sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 				}
@@ -1722,7 +1721,7 @@ void sql_populate_setting(const int force_plaintext)
 							group[g].peerlist = torx_insecure_malloc(((size_t)group[g].peercount+1)*sizeof(int));
 						group[g].peerlist[group[g].peercount] = peer_n;
 						group[g].peercount++; // so, this grows as we load more
-					//	printf("Checkpoint sql_populate_setting g==%d peercount==%u\n",g,group[g].peercount);
+					//	error_printf(0,"Checkpoint sql_populate_setting g==%d peercount==%u",g,group[g].peercount);
 						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					}
 				}

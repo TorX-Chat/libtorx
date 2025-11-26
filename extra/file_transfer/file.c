@@ -297,7 +297,7 @@ char *file_progress_string(const int n,const int f)
 	torx_unlock(n) // 🟩🟩🟩
 	#define file_size_text_len 128 // TODO perhaps increase this size. its arbitary. By our math it shoud be more than enough though.
 	char *file_size_text = torx_insecure_malloc(file_size_text_len); // arbitrary allocation amount
-//	printf("Checkpoint string: %ld left, %lu b/s\n",time_left,bytes_per_second);
+//	error_printf(0,"Checkpoint string: %ld left, %lu b/s",time_left,bytes_per_second);
 	if(file_is_cancelled(n,f))
 		snprintf(file_size_text,file_size_text_len,"Cancelled");
 	else if(time_left > 7200)
@@ -343,7 +343,7 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].bytes_per_second = 0;
 		peer[n].file[f].time_left = 0;
 		torx_unlock(n) // 🟩🟩🟩
-		printf(BRIGHT_TEAL"Checkpoint transfer_progress COMPLETE\n"RESET);
+		error_simple(0,BRIGHT_TEAL"Checkpoint transfer_progress COMPLETE"RESET);
 		transfer_progress_cb(n,f,transferred);
 	}
 	else if(transferred == size)
@@ -362,7 +362,7 @@ void transfer_progress(const int n,const int f)
 		uint64_t bytes_per_second = 0;
 		if(diff > 0)
 			bytes_per_second = (uint64_t)((double)(transferred - last_transferred) * 1e9 / diff );
-	//	printf("Checkpoint %lu = ((%lu - %lu) * 1e9 / %f);\n",bytes_per_second,transferred,last_transferred,diff);
+	//	error_printf(0,"Checkpoint %lu = ((%lu - %lu) * 1e9 / %f);",bytes_per_second,transferred,last_transferred,diff);
 		time_t time_left = 0;
 		uint64_t average_speed = 0;
 		if(last_progress_update_time && bytes_per_second < REALISTIC_PEAK_TRANSFER_SPEED) // XXX Necessary to prevent putting in bad bytes_per_second data (sanity checks) on startup
@@ -370,7 +370,7 @@ void transfer_progress(const int n,const int f)
 		if(bytes_per_second && average_speed)
 			time_left = (time_t)((size - transferred) / average_speed); // alt: bytes_per_second
 	//	if(last_transferred == transferred) // XXX Do not delete
-	//		error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu\n",time_left,bytes_per_second);
+	//		error_printf(0,"Checkpoint transfer_progress received a stall: %ld %lu",time_left,bytes_per_second);
 		torx_write(n) // 🟥🟥🟥
 		peer[n].file[f].time_left = time_left; // will be 0 if bytes_per_second is 0
 		peer[n].file[f].bytes_per_second = bytes_per_second;
@@ -379,9 +379,9 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].last_transferred = transferred;
 		torx_unlock(n) // 🟩🟩🟩
 		if(last_transferred == transferred)
-			printf("Checkpoint transfer_progress STALLED at %zu\n",transferred);
+			error_printf(0,"Checkpoint transfer_progress STALLED at %zu",transferred);
 	//	else
-	//		printf("Checkpoint transfer_progress %zu of %lu\n",transferred,size);
+	//		error_printf(0,"Checkpoint transfer_progress %zu of %lu",transferred,size);
 		transfer_progress_cb(n,f,transferred);
 	}
 }
@@ -738,7 +738,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 	const char *split_path = getter_string(NULL,n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
 	{
-		printf(PINK"Checkpoint DELETING SPLIT PATH\n"RESET);
+		error_printf(0,PINK"Checkpoint DELETING SPLIT PATH"RESET);
 		destroy_file(split_path);
 		torx_free((void*)&split_path);
 		torx_write(n) // 🟥🟥🟥
@@ -832,7 +832,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 		return -1;
 	}
 	const int f = set_f(n,checksum,CHECKSUM_BIN_LEN);
-//	printf("Checkpoint file_init n==%d f==%d checksum==%s\n",n,f,b64_encode(checksum,CHECKSUM_BIN_LEN));
+//	error_printf(0,"Checkpoint file_init n==%d f==%d checksum==%s",n,f,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	if(split_hashes_and_size)
 	{ // set splits and split_hashes for group files
 		const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -872,7 +872,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 	if(owner == ENUM_OWNER_GROUP_CTRL || message == NULL || p_iter < 0 || n < 0 || message_len == 0)
 	{ // could do more extensive sanity check on message_len here. we do that later though, so no need
 		error_simple(0,"process_file_offer_inbound triggered on group ctrl or sanity check fail. Coding error. Report this.");
-		printf("Checkpoint %u %d %d %d %u",owner,message ? 1 : 0,p_iter,n,message_len);
+		error_printf(0,"Checkpoint %u %d %d %d %u",owner,message ? 1 : 0,p_iter,n,message_len);
 		breakpoint();
 		return -1;
 	}
@@ -978,7 +978,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		{ // sanity check filename
 			error_simple(0,"Peer offered a file with a non-UTF8 filename. Discarding offer.");
 			for(size_t zzz = 0; zzz < filename_len ; zzz++)
-				printf("Checkpoint: (%c)\n",message[prefix + zzz]);
+				error_printf(0,"Checkpoint: (%c)",message[prefix + zzz]);
 			return -1;
 		}
 		unsigned char hash_of_hashes[CHECKSUM_BIN_LEN];
@@ -1004,14 +1004,14 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			peer[group_n].file[f].filename = torx_secure_malloc(filename_len+1);
 			memcpy(peer[group_n].file[f].filename,&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],filename_len);
 			peer[group_n].file[f].filename[filename_len] = '\0';
-			printf("Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s\n",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
+			error_printf(0,"Checkpoint inbound GROUP FILE_OFFER nos=%u size=%"PRIu64" %s",splits,peer[group_n].file[f].size,peer[group_n].file[f].filename);
 			torx_unlock(group_n) // 🟩🟩🟩
 		}
 	}
 	return 0;
 	error: {}
 	error_simple(0,"Got a complete file offer below minimum size. Bailing. Report this.");
-	printf("Checkpoint below minimum size: %u protocol: %u\n",message_len,protocol);
+	error_printf(0,"Checkpoint below minimum size: %u protocol: %u",message_len,protocol);
 	return -1;
 }
 
@@ -1076,9 +1076,9 @@ static inline int split_read(const int n,const int f)
 		}
 	}
 //	else
-//		printf("Checkpoint no split file found\n");
+//		error_simple(0,"Checkpoint no split file found");
 	const size_t read_size = sizeof(uint64_t)*(size_t)(splits+1);
-//	printf("Checkpoint split_read allocating n=%d f=%d splits=%u\n",n,f,splits);
+//	error_printf(0,"Checkpoint split_read allocating n=%d f=%d splits=%u",n,f,splits);
 	uint64_t *split_progress = torx_insecure_malloc(read_size);
 	int *split_status_n = torx_insecure_malloc(sizeof(int)*(size_t)(splits+1));
 	int8_t *split_status_fd = torx_insecure_malloc(sizeof(int8_t)*(size_t)(splits+1));
@@ -1100,8 +1100,8 @@ static inline int split_read(const int n,const int f)
 	torx_unlock(n) // 🟩🟩🟩
 	if(fp)
 	{ // condition is necessary with fclose it seems
-	//	printf("Checkpoint Reading nos: %d\n",peer[n].file[f].splits);
-	//	printf("Checkpoint Reading split data: %lu %lu\n",peer[n].file[f].split_progress[0],peer[n].file[f].split_progress[1]);
+	//	error_printf(0,"Checkpoint Reading nos: %d",peer[n].file[f].splits);
+	//	error_printf(0,"Checkpoint Reading split data: %lu %lu",peer[n].file[f].split_progress[0],peer[n].file[f].split_progress[1]);
 		close_sockets_nolock(fp)
 		return 0; // successfully read
 	}
@@ -1121,7 +1121,7 @@ int initialize_split_info(const int n,const int f)
 	{ // Sanity check
 		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Cannot initialize split info. Sanity check failed.");
-		printf("Checkpoint owner==%d size==%"PRIu64"\n",getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)),size);
+		error_printf(0,"Checkpoint owner==%d size==%"PRIu64"",getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner)),size);
 		return -1;
 	}
 	const uint8_t split_progress_exists = peer[n].file[f].split_progress ? 1 : 0;
@@ -1311,7 +1311,7 @@ int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,c
 		if(!peer_progress)
 			goto error; // XXX DO NOT ELIMINATE THIS CHECK, otherwise we can get a negative int overflow on the next line
 		*end = section_start + peer_progress - 1; // XXX previously was followed by -1
-	//	printf("Checkpoint calculate_file_request_start_end %lu = %lu + %lu\n",*end,section_start,peer_progress);
+	//	error_printf(0,"Checkpoint calculate_file_request_start_end %lu = %lu + %lu",*end,section_start,peer_progress);
 	}
 	if(*start > *end)
 		goto error; // Section appears finished. Cannot request any data.
@@ -1326,7 +1326,7 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 	const uint8_t peer_owner = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	if(n < 0 || f < 0 || peer_n < 0 || peer_owner == ENUM_OWNER_GROUP_CTRL || active_transfers_ongoing == NULL)
 	{
-		error_printf(0,"Unclaim sanity check fail: n=%d f=%d peer_n=%d peer_owner=%u\n",n,f,peer_n,peer_owner);
+		error_printf(0,"Unclaim sanity check fail: n=%d f=%d peer_n=%d peer_owner=%u",n,f,peer_n,peer_owner);
 		return 0;
 	}
 	int was_transferring = 0;
@@ -1492,7 +1492,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	}
 	else
 	{ // _CTRL or _GROUP_PEER, ie: PM/p2p, not group transfers. This section is NOT suitable for group transfers because we pass -1 as offer_o to calculate_file_request_start_end, which means we are assuming our peer has 100% of the file.
-		printf(BRIGHT_GREEN"Checkpoint select_peer _CTRL or _GROUP_PEER owner=%u n=%d f=%d splits=%u\n"RESET,owner,n,f,splits);
+		error_printf(0,BRIGHT_GREEN"Checkpoint select_peer _CTRL or _GROUP_PEER owner=%u n=%d f=%d splits=%u"RESET,owner,n,f,splits);
 		if(fd_type == -1)
 		{ // Sanity check
 			error_simple(0,"Wrong fd_type passed to select_peer. Coding error. Report this.");
@@ -1687,7 +1687,7 @@ void file_accept(const int n,const int f)
 	if(!filename_exists)
 	{ // probably ENUM_OWNER_GROUP_PEER, non-PM message, or where the file path is not yet set by UI
 		error_simple(0,"File information not provided. Cannot accept. Coding error. Report this.");
-		printf("Checkpoint file_accept owner: %u file_status: %d\n",owner,file_status);
+		error_printf(0,"Checkpoint file_accept owner: %u file_status: %d",owner,file_status);
 		return;
 	}
 	if(file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_OUT || file_status == ENUM_FILE_ACTIVE_IN_OUT)
@@ -1770,7 +1770,7 @@ unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_
 		const uint64_t start = calculate_section_start(&end,size,splits,section);
 		const uint64_t len = end - start + 1;
 		size_total += b3sum_bin(&split_hashes_and_size[CHECKSUM_BIN_LEN*section],file_path,NULL,start,len);
-	//	printf("Checkpoint section=%d start=%lu end=%lu len=%lu total=%lu\n",section,start,end,len,size_total);
+	//	error_printf(0,"Checkpoint section=%d start=%lu end=%lu len=%lu total=%lu",section,start,end,len,size_total);
 	}
 	if(size != size_total)
 	{
@@ -1795,7 +1795,7 @@ static inline void *file_init(void *arg)
 	size_t size = 0;
 	uint8_t splits = 0;
 	unsigned char *split_hashes_and_size = NULL;
-//	printf("Checkpoint file_init owner==%u path==%s\n",owner,file_strc->path);
+//	error_printf(0,"Checkpoint file_init owner==%u path==%s",owner,file_strc->path);
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Determine split count, allocate and populate split_hashes, generate hash of hashes
 		splits = UINT8_MAX;
@@ -1814,7 +1814,7 @@ static inline void *file_init(void *arg)
 		goto error;
 	}
 	const int f = process_file_offer_outbound(n,checksum,splits,split_hashes_and_size,size,file_strc->modified,file_strc->path);
-//	printf("Checkpoint file_init n==%d f==%d size==%lu checksum==%s\n",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
+//	error_printf(0,"Checkpoint file_init n==%d f==%d size==%lu checksum==%s",n,f,size,b64_encode(checksum,CHECKSUM_BIN_LEN));
 	sodium_memzero(checksum,sizeof(checksum));
 	file_offer_internal(n,n,f,1);
 	error: {}

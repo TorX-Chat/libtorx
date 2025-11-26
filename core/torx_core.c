@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 35 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 36 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -86,6 +86,7 @@ void *ui_data = NULL; // XXX UI devs may put a struct on this to store data with
 char *debug_file = {0}; // This is ONLY FOR DEVELOPMENT USE. Set to a filename to enable
 uint8_t v3auth_enabled = 1; // global default // 0 (off), 1 (BEST: derived from onion). NOT user toggleable. For discussion on the safety of using onion derived ed25519 keys and converting to x25519: https://crypto.stackexchange.com/questions/3260/using-same-keypair-for-diffie-hellman-and-signing/3311#3311
 uint8_t reduced_memory = 0; // NOTE: increasing decreases RAM requirements *and* CPU cycles. 0 = 1024mb, 1 = 256mb, 2 = 64mb. More ram allocated will make startup ever-so-slightly slower, but significantly increase security against bruteforcing. Recommended to leave as default (0, 1024mb), but could crash some devices.
+uint8_t sql_error_suppression = 0; // Necessary in Ncurses/TUI to prevent printf/fprintf from destroying our terminal
 int8_t debug = 0; //"0-5" default verbosity. Ensure that privacy related info is not printed before level 3.
 long long unsigned int crypto_pwhash_OPSLIMIT = 0;
 size_t crypto_pwhash_MEMLIMIT = 0;
@@ -216,6 +217,7 @@ pthread_rwlock_t mutex_expand_group = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_packet = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_broadcast = PTHREAD_RWLOCK_INITIALIZER;
 
+uint32_t sqlcipher_library_version[3] = {0}; // do not rename as sqlcipher_version because it will conflict with a function name in SQLCipher, if the devs ever expose it in sqlite3.h
 sqlite3 *db_plaintext = {0};
 sqlite3 *db_encrypted = {0};
 sqlite3 *db_messages = {0};
@@ -476,7 +478,7 @@ void error_printf(const int debug_level,const char *format,...)
 	}
 	else
 		error_simple(0,"Invalid format or zero length passed to error_printf");
-    	va_end(args);
+	va_end(args);
 	#pragma clang diagnostic pop
 	#pragma GCC diagnostic pop
 }
@@ -919,7 +921,7 @@ int is_null(const void* arg,const size_t size)
 	for(size_t i = 0; i < size; i++)
 		if(array[i] != '\0')
 			return 0; // FALSE. Found value, not NULL
-    	return 1; // TRUE. No values found, is NULL
+	return 1; // TRUE. No values found, is NULL
 }
 
 void *torx_insecure_malloc(const size_t len)
@@ -1519,7 +1521,7 @@ int message_load_more(const int n)
 			inline_load_array(g,group_n,loaded_array_n,loaded_array_i,loaded,freshly_loaded);
 			loaded += freshly_loaded;
 		}
-	//	printf("Checkpoint loaded group_n=%d count=%d\n",group_n,freshly_loaded);
+	//	error_printf(0,"Checkpoint loaded group_n=%d count=%d",group_n,freshly_loaded);
 		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
@@ -1533,7 +1535,7 @@ int message_load_more(const int n)
 				loaded_array_i = torx_realloc(loaded_array_i,(size_t)(loaded + freshly_loaded) * sizeof(int));
 				inline_load_array(g,peer_n,loaded_array_n,loaded_array_i,loaded,freshly_loaded);
 				loaded += freshly_loaded;
-			//	printf("Checkpoint loaded peer_n=%d count=%d\n",peer_n,freshly_loaded);
+			//	error_printf(0,"Checkpoint loaded peer_n=%d count=%d",peer_n,freshly_loaded);
 			}
 		}
 		sort_load_more(loaded_array_n,loaded_array_i,loaded);
@@ -1835,7 +1837,7 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 		goto fail; 
 	}
 	const uint32_t allocation = base_message_len + null_terminated_len + date_len + signature_len;
-//	printf("Checkpoint message_sign %u: %u %u %u %u %u\n",protocol,allocation,base_message_len,null_terminated_len,date_len,signature_len);
+//	error_printf(0,"Checkpoint message_sign %u: %u %u %u %u %u",protocol,allocation,base_message_len,null_terminated_len,date_len,signature_len);
 	char *message_prepared = torx_secure_malloc(allocation);
 	if(message_unsigned)
 		memcpy(message_prepared,message_unsigned,base_message_len);
@@ -1960,13 +1962,13 @@ int pid_kill(const pid_t pid,const int signal)
 	HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE,(DWORD)pid);
 	if(hProcess == NULL)
 	{
-		error_printf(0,"Failed to open process. Error code: %lu\n", GetLastError());
+		error_printf(0,"Failed to open process. Error code: %lu", GetLastError());
 		return -1;
 	}
 	BOOL result = TerminateProcess(hProcess,(UINT)signal);
 	if(result == 0)
 	{
-		error_printf(0,"Failed to terminate process. Error code: %lu\n", GetLastError());
+		error_printf(0,"Failed to terminate process. Error code: %lu", GetLastError());
 		CloseHandle(hProcess);
 		return -1;
 	}
@@ -2249,7 +2251,6 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 
 void zero_g(const int g)
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
-//	printf("Checkpoint zeroing g==%d\n",g);
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	memset(group[g].id,'0',GROUP_ID_SIZE);
 	group[g].n = -1;
@@ -2431,8 +2432,6 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 						{
 							array[relevant] = n;
 							relevant++;
-						//	if(owner == ENUM_OWNER_GROUP_PEER)
-						//		printf("Checkpoint refined_list owner==%d g==%d n==%u\n",owner,g,n);
 						}
 						torx_free((void*)&peernick);
 					}
@@ -3206,20 +3205,61 @@ char *b64_encode(const void *in_arg,const size_t len)
 	return out;
 }
 
+static inline void sqlcipher_db_configuration(sqlite3** db)
+{ // Must call sqlcipher_determine_version first, then call this on all databases as they are opened
+//error	sql_exec(0,"PRAGMA journal_mode = WAL;",NULL);
+//error	sql_exec(0,"PRAGMA locking_mode = NORMAL;",NULL);
+//error	sql_exec(0,"PRAGMA secure_delete = ON;",NULL); // TODO "Cannot execute statement: unknown error"
+	sql_exec(db,"PRAGMA synchronous = NORMAL;",NULL,0);
+	sql_exec(db,"PRAGMA cipher_memory_security = ON;",NULL,0);
+	sql_exec(db,"PRAGMA foreign_keys = ON;",NULL,0); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
+	if(sql_error_suppression)
+		sql_exec(db,"PRAGMA cipher_log_source = NONE;",NULL,0);
+	else if(sqlcipher_library_version[0] == 4 && sqlcipher_library_version[1] == 6 && sqlcipher_library_version[2] >= 1)
+	{ // Mitigate >= 4.6.1 to < 4.7.0 bug, affecting all OSes https://github.com/sqlcipher/sqlcipher/issues/530
+		sql_exec(db,"PRAGMA cipher_log_source = NONE;",NULL,0);
+		sql_exec(db,"PRAGMA cipher_log_source = CORE;",NULL,0);
+		sql_exec(db,"PRAGMA cipher_log_source = PROVIDER;",NULL,0);
+	}
+}
+
+static inline void sqlcipher_determine_version(void)
+{ // Obtains CIPHER_VERSION_NUMBER via sqlcipher_version() which are not exposed except through PRAGMA
+	sqlite3 *db = NULL; // Utilizes a throwaway database that only exists in memory
+	sqlite3_stmt *stmt = NULL;
+	const unsigned char *version_string;
+	if (sqlite3_open(":memory:", &db) != SQLITE_OK)
+		error_printf(0,"Cannot open SQLCipher: %s",sqlite3_errmsg(db));
+	else if (sqlite3_prepare_v2(db, "PRAGMA cipher_version;", -1, &stmt, NULL) != SQLITE_OK)
+	{
+		error_printf(0,"Failed to prepare PRAGMA: %s",sqlite3_errmsg(db));
+		sqlite3_close(db);
+	}
+	else if (sqlite3_step(stmt) != SQLITE_ROW || (version_string = sqlite3_column_text(stmt, 0)) == NULL)
+	{
+		error_simple(0, "No SQLCipher version returned.");
+		sqlite3_finalize(stmt);
+		sqlite3_close(db);
+	}
+	else
+	{
+		sscanf((const char *)version_string, "%u.%u.%u", &sqlcipher_library_version[0], &sqlcipher_library_version[1], &sqlcipher_library_version[2]);
+		if(!sqlcipher_library_version[0])
+			error_printf(0,"Failed to parse SQLCipher version: %u.%u.%u from %s",sqlcipher_library_version[0],sqlcipher_library_version[1],sqlcipher_library_version[2],version_string);
+		sqlite3_finalize(stmt); // must be LAST
+		sqlite3_close(db);
+	}
+}
+
 void initial_keyed(void)
 { // Read in settings from file. Can also be used by clients for their settings. XXX Do not *need* locks. Unnecessary. Runs before most threads (except UI) start.
 //	mlockall(MCL_FUTURE); // TODO TODO TODO this causes pthread_create to fail on some systems
 	if(torrc_content == NULL) // making sure UI dev didn't set it already
 		torrc_save(NULL);
-//error	sql_exec(0,"PRAGMA journal_mode = WAL;",NULL);
-//error	sql_exec(0,"PRAGMA locking_mode = NORMAL;",NULL);
-//error	sql_exec(0,"PRAGMA secure_delete = ON;",NULL); // TODO "Cannot execute statement: unknown error"
-	sql_exec(&db_messages,"PRAGMA synchronous = NORMAL;",NULL,0);
-	sql_exec(&db_messages,"PRAGMA cipher_memory_security = ON;",NULL,0);
-	sql_exec(&db_messages,"PRAGMA foreign_keys = ON;",NULL,0); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
-	sql_exec(&db_encrypted,"PRAGMA synchronous = NORMAL;",NULL,0);
-	sql_exec(&db_encrypted,"PRAGMA cipher_memory_security = ON;",NULL,0);
-	sql_exec(&db_encrypted,"PRAGMA foreign_keys = ON;",NULL,0); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
+
+	sqlcipher_db_configuration(&db_messages);
+	sqlcipher_db_configuration(&db_encrypted);
+
 	if(!first_run)
 		sql_populate_setting(0); // encrypted settings
 	else // if(first_run)
@@ -3455,7 +3495,6 @@ static inline void expand_peer_struc(const int n)
 
 static inline void expand_group_struc(const int g) // XXX do not put locks in here
 { /* Expand group struct if our current n is unused && divisible by 10 */
-//	printf("Checkpoint expand_group_struct called on g==%d\n",g);
 	if(g < 0)
 	{
 		error_simple(0,"expand_group_struc failed sanity check. Coding error. Report this.");
@@ -3514,7 +3553,7 @@ int increment_i(const int n,const int offset,const time_t time,const time_t nsti
 		}
 		peer[n].max_i++;
 	}
-	//printf("Checkpoint increment_i n=%d i=%d max_i=%d min_i=%d\n",n,i,peer[n].max_i,peer[n].min_i);
+	// error_printf(0,"Checkpoint increment_i n=%d i=%d max_i=%d min_i=%d",n,i,peer[n].max_i,peer[n].min_i);
 	peer[n].message[i].time = time;
 	peer[n].message[i].nstime = nstime;
 	peer[n].message[i].fd_type = fd_type;
@@ -3629,9 +3668,9 @@ int set_n(const int peer_index,const char *onion)
 			}
 			torx_unlock(n) // 🟩🟩🟩
 	//		if(peer[n].peer_index == peer_index)
-	//			printf("Checkpoint BINGO %d == %d\n",peer[n].peer_index,peer_index);
+	//			error_printf(0,"Checkpoint BINGO %d == %d",peer[n].peer_index,peer_index);
 	//		else
-	//			printf("Checkpoint NO MATCHES, utilizing blank n=%d\n",n);
+	//			error_printf(0,"Checkpoint NO MATCHES, utilizing blank n=%d",n);
 		}
 		else
 		{ // -2 means uninitialized (confirm in initialize_n)
@@ -3696,12 +3735,12 @@ int set_g(const int n,const void *arg)
 	if(owner == ENUM_OWNER_GROUP_PEER && n > -1 && g > -1 && group[g].n < 0 && (is_null(group[g].id,GROUP_ID_SIZE) || !memcmp(group[g].id,zero_array,GROUP_ID_SIZE)))
 	{
 		if(arg)
-			printf("Checkpoint arg exists\n");
+			error_simple(0,"Checkpoint arg exists");
 		else
-			printf("Checkpoint arg is NULL\n");
-		printf("Checkpoint is_null %d\n",is_null(group[g].id,GROUP_ID_SIZE));
-		printf("Checkpoint memcmp %d\n",!memcmp(group[g].id,zero_array,GROUP_ID_SIZE));
-		printf("Checkpoint group_n %d\n",group[g].n);
+			error_simple(0,"Checkpoint arg is NULL");
+		error_printf(0,"Checkpoint is_null %d",is_null(group[g].id,GROUP_ID_SIZE));
+		error_printf(0,"Checkpoint memcmp %d",!memcmp(group[g].id,zero_array,GROUP_ID_SIZE));
+		error_printf(0,"Checkpoint group_n %d",group[g].n);
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		error_printf(-1,"Set_g landed on a blank group g==%d ENUM_OWNER_GROUP_PEER. Report this.",g); // TODO 2024/02/24 happened in a private group when clicking peerlist. Same group has allowed PMing wrong person
 		error = 1;
@@ -3721,13 +3760,13 @@ int set_g(const int n,const void *arg)
 	} */
 //	error_printf(0,PINK"Checkpoint set_g = %d n=%d arg=%s"RESET,g,n,arg?b64_encode(arg,GROUP_ID_SIZE):"NULL"); // TODO NOTE: SHOULD NOT BE >0 when there is only one group. XXX XXX XXX
 //	if(group_id)
-//		printf("Checkpoint GID: %s\n",b64_encode(group_id,GROUP_ID_SIZE));
+//		error_printf(0,"Checkpoint GID: %s",b64_encode(group_id,GROUP_ID_SIZE));
 /*	if(n > -1)
-		printf("Checkpoint set_g by n, n==%d g==%d\n",n,g);
+		error_printf(0,"Checkpoint set_g by n, n==%d g==%d",n,g);
 	else if(arg)
-		printf("Checkpoint set_g by hash\n");
+		error_printf(0,"Checkpoint set_g by hash");
 	else
-		printf("Checkpoint set_g by fresh g==%d\n",g); */
+		error_printf(0,"Checkpoint set_g by fresh g==%d",g); */
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return g;
 }
@@ -3850,7 +3889,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	if(crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, ed25519_pk) == 0)
 	{ // Signed by us! (only applicable in the case that this message is an invitation_signature)
 		error_simple(4,"Success of group_check_sig: Signed by group_n (us).");
-	//	printf("Checkpoint SUCCESS of GROUP self-sign: %u\n",untrusted_protocol);
+	//	error_printf(0,"Checkpoint SUCCESS of GROUP self-sign: %u",untrusted_protocol);
 		sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 		torx_free((void*)&prefixed_message);
 		return group_n;
@@ -3985,7 +4024,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 		group[g].peerlist = torx_insecure_malloc(((size_t)g_peercount+1)*sizeof(int));
 	group[g].peerlist[group[g].peercount] = n;
 	group[g].peercount++;
-//	printf("Checkpoint group_add_peer g==%d peercount==%u\n",g,group[g].peercount);
+//	error_printf(0,"Checkpoint group_add_peer g==%d peercount==%u",g,group[g].peercount);
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 	load_onion(n); // connect to their onion with our signed onion, also in sql_populate_peer()
@@ -4130,6 +4169,38 @@ void initial(void)
 	sodium_initialized = 1;
 	srand(randombytes_random()); // seed rand() with libsodium, in case we use rand() somewhere, Do not use rand() for sensitive operations. Use randombytes_random(). Note: rand() is terrible on Windows.
 	umask(S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH); // umask 600 equivalent. man 2 umask
+
+	if(working_dir == NULL)
+	{ // Create config directory and chdir. Must be *before* our first error_ because otherwise if we have debug_file set, it will create two debug files in different locations
+		#ifdef WIN32 // XXX
+		PWSTR basePath = NULL;
+		if(SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &basePath)))
+		{ // Get AppData path
+			wchar_t appdata_path[MAX_PATH];
+			swprintf(appdata_path,sizeof(appdata_path),L"%s\\TorX",basePath);
+		//	if(SUCCEEDED(StringCchCopyW(appdata_path, MAX_PATH, basePath)) && SUCCEEDED(StringCchCatW(appdata_path, MAX_PATH, L"\\TorX")))
+			if((GetFileAttributesW(appdata_path) == INVALID_FILE_ATTRIBUTES && CreateDirectoryW(appdata_path, NULL)) || GetLastError() == ERROR_ALREADY_EXISTS)
+				SetCurrentDirectoryW(appdata_path);
+			CoTaskMemFree(basePath); // Free the memory allocated by SHGetKnownFolderPath
+		}
+		#else
+		if(chdir(getenv("HOME")) == 0)
+		{
+			mkdir(".config",0700);
+			if(chdir(".config") == 0)
+			{
+				mkdir("torx",0700);
+				if(chdir("torx") == 0)
+					error_simple(4,"Navigated to proper directory.");
+			}
+		}
+		#endif
+	}
+	else if(chdir(working_dir) == 0)
+		error_simple(4,"Navigated to proper directory.");
+	else
+		error_simple(0,"Failed to navigate to desired directory. Will fallback to current directory.");
+
 	if(debug_file)
 	{ // If a debug file is enabled, write the fact and current time to it. NOTE: Debug file could be enabled later by UI, skipping this.
 		time_t now;
@@ -4164,6 +4235,8 @@ void initial(void)
 
 	pthread_attr_init(&ATTR_DETACHED); // must be triggered before any use
 	pthread_attr_setdetachstate(&ATTR_DETACHED, PTHREAD_CREATE_DETACHED); // must be triggered before any use
+
+	sqlcipher_determine_version();
 
 	error_printf(0,"TorX Library Version: %u.%u.%u.%u",torx_library_version[0],torx_library_version[1],torx_library_version[2],torx_library_version[3]);
 	error_simple(0,ENABLE_SECURE_MALLOC ? "Compiled with ENABLE_SECURE_MALLOC" : "Compiled without ENABLE_SECURE_MALLOC");
@@ -4245,38 +4318,6 @@ void initial(void)
 		snprintf(file_tor_pid,len,"tor.pid");
 	}
 
-	/* Create config directory */
-	if(working_dir == NULL)
-	{
-		#ifdef WIN32 // XXX
-		PWSTR basePath = NULL;
-		if(SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, NULL, &basePath)))
-		{ // Get AppData path
-			wchar_t appdata_path[MAX_PATH];
-			swprintf(appdata_path,sizeof(appdata_path),L"%s\\TorX",basePath);
-		//	if(SUCCEEDED(StringCchCopyW(appdata_path, MAX_PATH, basePath)) && SUCCEEDED(StringCchCatW(appdata_path, MAX_PATH, L"\\TorX")))
-			if((GetFileAttributesW(appdata_path) == INVALID_FILE_ATTRIBUTES && CreateDirectoryW(appdata_path, NULL)) || GetLastError() == ERROR_ALREADY_EXISTS)
-				SetCurrentDirectoryW(appdata_path);
-			CoTaskMemFree(basePath); // Free the memory allocated by SHGetKnownFolderPath
-		}
-		#else
-		if(chdir(getenv("HOME")) == 0)
-		{
-			mkdir(".config",0700);
-			if(chdir(".config") == 0)
-			{
-				mkdir("torx",0700);
-				if(chdir("torx") == 0)
-					error_simple(4,"Navigated to proper directory.");
-			}
-		}
-		#endif
-	}
-	else if(chdir(working_dir) == 0)
-		error_simple(4,"Navigated to proper directory.");
-	else
-		error_simple(0,"Failed to navigate to desired directory. Will fallback to current directory.");
-
 	// XXX Cannot move to initial_keyed because we need this info to build the initial UI (whether to display switch). For this reason, if we store this in a database, it'll have to be in cleartext. XXX
 	// Note: Will be over-written by stored settings, if applicable.
 	// Note: We intentionally placed this after chdir because which looks in current dir not where our running binary exists.
@@ -4320,13 +4361,7 @@ void initial(void)
 			sqlite3_close(db_messages);
 			return;
 		}
-	//sqlite3_exec(db, "PRAGMA journal_mode = WAL; PRAGMA locking_mode = NORMAL; PRAGMA synchronous = NORMAL;", NULL, NULL, NULL);
-	//	sql_exec(1,"PRAGMA journal_mode = WAL;",NULL);
-	//	sql_exec(1,"PRAGMA locking_mode = NORMAL;",NULL);
-	//	sql_exec(1,"PRAGMA secure_delete = ON;",NULL); // TODO "Cannot execute statement: unknown error"
-		sql_exec(&db_plaintext,"PRAGMA synchronous = NORMAL;",NULL,0);
-		sql_exec(&db_plaintext,"PRAGMA cipher_memory_security = ON;",NULL,0);
-		sql_exec(&db_plaintext,"PRAGMA foreign_keys = ON;",NULL,0); // might be necessary for successful cascading delete since we reference entries in other table (peer)?
+		sqlcipher_db_configuration(&db_plaintext);
 		if(first_run)
 			sql_exec(&db_plaintext,table_setting_clear,NULL,0);
 		/* Initialize peer struct */
@@ -4562,16 +4597,16 @@ static inline void *login_threaded(void *arg)
 		memcpy(salt,saltbuffer,sizeof(salt));
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
-/*	printf("OPSLIMIT: %llu\n",crypto_pwhash_OPSLIMIT);
-	printf("MEMLIMIT: %lu\n",crypto_pwhash_MEMLIMIT);
-	printf("ALG: %d\n",crypto_pwhash_ALG);
-	printf("Salt: %s\n",b64_encode(salt,sizeof(salt)));
-	printf("Arg: %s\n",(char *)arg);	*/
-	const size_t password_len = strlen(arg);
+/*	error_printf(0,"OPSLIMIT: %llu",crypto_pwhash_OPSLIMIT);
+	error_printf(0,"MEMLIMIT: %lu",crypto_pwhash_MEMLIMIT);
+	error_printf(0,"ALG: %d",crypto_pwhash_ALG);
+	error_printf(0,"Salt: %s",b64_encode(salt,sizeof(salt)));
+	error_printf(0,"Arg: %s",(char *)arg);	*/
+	const size_t password_len = arg ? strlen(arg) : 0;
 	unsigned char local_decryption_key[crypto_box_SEEDBYTES]; // intermediary is necessary, do not eliminate
 	memcpy(local_decryption_key,decryption_key,sizeof(decryption_key)); // necessary
 	if(is_null(local_decryption_key,sizeof(local_decryption_key)))
-		if(crypto_pwhash(local_decryption_key,sizeof(local_decryption_key),arg,password_len,salt,local_crypto_pwhash_OPSLIMIT,local_crypto_pwhash_MEMLIMIT,local_crypto_pwhash_ALG) != 0)
+		if(crypto_pwhash(local_decryption_key,sizeof(local_decryption_key),arg ? arg : "",password_len,salt,local_crypto_pwhash_OPSLIMIT,local_crypto_pwhash_MEMLIMIT,local_crypto_pwhash_ALG) != 0)
 		{ // XXX if it crashes due to lack of memory, the password might not be removed
 			sodium_memzero(salt,sizeof(salt)); // not important
 			torx_free(&arg);

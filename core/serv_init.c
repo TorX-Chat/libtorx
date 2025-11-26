@@ -203,7 +203,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			FILE *fd_active = peer[file_n].file[f].fd;
 			start = peer[file_n].file[f].request[r].start[fd_type] + peer[file_n].file[f].request[r].transferred[fd_type];
-		//	printf("Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu\n",file_n,f,fd_type,r,start); // TODO remove
+		//	error_printf(0,"Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu",file_n,f,fd_type,r,start); // TODO remove
 			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
 				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
 			torx_unlock(file_n) // 🟩🟩🟩
@@ -376,7 +376,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
-			printf(PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%zu to pos=0\n"RESET,n,i,fd_type,start);
+			error_printf(0,PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%zu to pos=0"RESET,n,i,fd_type,start);
 			torx_write(n) // 🟥🟥🟥
 			peer[n].message[i].pos = 0;
 			torx_unlock(n) // 🟩🟩🟩
@@ -603,7 +603,7 @@ int add_onion_call(const int n)
 		failed_tor_call = 0;
 	else
 	{
-		error_printf(0,"Received FAILURE code from Tor when calling ADD_ONION. Coding error. Report this.");
+		error_simple(0,"Received FAILURE code from Tor when calling ADD_ONION. Coding error. Report this.");
 		failed_tor_call = 1;
 	}
 	torx_free((void*)&rbuff);

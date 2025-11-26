@@ -118,7 +118,7 @@ struct qr_data *qr_bool(const char *text,const size_t multiplier)
 				for (int x = -border; x < size + border; x++)
 					for (size_t i = 0; i < multiplier; i++) // expands width
 						pixels[pixelIndex++] = (qrcodegen_getModule(qrcode, x, y) ? 0 : 1); // 1 is black, 0 is white
-	//	printf("Checkpoint qr_bool pixels=%d allocated=%lu\n",pixelIndex,qr_data->size_allocated);
+	//	error_printf(0,"Checkpoint qr_bool pixels=%d allocated=%lu",pixelIndex,qr_data->size_allocated);
 		qr_data->data = pixels;
 		qr_data->height = height;
 		qr_data->width = width;
@@ -149,7 +149,7 @@ char *qr_utf8(const struct qr_data *arg)
 		result[written++] = '\n';
 	}
 	result[written] = '\0';
-//	printf("Checkpoint qr_utf8 allocated=%lu written=%lu\n",allocated,written);
+//	error_printf(0,"Checkpoint qr_utf8 allocated=%lu written=%lu",allocated,written);
 	return result;
 }
 
@@ -163,7 +163,7 @@ static inline void png_raw(png_structp png_ptr, png_bytep data, png_size_t lengt
 	else
 		png_data = torx_secure_malloc(new_size);
 	memcpy((char*)png_data + png_size_global, data, length);
-// printf("Checkpoint png_size: %d new_size: %d\n",png_size_global,new_size);
+//	error_printf(0,"Checkpoint png_size: %d new_size: %d",png_size_global,new_size);
 	png_size_global = new_size;
 	*png_data_ptr = png_data;
 }

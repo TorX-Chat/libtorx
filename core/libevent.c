@@ -91,7 +91,7 @@ static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 	torx_write(event_strc->n) // 🟥🟥🟥
 	if(event_strc->fd_type == 0)
 	{
-	//	printf("Checkpoint recvfd DISCONNECTED n=%d\n",event_strc->n);
+	//	error_printf(0,"Checkpoint recvfd DISCONNECTED n=%d",event_strc->n);
 		peer[event_strc->n].recvfd_connected = 0;
 		bev = peer[event_strc->n].bev_recv;
 		peer[event_strc->n].bev_recv = NULL;
@@ -120,7 +120,7 @@ static inline void disconnect_forever(struct event_strc *event_strc,const int ta
 		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,takedown_delete);
 	}
-	// printf("Checkpoint disconnect_forever n=%d delete=%d killed=%u\n",event_strc->n,takedown_delete,event_strc->killed);
+	// error_printf(0,"Checkpoint disconnect_forever n=%d delete=%d killed=%u",event_strc->n,takedown_delete,event_strc->killed);
 	if(event_strc->fd_type == 0 && (event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_GROUP_CTRL))
 	{ // Necessary because accept_conn creates a copy for each connection
 		torx_free((void*)&event_strc->buffer);
@@ -305,7 +305,7 @@ static inline void begin_cascade(struct event_strc *event_strc)
 				break; // allow cascading effect in packet_removal
 		}
 	//	else if(stat == ENUM_MESSAGE_FAIL && p_iter > -1 && (fd_type == -1 || fd_type == event_strc->fd_type) && (pos != 0 || utilized_recv == i || utilized_send == i)) // TODO debugging here
-	//		printf(BRIGHT_YELLOW"Checkpoint NO cascade: n=%d fd=%d pos=%u recv=%d send=%d\n"RESET,event_strc->n,event_strc->fd_type,pos,utilized_recv,utilized_send);
+	//		error_printf(0,BRIGHT_YELLOW"Checkpoint NO cascade: n=%d fd=%d pos=%u recv=%d send=%d"RESET,event_strc->n,event_strc->fd_type,pos,utilized_recv,utilized_send);
 	}
 }
 
@@ -407,7 +407,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
 						const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
 						torx_unlock(packet_file_n) // 🟩🟩🟩
-					//	printf("Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu\n",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
+					//	error_printf(0,"Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 						const int file_status = file_status_get(packet_file_n,f);
 						if(current_pos == current_end)
 						{ // Completed section
@@ -438,7 +438,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					peer[event_strc->n].message[i].pos += packet_len - (2+2);
 				const uint32_t message_len = torx_allocation_len(peer[event_strc->n].message[i].message);
 				const uint32_t pos = peer[event_strc->n].message[i].pos;
-				// printf("Checkpoint MESSAGE STAT: n=%d i=%d stat=%u\n",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
+				// error_printf(0,"Checkpoint MESSAGE STAT: n=%d i=%d stat=%u",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
 				torx_unlock(event_strc->n) // 🟩🟩🟩
 				if(pos == message_len)
 				{ // complete message, complete send
@@ -458,7 +458,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							torx_unlock(event_strc->n) // 🟩🟩🟩
 							if(shrinkage)
 								shrinkage_cb(event_strc->n,shrinkage);
-						/*	printf("Checkpoint actually deleted group_peer's i\n");
+						/*	error_printf(0,"Checkpoint actually deleted group_peer's i");
 							// TODO we should zero the group_n's message, but we don't know when to do it. Can't do it in message_send, and its hard to do here because we don't know how many group_peers its going out to.
 							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
 						}
@@ -525,18 +525,18 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 							const char *o_name = protocols[packet[ooo].p_iter].name;
 							pthread_rwlock_unlock(&mutex_protocols); // 🟩
-							printf("-------------Same n, same fd_type-------------\n");
-							printf("Checkpoint packet[%d].name:	%s\n",ooo,o_name);
-							printf("Checkpoint packet[%d].n:		%d\n",ooo,packet[ooo].n);
+							error_simple(0,"-------------Same n, same fd_type-------------");
+							error_printf(0,"Checkpoint packet[%d].name:	%s",ooo,o_name);
+							error_printf(0,"Checkpoint packet[%d].n:		%d",ooo,packet[ooo].n);
 							#ifndef NO_FILE_TRANSFER
-							printf("Checkpoint packet[%d].file_n:		%d\n",ooo,packet[ooo].file_n);
+							error_printf(0,"Checkpoint packet[%d].file_n:		%d",ooo,packet[ooo].file_n);
 							#endif // NO_FILE_TRANSFER
-							printf("Checkpoint packet[%d].f_i:		%d\n",ooo,packet[ooo].f_i);
-							printf("Checkpoint packet[%d].packet_len:	%u\n",ooo,packet[ooo].packet_len);
-							printf("Checkpoint packet[%d].fd_type:		%d\n",ooo,packet[ooo].fd_type);
-							printf("Checkpoint packet[%d].time:		%ld\n",ooo,(long)packet[ooo].time);
-							printf("Checkpoint packet[%d].nstime:		%ld\n",ooo,(long)packet[ooo].nstime);
-							printf("-----------If not _FILE_PIECE, bug!-----------\n");
+							error_printf(0,"Checkpoint packet[%d].f_i:		%d",ooo,packet[ooo].f_i);
+							error_printf(0,"Checkpoint packet[%d].packet_len:	%u",ooo,packet[ooo].packet_len);
+							error_printf(0,"Checkpoint packet[%d].fd_type:		%d",ooo,packet[ooo].fd_type);
+							error_printf(0,"Checkpoint packet[%d].time:		%ld",ooo,(long)packet[ooo].time);
+							error_printf(0,"Checkpoint packet[%d].nstime:		%ld",ooo,(long)packet[ooo].nstime);
+							error_simple(0,"-----------If not _FILE_PIECE, bug!-----------");
 							#ifndef NO_FILE_TRANSFER
 							if(packet[ooo].p_iter != file_piece_p_iter) // Severe coding error
 								error_simple(0,"socket_utilized failed to prevent two non-file packets on the same n+fd_type from getting into our packet struct. Severe coding error. Report this.");
@@ -547,8 +547,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				}
 				else // incomplete message, complete send
 				{
-				//	printf("Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u\n",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
-				//	printf("."); fflush(stdout);
+				//	error_printf(0,"Checkpoint partial message, complete send: n=%d i=%d fd=%d packet_len=%u pos=%u of %u",n,i,event_strc->fd_type,packet_len,pos,message_len); // partial incomplete
+				//	error_simple(0,"."); fflush(stdout);
 					#ifndef NO_FILE_TRANSFER
 					send_prep(event_strc->n,packet_file_n,i,p_iter,event_strc->fd_type); // send next packet on same fd
 					#else
@@ -803,7 +803,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
-					error_printf(0,"Checkpoint improper: n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu\n",event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
+					error_printf(0,"Checkpoint improper: n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu",event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
 				//	breakpoint();
 				/*	if(!sent_pause++)
 					{
@@ -870,7 +870,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				uint32_t buffer_len = torx_allocation_len(event_strc->buffer);
 				if(buffer_len == 0)
 				{ // this is only on FIRST PACKET of message // protocol check is a sanity check. it is optional.
-				//	printf("Checkpoint setting event_strc->untrusted_message_len = %u\n",event_strc->untrusted_message_len);
+				//	error_printf(0,"Checkpoint setting event_strc->untrusted_message_len = %u",event_strc->untrusted_message_len);
 					event_strc->untrusted_message_len = be32toh(align_uint32((void*)&read_buffer[cur]));
 					cur += 4; // 4 --> 8
 				}
@@ -932,7 +932,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(group_peer_n < 0)
 							{ // Disgard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
 								error_simple(0,"Group received an anonymous message. Nothing we can do with it.");
-								printf(PINK"Checkpoint set_g=%d ?= event_strc->g=%d\n"RESET,set_g(event_strc->n,NULL),event_strc->g); // TODO if different, the bug is set_g / event_strc->g
+								error_printf(0,PINK"Checkpoint set_g=%d ?= event_strc->g=%d"RESET,set_g(event_strc->n,NULL),event_strc->g); // TODO if different, the bug is set_g / event_strc->g
 								break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 							}
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
@@ -961,7 +961,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								event_strc->n = group_peer_n; // 3rd, order important. DO NOT PUT SOONER.
 								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&event_strc->sockfd,sizeof(event_strc->sockfd)); // important
 								const uint8_t recvfd_connected = 1; // important
-							//	printf("Checkpoint recvfd connected 1 n=%d\n",event_strc->n);
+							//	error_printf(0,"Checkpoint recvfd connected 1 n=%d",event_strc->n);
 								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								event_strc->owner = ENUM_OWNER_GROUP_PEER; // important
 								event_strc->authenticated = 1;
@@ -1005,7 +1005,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									expected_len = GROUP_PEERLIST_PUBLIC_LEN;
 								if(!g_peercount || expected_len + DATE_SIGN_LEN != buffer_len)
 								{ // Prevent illegal reads from malicious message
-									error_printf(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing. %u: %zu != %u\n",g_peercount,expected_len,buffer_len);
+									error_printf(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing. %u: %zu != %u",g_peercount,expected_len,buffer_len);
 									continue;
 								}
 								int added_one = 1;
@@ -1020,7 +1020,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										if(event_strc->invite_required) // pass inviter's signature
 										{
 											const unsigned char *group_peer_invitation = (unsigned char *)&event_strc->buffer[sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+count*crypto_sign_BYTES];
-										//	printf("Checkpoint invitation/sig in at %lu of %u: %s\n",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+count*crypto_sign_BYTES,buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
+										//	error_printf(0,"Checkpoint invitation/sig in at %lu of %u: %s",sizeof(int32_t)+g_peercount*(56+crypto_sign_PUBLICKEYBYTES)+count*crypto_sign_BYTES,buffer_len,b64_encode(group_peer_invitation,crypto_sign_BYTES));
 											ret = group_add_peer(event_strc->g,proposed_peeronion,NULL,group_peer_ed25519_pk,group_peer_invitation);
 										}
 										else
@@ -1074,17 +1074,17 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								}
 								event_strc->authenticated = 1;
 								const uint8_t recvfd_connected = 1;
-							//	printf("Checkpoint recvfd connected 2 n=%d\n",event_strc->n);
+							//	error_printf(0,"Checkpoint recvfd connected 2 n=%d",event_strc->n);
 								setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected),&recvfd_connected,sizeof(recvfd_connected));
 								begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
 								peer_online(event_strc);
 								if(threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled) == 1)
 								{ // propose upgrade
-									printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2\n"RESET);
+									error_simple(0,PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 2"RESET);
 									const uint16_t trash_version = htobe16(torx_library_version[0]);
 									message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
 								}
-								printf(RED"Checkpoint authed a CTRL\n"RESET);
+								error_simple(0,RED"Checkpoint authed a CTRL"RESET);
 							}
 						}
 					}
@@ -1152,8 +1152,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
 						{ // Sanity check on request. File might not exist if size is 0
 							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
-							printf("Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"\n",requested_start,requested_end,size);
-							printf("Checkpoint path: %s\n",file_path);
+							error_printf(0,"Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"",requested_start,requested_end,size);
+							error_printf(0,"Checkpoint path: %s",file_path);
 							torx_free((void*)&file_path);
 							continue;
 						}
@@ -1165,7 +1165,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(stat_ret)
 							{ // File does not exist
 								error_simple(0,"Requested file cannot be accessed. Try re-offering it.");
-								printf("Checkpoint path: %s %ld ?= %ld\n",file_path,(long)file_stat.st_mtime,(long)modified);
+								error_printf(0,"Checkpoint path: %s %ld ?= %ld",file_path,(long)file_stat.st_mtime,(long)modified);
 								torx_free((void*)&file_path);
 								continue;
 							}
@@ -1221,14 +1221,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
-						printf("Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d\n",requested_start,requested_end,event_strc->owner,event_strc->n,event_strc->fd_type);
+						error_printf(0,"Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d",requested_start,requested_end,event_strc->owner,event_strc->n,event_strc->fd_type);
 						send_prep(event_strc->n,file_n,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
 						continue; // because this is now stream
 					}
 					else if(protocol == ENUM_PROTOCOL_FILE_INFO_REQUEST || protocol == ENUM_PROTOCOL_FILE_PARTIAL_REQUEST || protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
 					{
-					//	printf("Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d\n",owner);
+					//	error_printf(0,"Checkpoint receiving PAUSE or CANCEL is experimental with groups/PM: owner=%d",owner);
 						if(buffer_len != CHECKSUM_BIN_LEN)
 						{
 							error_simple(0,"File pause, cancel, or info request of bad size received.");
@@ -1356,7 +1356,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								int_char.i = g;
 								int_char.p = &event_strc->buffer[GROUP_ID_SIZE]; // group_peeronion;
 								int_char.up = group_peer_ed25519_pk;
-							//	printf("Checkpoint sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY. If this was sent as a private message, this needs to be sent to group_peer_n not n\n"); // TODO delete message if non-applicable
+							//	error_simple(0,"Checkpoint sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY. If this was sent as a private message, this needs to be sent to group_peer_n not n"); // TODO delete message if non-applicable
 								message_send(event_strc->n,ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,&int_char,GROUP_OFFER_ACCEPT_REPLY_LEN); // this calls group_add_peer
 							}
 							else if(peerlist == NULL) // ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY
@@ -1381,7 +1381,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
 								//		message_send(peer_n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,NULL,0);
 								//	else
-								//		printf("Checkpoint NOT REQUESTING peerlist2. Peercount==%u\n",peercount);
+								//		error_printf(0,"Checkpoint NOT REQUESTING peerlist2. Peercount==%u",peercount);
 								}
 								torx_free((void*)&peernick);
 								sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
@@ -1585,7 +1585,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 											audio_cache_add(event_strc->n,audio_time,audio_nstime,&event_strc->buffer[8],data_len-8);
 										}
 										else
-											error_printf(0,"Checkpoint Disgarding streaming audio because speaker is off");
+											error_simple(0,"Checkpoint Disgarding streaming audio because speaker is off");
 									}
 									else if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE)
 										call_peer_leaving(call_n, call_c, event_strc->n);
@@ -1776,7 +1776,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			torx_free((void*)&peernick_fresh_n);
 			if(fresh_n == -1 || event_strc->fresh_n != fresh_n)
 			{ // Coding error or buggy/malicious peer. TODO Should spoil onion.
-				printf("Checkpoint FAIL 2323fsadf event_strc->fresh_n == %d,fresh_n==%d\n",event_strc->fresh_n,fresh_n );
+				error_printf(0,"Checkpoint FAIL 2323fsadf event_strc->fresh_n == %d,fresh_n==%d",event_strc->fresh_n,fresh_n );
 				sodium_memzero(buffer_ln,sizeof(buffer_ln));
 				sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 				sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
@@ -1901,7 +1901,7 @@ void *torx_events(void *ctx)
 	{
 		error_simple(0,"Couldn't open event base.");
 		goto complete_failure;
-      	}
+	}
 	while(!failed_tor_call)
 	{ // not a real while loop, just to avoid goto
 		if(event_strc->fd_type == 0)
@@ -1945,7 +1945,7 @@ void *torx_events(void *ctx)
 				}
 				if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
 				{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
-					printf(PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u\n"RESET,peerversion);
+					error_printf(0,PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u"RESET,peerversion);
 					const uint16_t trash_version = htobe16(torx_library_version[0]);
 					message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
 				}

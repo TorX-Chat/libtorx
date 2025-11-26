@@ -135,7 +135,7 @@ severable if found in contradiction with the License or applicable law.
 #define BRIGHT_RED	"\x1b[91m"
 #define BRIGHT_GREEN	"\x1b[92m"
 #define BRIGHT_YELLOW	"\x1b[93m"
-#define BRIGHT_TEAL     "\x1b[96m"
+#define BRIGHT_TEAL	"\x1b[96m"
 #define BOLD		"\x1b[1m" // Usage: printf( BOLD BRIGHT_RED BLINKING "hey\n" RESET );
 #define ITALICS		"\x1b[3m"
 #define BLINKING	"\x1b[5m"
@@ -809,6 +809,70 @@ uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_un
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
 #endif // NO_QR_GENERATOR
 
+#ifndef NO_ASYNC_CALLBACKS
+struct callback_args {
+	uint8_t mem_uint8;
+	uint16_t mem_uint16;
+	uint32_t mem_uint32;
+	int mem_int_a;
+	int mem_int_b;
+	size_t mem_size;
+	uint64_t mem_uint64;
+	char *mem_charp_a;
+	char *mem_charp_b;
+	unsigned char *mem_ucharp;
+	int *mem_intp_a;
+	int *mem_intp_b;
+};
+struct cb_info {
+	uint8_t cb_type;
+	struct callback_args *cb_args;
+};
+enum cb_type {
+	#ifndef NO_FILE_TRANSFER
+	ENUM_INITIALIZE_F = 115,
+	ENUM_EXPAND_FILE_STRUC = 190,
+	ENUM_TRANSFER_PROGRESS = 214,
+	#endif // NO_FILE_TRANSFER
+	#ifndef NO_AUDIO_CALL
+	ENUM_INITIALIZE_PEER_CALL = 248,
+	ENUM_EXPAND_CALL_STRUC = 10,
+	ENUM_AUDIO_CACHE_ADD = 40,
+	ENUM_CALL_UPDATE = 50,
+	#endif // NO_AUDIO_CALL
+	ENUM_INITIALIZE_N = 105,
+	ENUM_INITIALIZE_I = 226,
+	ENUM_INITIALIZE_G = 174,
+	ENUM_SHRINKAGE = 72,
+	ENUM_EXPAND_MESSAGE_STRUC = 176,
+	ENUM_EXPAND_PEER_STRUC = 185,
+	ENUM_EXPAND_GROUP_STRUC = 157,
+	ENUM_CHANGE_PASSWORD = 145,
+	ENUM_INCOMING_FRIEND_REQUEST = 18,
+	ENUM_ONION_DELETED = 77,
+	ENUM_PEER_ONLINE = 175,
+	ENUM_PEER_OFFLINE = 109,
+	ENUM_PEER_NEW = 96,
+	ENUM_ONION_READY = 69,
+	ENUM_TOR_LOG = 255,
+	ENUM_ERROR = 17,
+	ENUM_FATAL = 140,
+	ENUM_CUSTOM_SETTING = 198,
+	ENUM_MESSAGE_NEW = 149,
+	ENUM_MESSAGE_MODIFIED = 46,
+	ENUM_MESSAGE_DELETED = 82,
+	ENUM_LOGIN = 121,
+	ENUM_PEER_LOADED = 171,
+	ENUM_CLEANUP = 84,
+	ENUM_STREAM = 100,
+	ENUM_MESSAGE_EXTRA = 26,
+	ENUM_MESSAGE_MORE = 181,
+	ENUM_UNKNOWN = 236
+};
+void intitialize_async_callbacks(void (*callback)(void));
+void *cb_buffer(void)__attribute__((warn_unused_result));
+#endif // NO_ASYNC_CALLBACKS
+
 #ifndef NO_FILE_TRANSFER
 extern char *download_dir;
 extern char *split_folder;
@@ -903,6 +967,7 @@ extern const uint16_t torx_library_version[4];
 extern void *ui_data;
 extern char *debug_file;
 extern uint8_t reduced_memory;
+extern uint8_t sql_error_suppression;
 extern int8_t debug;
 extern char *working_dir;
 extern char *control_password_clear;
@@ -950,5 +1015,6 @@ extern pthread_rwlock_t mutex_protocols;
 extern pthread_rwlock_t mutex_expand;
 extern pthread_rwlock_t mutex_expand_group;
 extern uint8_t censored_region;
+extern uint32_t sqlcipher_library_version[3];
 
 #endif // TORX_PUBLIC_HEADERS

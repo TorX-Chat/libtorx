@@ -143,19 +143,12 @@ static void *generate_suffix_ed25519(void *arg)
 	char ed25519_pk_b32[56+1]; // zero'd when sensitive
 	size_t len = 0;
 //	randombytes_buf(ed25519_sk,sizeof(ed25519_sk)); // XXX METHOD 2 EXCLUSIVE XXX
-//	size_t cycles = 0; // TODO cycles remove
-//	int time_start = time(NULL); // TODO cycles remove
 	do
 	{
 	//	increment(ed25519_sk,sizeof(ed25519_sk)); // XXX METHOD 2 EXCLUSIVE XXX
 	//	crypto_sign_ed25519_sk_to_pk(ed25519_pk,ed25519_sk);  // XXX METHOD 2 EXCLUSIVE XXX
 		crypto_sign_keypair(ed25519_pk,ed25519_sk);  // XXX METHOD 1 EXCLUSIVE XXX
 		len = base32_encode((unsigned char*)ed25519_pk_b32,ed25519_pk,sizeof(ed25519_pk));
-	//	cycles++; // TODO cycles remove
-	//	if(cycles % 1000 == 0) // TODO cycles remove
-	//		printf("Checkpoint cycles==%lu len==%lu sll=%lu\n",cycles,len,suffix_length_local); // TODO cycles remove
-//		if(!strncmp(&ed25519_pk_b32[52-(suffix_length_local-1)],"QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ",suffix_length_local-1)) // TODO cycles remove
-//			printf("%ld %s\n",cycles,&ed25519_pk_b32[52-suffix_length_local-2]); // TODO cycles remove
 		if(*thread_data->winner) // Keep this last // 2022/11/22 getting an invalid read here in some threads. perhaps some threads hit this after this value is free'd?
 		{
 			torx_free((void*)&arg);
@@ -174,7 +167,6 @@ static void *generate_suffix_ed25519(void *arg)
 		memcpy(thread_data->ed25519_sk,ed25519_sk,sizeof(ed25519_sk));
 		memcpy(thread_data->expanded_sk,expanded_sk,sizeof(expanded_sk));
 		*thread_data->winner = 1; // STOP OTHER THREADS
-//		printf("Checkpoint %d in %ld cycles in %ld seconds\n",suffix_length_local,cycles,time(NULL)-time_start); // TODO cycles remove
 		error_printf(5,"Generated: %s",ed25519_pk_b32);
 	}
 	pthread_mutex_unlock(&mutex_onion); // 🟩🟩

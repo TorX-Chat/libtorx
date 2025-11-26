@@ -250,7 +250,7 @@ void broadcast_inbound(const int origin_n,const unsigned char ciphertext[GROUP_B
 					unsigned char ciphertext_new[GROUP_BROADCAST_LEN];
 					broadcast_prep(ciphertext_new,g);
 					const int i = message_send(new_peer,ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,ciphertext_new,GROUP_BROADCAST_LEN);
-					printf("Checkpoint GROUP_PUBLIC_ENTRY_REQUEST g=%d n=%d i=%d p_iter=%d\n",g,new_peer,i,getter_int(new_peer,i,-1,offsetof(struct message_list,p_iter)));
+					error_printf(0,"Checkpoint GROUP_PUBLIC_ENTRY_REQUEST g=%d n=%d i=%d p_iter=%d",g,new_peer,i,getter_int(new_peer,i,-1,offsetof(struct message_list,p_iter)));
 					sodium_memzero(ciphertext_new,sizeof(ciphertext_new));
 				}
 				else if(new_peer == -1) // NOT ELSE: as == -2 is already have it
