@@ -1356,7 +1356,7 @@ time_t message_find_since(const int n)
 	const uint32_t local_show_log_messages = threadsafe_read_uint32(&mutex_global_variable,&show_log_messages);
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	char command_supplement[4096] = {0}; // size is somewhat arbitrary
+	char command_supplement[4096] = {0}; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
 	time_t earliest_time = 0;
 	time_t earliest_nstime = 0;
 	if(owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL)
@@ -1406,22 +1406,22 @@ time_t message_find_since(const int n)
 		}
 	}
 	sqlite3_stmt *stmt;
-	char command[4096]; // size is somewhat arbitrary
+	char command[4096]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
 	int len = 0; // clang thinks this should be initialized, but I disagree.
 	if(!messages_loaded)
 		len = snprintf(command,sizeof(command),"SELECT time FROM ( SELECT *FROM message WHERE peer_index = %d %s ORDER BY time DESC,nstime DESC LIMIT %u ) ORDER BY time ASC,nstime ASC;",peer_index,command_supplement,local_show_log_messages);
 	else
 		len = snprintf(command,sizeof(command),"SELECT time FROM message WHERE ( peer_index = %d AND time < %lld OR peer_index = %d AND time = %lld AND nstime < %lld ) %s ORDER BY time DESC,nstime DESC LIMIT %u;",peer_index,(long long)earliest_time,peer_index,(long long)earliest_time,(long long)earliest_nstime,command_supplement,local_show_log_messages);
-	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL); // XXX passing length + null terminator for testing because sqlite is weird
+	int val = sqlite3_prepare_v2(db_messages,command, len, &stmt, NULL);
 	sodium_memzero(command,sizeof(command));
+	sodium_memzero(command_supplement,sizeof(command_supplement));
 	if(val != SQLITE_OK)
 	{
 		error_printf(0, "Can't prepare message statement: %s. Not loading messages. Report this.",sqlite3_errmsg(db_messages));
 		return 0;
 	}
-	int count = 0;
 	time_t oldest_time = 0; // yes, must initialize to 0
-	while ((val = sqlite3_step(stmt)) == SQLITE_ROW)
+	for(int count = 0; (val = sqlite3_step(stmt)) == SQLITE_ROW; )
 	{
 		const time_t time = (time_t)sqlite3_column_int(stmt, 0);
 		if(!count++ || time < oldest_time)
@@ -1597,10 +1597,6 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	siStartInfo.hStdInput = g_hChildStd_IN_Rd;
 	siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
 
-/*	const char prefix[] = "cmd.exe /c ";
-	size_t len = sizeof(prefix)-1;
-	char *cmd = torx_malloc(sizeof(prefix));
-	memcpy(cmd,prefix,sizeof(prefix)); */
 	size_t len = 0;
 	char *cmd = {0};
 	size_t counter = 0;
