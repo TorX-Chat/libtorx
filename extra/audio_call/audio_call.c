@@ -681,7 +681,7 @@ void audio_cache_add(const int participant_n,const time_t time,const time_t nsti
 	audio_cache_add_cb(participant_n);
 }
 
-unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,uint32_t *len,const int participant_n)
+unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,const int participant_n)
 { // Retrieve the oldest section of audio_cache for playback. Do not implement buffering in this function; implement buffering on the sender side. Sender side buffering reduces bandwidth and CPU usage as compared to receiver side.
 	unsigned char *data = NULL; // must initialize
 	time_t audio_time = 0; // must initialize
@@ -702,8 +702,6 @@ unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,uint32_t *len,co
 		}
 		torx_unlock(participant_n) // 🟩🟩🟩
 	}
-	if(len)
-		*len = torx_allocation_len(data); // This is now safe to access outside locks
 	if(time)
 		*time = audio_time;
 	if(nstime)

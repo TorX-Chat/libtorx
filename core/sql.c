@@ -193,7 +193,6 @@ int message_edit(const int n,const int i,const char *message)
 	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
 	if(!message || (signature_len && getter_uint8(n,i,-1,offsetof(struct message_list,stat)) != ENUM_MESSAGE_RECV && protocol == ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED) || protocol == ENUM_PROTOCOL_UTF8_TEXT || protocol == ENUM_PROTOCOL_UTF8_TEXT_PRIVATE)
 	{ // Don't mess with the logic here
-		uint32_t final_len = 0;
 		if(message)
 		{ // A message was passed
 			if(signature_len)
@@ -201,11 +200,11 @@ int message_edit(const int n,const int i,const char *message)
 				unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
 				const int signing_n = (owner == ENUM_OWNER_GROUP_PEER) ? getter_group_int(g,offsetof(struct group_list,n)) : n;
 				getter_array(&sign_sk,sizeof(sign_sk),signing_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
-				message_new = message_sign(&final_len,sign_sk,time,nstime,p_iter,message,base_message_len);
+				message_new = message_sign(sign_sk,time,nstime,p_iter,message,base_message_len);
 				sodium_memzero(sign_sk,sizeof(sign_sk));
 			}
 			else
-				message_new = message_sign(&final_len,NULL,time,nstime,p_iter,message,base_message_len);
+				message_new = message_sign(NULL,time,nstime,p_iter,message,base_message_len);
 		}
 		if(message_new || !message) // NOT else if
 		{

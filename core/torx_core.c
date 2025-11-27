@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 37 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 38 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -121,6 +121,7 @@ unsigned char decryption_key[crypto_box_SEEDBYTES] = {0}; // 32 *must* be intial
 int max_group = 0; // Should not be used except to constrain expand_message_struc
 int max_peer = 0; // Should not be used except to constrain expand_peer_struc
 time_t startup_time = 0;
+static volatile uint8_t entered_final_stage_of_shutdown = 0; // Do not apply locks to this!
 #ifdef WIN32
 const char platform_slash = '\\';
 #else
@@ -815,8 +816,8 @@ void unknown_setter(void (*callback)(int,uint16_t,char*,uint32_t))
 		unknown_registered = callback;
 }
 
-unsigned char *read_bytes(size_t *data_len,const char *path)
-{ // Read a file entirely into an torx_insecure_malloc. Return data and set data_len
+unsigned char *read_bytes(const char *path)
+{ // Read a file entirely into an torx_insecure_malloc.
 	unsigned char *data = NULL;
 	size_t allocated = 0;
 	FILE *fp;
@@ -832,8 +833,6 @@ unsigned char *read_bytes(size_t *data_len,const char *path)
 	}
 	else
 		error_simple(0,"Could not open file. Check permissions. Bailing out.");
-	if(data_len)
-		*data_len = allocated;
 	return data;
 }
 
@@ -1815,7 +1814,7 @@ char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,cons
 	return prefixed_message;
 }
 
-char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)
+char *message_sign(const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)
 { // Audited 2024/02/18 // Message + '\0' + [Time] + [NSTime] + Protocol + Signature Note: should theoretically work with unsigned too (but no value in using it as such)
 	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
@@ -1826,7 +1825,8 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 	if(!protocol || (signature_len && sign_sk == NULL) || (date_len && time == 0) || (message_unsigned && base_message_len == 0) || (message_unsigned == NULL && base_message_len))
 	{ // Note: we don't sanity check message_unsigned or base_message_len because they could be NULL/0 for some protocols.
 		error_simple(0,"Failure of sanity check in message_sign.");
-		goto fail; 
+		breakpoint();
+		return NULL;
 	}
 	const uint32_t allocation = base_message_len + null_terminated_len + date_len + signature_len;
 //	error_printf(0,"Checkpoint message_sign %u: %u %u %u %u %u",protocol,allocation,base_message_len,null_terminated_len,date_len,signature_len);
@@ -1854,18 +1854,12 @@ char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t
 			error_simple(0,"Failure in message_sign at crypto_sign_detached.");
 			torx_free((void*)&prefixed_message);
 			torx_free((void*)&message_prepared);
-			goto fail;
+			breakpoint();
+			return NULL;
 		}
 		torx_free((void*)&prefixed_message);
 	}
-	if(final_len)
-		*final_len = allocation;
 	return message_prepared;
-	fail:
-	breakpoint();
-	if(final_len)
-		*final_len = 0;
-	return NULL;
 }
 
 int vptoi(const void* arg)
@@ -4653,13 +4647,12 @@ void cleanup_lib(const int sig_num)
 { // Cleanup process: cleanup_cb() saves UI settings, calls cleanup_lib() to save library settings and close databases, then UI exits
 	#ifdef WIN32
 	WSACleanup(); // TODO this might need to be later
-
 	#endif
 	if(sig_num)
 		breakpoint();
 	error_printf(0,"Cleanup reached. Signal number: %d",sig_num);
-	pthread_attr_destroy(&ATTR_DETACHED); // don't start any threads after this or there will be problems
 	pthread_mutex_lock(&mutex_closing); // 🟥🟥 // Note: do not unlock, ever. Ensures that this doesn't get called multiple times.
+	entered_final_stage_of_shutdown = 1; // Do not apply locks to this!
 	if(log_last_seen == 1)
 	{
 		for(int peer_index,n = 0 ; (peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index))) > -1 || getter_byte(n,INT_MIN,-1,offsetof(struct peer_list,onion)) != 0 ; n++)
@@ -4742,6 +4735,7 @@ void cleanup_lib(const int sig_num)
 	sqlite3_close(db_encrypted);
 	sqlite3_close(db_messages);
 	sodium_memzero(saltbuffer,sizeof(saltbuffer)); // not important
+	pthread_attr_destroy(&ATTR_DETACHED); // don't start any threads after this or there will be problems
 //	exit(sig_num); // NO. Exit value will be handled afterwards in UI
 }
 
@@ -4861,7 +4855,7 @@ static inline long int tor_call_authenticate(const uint16_t local_tor_ctrl_port)
 }
 
 char *tor_call(const char *msg)
-{ // Passes messages to Tor and returns the response. Note that messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead. (Warning may be depreciated now that we run in a single control connection?)
+{ // Passes messages to Tor and returns the response. Note: messages and responses contain sensitive data. WARNING: Avoid running in main thread. Use tor_call_async() instead.
 	size_t msg_len;
 	if(msg == NULL || !(msg_len = strlen(msg)) || msg_len < 2 || msg[msg_len-1] != '\n')
 	{
@@ -4881,8 +4875,8 @@ char *tor_call(const char *msg)
 			torx_free((void*)&msg_recv);
 		}
 	}
-	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (msg_recv = tor_call_internal_recv(tor_ctrl_socket)))
-	{ // Attempt Send && Receive
+	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (entered_final_stage_of_shutdown || (msg_recv = tor_call_internal_recv(tor_ctrl_socket))))
+	{ // Attempt Send && Receive. Do not await a receive message if(entered_final_stage_of_shutdown).
 		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		tor_running = 1;
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
@@ -4905,7 +4899,7 @@ char *tor_call(const char *msg)
 }
 
 static inline void *tor_call_async_threaded(void *arg)
-{ // Confirmed working, but may no longer be necessary because we are now running in a single control connection.
+{ // Confirmed working. Do not delete.
 	if(!arg)
 	{
 		error_simple(0,"tor_call_async_threaded has null arg. Coding error. Report this.");
@@ -4923,7 +4917,7 @@ static inline void *tor_call_async_threaded(void *arg)
 }
 
 void tor_call_async(void (*callback)(char*),const char *msg)
-{ // This is a UI helper function, especially for making GETINFO calls to determine connectivity status. Ex: "GETINFO network-liveness\r\n" / "GETINFO dormant\r\n" / "GETINFO status/bootstrap-phase\r\n", but may no longer be necessary because we are now running in a single control connection.
+{ // This is a UI helper function, especially for making GETINFO calls to determine connectivity status. Ex: "GETINFO network-liveness\r\n" / "GETINFO dormant\r\n" / "GETINFO status/bootstrap-phase\r\n".
 	if(!msg)
 	{
 		error_simple(0,"No message passed to tor_call_async. Coding error. Report this.");

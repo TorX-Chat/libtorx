@@ -1463,7 +1463,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									else
 									{ // Peer requested a sticker we have previously offered to them
 										pthread_rwlock_unlock(&mutex_sticker); // 🟩
-										unsigned char *data = sticker_retrieve_data(NULL,s);
+										unsigned char *data = sticker_retrieve_data(s);
 										data = torx_realloc_shift(data,CHECKSUM_BIN_LEN + torx_allocation_len(data),1); // shift forward for checksum
 										memcpy(data,event_strc->buffer,CHECKSUM_BIN_LEN); // prefix the checksum
 										message_send(event_strc->n,ENUM_PROTOCOL_STICKER_DATA_GIF,data,torx_allocation_len(data)); // note: this is the new length after realloc, do not re-use old value

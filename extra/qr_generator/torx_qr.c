@@ -168,7 +168,7 @@ static inline void png_raw(png_structp png_ptr, png_bytep data, png_size_t lengt
 	*png_data_ptr = png_data;
 }
 
-void *return_png(size_t *size_ptr,const struct qr_data *arg)
+void *return_png(const struct qr_data *arg)
 {
 	const struct qr_data *qr_data = (const struct qr_data*) arg; // Casting passed struct
 	png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -201,8 +201,6 @@ void *return_png(size_t *size_ptr,const struct qr_data *arg)
 		png_write_row(png, row);
 	}
 	png_write_end(png, NULL);
-	if(size_ptr)
-		*size_ptr = png_size_global;
 	pthread_mutex_unlock(&mutex_png_workaround);
 	return png_data;
 // To destroy: 	png_destroy_write_struct(&png, &info);

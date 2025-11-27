@@ -62,7 +62,7 @@ severable if found in contradiction with the License or applicable law.
 
 #include "torx_internal.h"
 
-static inline char *message_prep(uint32_t *message_len_p,const int target_n,const int16_t section,const uint64_t start,const uint64_t end,const int file_n,const int file_f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
+static inline char *message_prep(const int target_n,const int16_t section,const uint64_t start,const uint64_t end,const int file_n,const int file_f,const int g,const int p_iter,const time_t time,const time_t nstime,const void *arg,const uint32_t base_message_len)
 { // Prepare messages // WARNING: There are no sanity checks. This function can easily de-reference a null pointer if bad/insufficient args are passed.
 	#ifndef NO_FILE_TRANSFER
 	#else
@@ -287,21 +287,18 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 			sk = sign_sk_target_n;
 		}
 		if(date_len)
-			message_new = message_sign(message_len_p,sk,time,nstime,p_iter,base_message,base_message_len);
+			message_new = message_sign(sk,time,nstime,p_iter,base_message,base_message_len);
 		else
-			message_new = message_sign(message_len_p,sk,0,0,p_iter,base_message,base_message_len);
+			message_new = message_sign(sk,0,0,p_iter,base_message,base_message_len);
 		if(owner_target != ENUM_OWNER_GROUP_PEER)
 			sodium_memzero(sign_sk_target_n,sizeof(sign_sk_target_n));
 	}
 	else
 	{ // Unsigned
 		if(date_len)
-			message_new = message_sign(message_len_p,NULL,time,nstime,p_iter,base_message,base_message_len);
+			message_new = message_sign(NULL,time,nstime,p_iter,base_message,base_message_len);
 		else
-		{
 			message_new = base_message;
-			*message_len_p = base_message_len + null_terminated_len;
-		}
 	}
 	if(g > -1)
 	{
@@ -318,7 +315,6 @@ static inline char *message_prep(uint32_t *message_len_p,const int target_n,cons
 		sodium_memzero(onion_group_n,sizeof(onion_group_n));
 	}
 	torx_free((void*)&base_message);
-	*message_len_p = 0;
 	return NULL;
 }
 
@@ -335,7 +331,6 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 	pthread_rwlock_unlock(&mutex_protocols); // 🟩
 	int8_t fd_type = -1;
 	char *message = NULL; // must initialize as NULL in case of goto error
-	uint32_t message_len;
 	/* TODO START This block could potentially be moved to message_prep */
 	int file_n = -1;
 	int file_f = -1;
@@ -400,17 +395,16 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 		fallback_g = set_g(target_list[0],NULL);
 	if(skip_prep)
 	{ // For re-send only. Warning: Highly experimental. DO NOT USE TORX_COPY because arg may not be TorX allocated.
-		message_len = base_message_len;
-		message = torx_secure_malloc(message_len);
-		memcpy(message,arg,message_len);
+		message = torx_secure_malloc(base_message_len);
+		memcpy(message,arg,base_message_len);
 	}
 	#ifndef NO_FILE_TRANSFER
 	else if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
-		message = message_prep(&message_len,target_list[0],section,start,end,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
+		message = message_prep(target_list[0],section,start,end,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
 	#endif // NO_FILE_TRANSFER
 	else
-		message = message_prep(&message_len,group_n > -1 ? group_n : target_list[0],-1,0,0,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
-	if(message_len < 1/* || message == NULL*/)
+		message = message_prep(group_n > -1 ? group_n : target_list[0],-1,0,0,file_n,file_f,relevant_g > -1 ? relevant_g : fallback_g,p_iter,time,nstime,arg,base_message_len);
+	if(message == NULL)
 	{ // Not necessary to check both
 		#ifndef NO_FILE_TRANSFER
 		if(protocol != ENUM_PROTOCOL_FILE_REQUEST)

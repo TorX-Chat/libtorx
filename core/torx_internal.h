@@ -178,7 +178,7 @@ void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
 time_t message_find_since(const int n)__attribute__((warn_unused_result));
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)__attribute__((warn_unused_result));
-char *message_sign(uint32_t *final_len,const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
+char *message_sign(const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)__attribute__((warn_unused_result));
 void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion);
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_unused_result));
 void zero_n(const int n); // must be called from within locks

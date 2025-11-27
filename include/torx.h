@@ -699,7 +699,7 @@ void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
-unsigned char *read_bytes(size_t *data_len,const char *path)__attribute__((warn_unused_result));
+unsigned char *read_bytes(const char *path)__attribute__((warn_unused_result));
 void toggle_int8(void *arg);
 void zero_pthread(void *thrd);
 void setcanceltype(int type,int *arg);
@@ -804,7 +804,7 @@ uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_un
 	};
 	struct qr_data *qr_bool(const char *text,const size_t multiplier)__attribute__((warn_unused_result));
 	char *qr_utf8(const struct qr_data *arg)__attribute__((warn_unused_result));
-	void *return_png(size_t *size_ptr,const struct qr_data *arg)__attribute__((warn_unused_result));
+	void *return_png(const struct qr_data *arg)__attribute__((warn_unused_result));
 	size_t write_bytes(const char *filename,const void *png_data,const size_t length);
 #endif // NO_QR_GENERATOR
 
@@ -932,7 +932,7 @@ void call_ignore(const int call_n,const int call_c);
 void call_leave(const int call_n,const int call_c);
 void call_leave_all_except(const int except_n,const int except_c);
 void call_mute_all_except(const int except_n,const int except_c);
-unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,uint32_t *len,const int participant_n)__attribute__((warn_unused_result));
+unsigned char *audio_cache_retrieve(time_t *time,time_t *nstime,const int participant_n)__attribute__((warn_unused_result));
 int record_cache_clear(const int call_n);
 int record_cache_add(const int call_n,const int call_c,const uint32_t cache_minimum_size,const uint32_t max_age_in_ms,const unsigned char *data,const uint32_t data_len);
 #endif // NO_AUDIO_CALL
@@ -955,7 +955,7 @@ void sticker_delete(const int s);
 int sticker_register(const unsigned char *data,const size_t data_len);
 uint8_t sticker_retrieve_saved(const int s)__attribute__((warn_unused_result));
 char *sticker_retrieve_checksum(const int s)__attribute__((warn_unused_result));
-unsigned char *sticker_retrieve_data(size_t *len_p,const int s)__attribute__((warn_unused_result));
+unsigned char *sticker_retrieve_data(const int s)__attribute__((warn_unused_result));
 uint32_t sticker_retrieve_count(void)__attribute__((warn_unused_result));
 void sticker_offload(const int s);
 void sticker_offload_saved(void);

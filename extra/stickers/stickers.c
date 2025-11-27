@@ -313,13 +313,11 @@ char *sticker_retrieve_checksum(const int s)
 	return checksum;
 }
 
-unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
+unsigned char *sticker_retrieve_data(const int s)
 { // First check if we already loaded it, then retrieve if from SQL if we don't. UI should follow this call with a call to sticker_offload if it don't desire library to cache, or set stickers_offload_all=1.
 	if(sticker_invalid(s))
 	{
 		error_printf(0,"Unable to retrieve invalid sticker: %d",s);
-		if(len_p)
-			*len_p = 0;
 		return NULL;
 	}
 	pthread_rwlock_rdlock(&mutex_sticker); // 🟧
@@ -346,8 +344,6 @@ unsigned char *sticker_retrieve_data(size_t *len_p,const int s)
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	if(threadsafe_read_uint8(&mutex_global_variable,&stickers_offload_all))
 		sticker_offload(s);
-	if(len_p)
-		*len_p = len;
 	return data_copy;
 }
 
