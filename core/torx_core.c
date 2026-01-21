@@ -838,10 +838,7 @@ unsigned char *read_bytes(const char *path)
 
 void toggle_int8(void *arg)
 { // Works for int8_t and uint8_t // XXX DO NOT USE WITH g_signal_connect / g_signal_connect_swapped / any async usage requiring "&" prefix
-	if(*(uint8_t *)arg)
-		*(uint8_t *)arg = 0;
-	else
-		*(uint8_t *)arg = 1;
+	*(uint8_t *)arg = !*(uint8_t *)arg;
 }
 
 void zero_pthread(void *thrd)
@@ -1679,8 +1676,12 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 			if(output[len-1] == '\n')
 			{
 				output[len-1] = '\0';
+				output = torx_realloc(output,len);
 				if(output[len-2] == '\r') // This came up on Windows. Carriage Return.
+				{
 					output[len-2] = '\0';
+					output = torx_realloc(output,len-1);
+				}
 			}
 			else
 				output[len] = '\0';
@@ -1760,7 +1761,10 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		if(output)
 		{ // Strip trailing newline, if applicable, otherwise null terminate
 			if(output[len-1] == '\n')
+			{
 				output[len-1] = '\0';
+				output = torx_realloc(output,len);
+			}
 			else
 				output[len] = '\0';
 		}
@@ -2869,7 +2873,7 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 			pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 			const uint8_t already_using_system_tor = using_system_tor;
 			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-			if(!already_using_system_tor)
+			if(!already_using_system_tor && threadsafe_read_uint8(&mutex_global_variable,&tor_running))
 			{ // Must only request shutdown on binary Tor
 				char *ret = tor_call("signal shutdown\n"); // Request a clean shutdown (cleaner than TAKEOWNERSHIP or kill() invoked)
 				torx_free((void*)&ret);
