@@ -836,11 +836,6 @@ unsigned char *read_bytes(const char *path)
 	return data;
 }
 
-void toggle_int8(void *arg)
-{ // Works for int8_t and uint8_t // XXX DO NOT USE WITH g_signal_connect / g_signal_connect_swapped / any async usage requiring "&" prefix
-	*(uint8_t *)arg = !*(uint8_t *)arg;
-}
-
 void zero_pthread(void *thrd)
 { // Implement inside thread via pthread_cleanup_push(zero_pthread,(void*)&) in all threads that could be thread_kill'd
 	pthread_t *thread = (pthread_t *)thrd;
@@ -5362,7 +5357,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 			sticker_remove_peer_from_all(n);
 		#endif // NO_STICKERS
 	}
-	if(delete != 2 && owner != ENUM_OWNER_PEER)
+	if(delete != 2 && owner != ENUM_OWNER_PEER && threadsafe_read_uint8(&mutex_global_variable,&tor_running))
 	{ // 2==delete from file but don't take down // != ENUM_OWNER_PEER because OWNER_PEER doesn't use peer [n]. sendfd
 	// TODO find a way to call disconnect_forever() here in a threadsafe manner
 	//	torx_read(n) // 🟧🟧🟧

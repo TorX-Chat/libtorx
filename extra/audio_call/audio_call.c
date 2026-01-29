@@ -338,12 +338,12 @@ void call_toggle_mic(const int call_n,const int call_c,const int participant_n)
 	{
 		const int participant_iter = call_participant_iter_by_n(call_n,call_c,participant_n);
 		if(participant_iter > -1)
-			toggle_int8(&peer[call_n].call[call_c].participant_mic[participant_iter]); // safe usage
+			peer[call_n].call[call_c].participant_mic[participant_iter] = !peer[call_n].call[call_c].participant_mic[participant_iter];
 		else // Rare failure
 			error_simple(0,"Peer probably left the call before toggle.");
 	}
 	else
-		toggle_int8(&peer[call_n].call[call_c].mic_on); // safe usage
+		peer[call_n].call[call_c].mic_on = !peer[call_n].call[call_c].mic_on;
 	torx_unlock(call_n) // 🟩🟩🟩
 	call_update_cb(call_n,call_c);
 }
@@ -357,12 +357,12 @@ void call_toggle_speaker(const int call_n,const int call_c,const int participant
 	{
 		const int participant_iter = call_participant_iter_by_n(call_n,call_c,participant_n);
 		if(participant_iter > -1)
-			toggle_int8(&peer[call_n].call[call_c].participant_speaker[participant_iter]); // safe usage
+			peer[call_n].call[call_c].participant_speaker[participant_iter] = !peer[call_n].call[call_c].participant_speaker[participant_iter];
 		else // Rare failure
 			error_simple(0,"Peer probably left the call before toggle.");
 	}
 	else
-		toggle_int8(&peer[call_n].call[call_c].speaker_on); // safe usage
+		peer[call_n].call[call_c].speaker_on = !peer[call_n].call[call_c].speaker_on;
 	torx_unlock(call_n) // 🟩🟩🟩
 	call_update_cb(call_n,call_c);
 }

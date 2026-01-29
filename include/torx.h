@@ -700,7 +700,6 @@ void torx_fn_unlock(const int n);
 void error_printf(const int level,const char *format,...);
 void error_simple(const int debug_level,const char *error_message);
 unsigned char *read_bytes(const char *path)__attribute__((warn_unused_result));
-void toggle_int8(void *arg);
 void zero_pthread(void *thrd);
 void setcanceltype(int type,int *arg);
 int8_t torx_debug_level(const int8_t level);
