@@ -2860,6 +2860,8 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 			signal(SIGCHLD, SIG_DFL); // XXX allow zombies to be reaped by wait()
 			if(!kill(tor_pid,SIGTERM) && wait_to_reap && threadsafe_read_uint8(&mutex_global_variable,&tor_running)) // DO NOT MODIFY: wait() must NOT be called if !tor_running or issues on startup occur.
 				wait(NULL); // TODO before we wait() forever, we should probably also check that this PID is owned by the same user, and/or wait for a limited number of seconds
+			else if(wait_to_reap) // Failed call or this is likely on startup
+				kill(tor_pid,SIGKILL); // XXX 2026 NOTE: SIGKILL after SIGTERM is to get rid of Zombies that do NOT belong to our process (ie that we cannot reap), caused by CTRL+Z during runtime.
 			signal(SIGCHLD, SIG_IGN); // XXX prevent zombies again
 			#endif
 		}
