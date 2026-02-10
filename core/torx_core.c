@@ -464,16 +464,16 @@ void error_printf(const int debug_level,const char *format,...)
 	if(length > 0)
 	{
 		char *do_not_free_message = torx_secure_malloc((size_t)length + 2 - has_newline);
-		if(has_newline)
-			vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
-		else
-		{
-			vsnprintf(do_not_free_message, (size_t)length + 1, format, args);
+		vsnprintf(do_not_free_message, (size_t)length + 1, format, args); // This is shorter than allocation by 1 if NO newline because appending after
+		if(!has_newline)
+		{ // Append newline
 			if(do_not_free_message[length-1] != '\n')
 			{ // one last check, to see if a potential %c or %s (etc) added a newline
 				do_not_free_message[length] = '\n';
 				do_not_free_message[length+1] = '\0';
 			}
+			else // Uncommon, realloc SMALLER because we are not appending a newline
+				do_not_free_message = torx_realloc(do_not_free_message,(size_t)length + 1); // This is indeed shrinking by one, despite being `length + 1`
 		}
 		error_allocated_already(debug_level,do_not_free_message);
 	}
@@ -1787,19 +1787,21 @@ void set_time(time_t *time,time_t *nstime)
 }
 
 char *message_time_string(const int n,const int i)
-{ // Helper function available to UI devs (but no requirement to use)
+{ // Helper function available to UI devs (but no requirement to use). Convert Epoch Time to Human Readable, including seconds. To eliminate seconds, re-implement or call realloc.
 	if(n < 0)
 		return NULL;
-	// Convert Epoch Time to Human Readable
 	const time_t rawtime = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t diff = time(NULL) - rawtime; // comparing both in UTC
 	struct tm *info = localtime(&rawtime);
-	char *timebuffer = torx_insecure_malloc(20); // not sure whether there is value in having this secure. going to venture to say no.
+	char timebuffer[20]; // no need to memzero
+	size_t len;
 	if(diff >= 0 && diff < 86400) // 24 hours
-		strftime(timebuffer,20,"%H:%M:%S",info);
+		len = strftime(timebuffer,sizeof(timebuffer),"%H:%M:%S",info);
 	else
-		strftime(timebuffer,20,"%Y/%m/%d %H:%M:%S",info);
-	return timebuffer;
+		len = strftime(timebuffer,sizeof(timebuffer),"%Y/%m/%d %H:%M:%S",info);
+	char *ret = torx_insecure_malloc(len + 1); // not sure whether there is value in having this secure. going to venture to say no.
+	memcpy(ret,timebuffer,len+1);
+	return ret;
 }
 
 char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,const uint32_t total_unsigned_len)
@@ -2679,11 +2681,11 @@ uint16_t randport(const uint16_t arg) // Passing arg tests whether the port is a
 	return port;
 }
 
-static inline void remove_lines_with_suffix(char *input)
+static inline size_t remove_lines_with_suffix(char *input)
 { // We remove these lines because they are excessively common and provide no added value to us. Note: if line doesn't end in newline, it is not removed (as it is incomplete). This means some lines could sneak through, which is OK.
-	size_t total_len; // so far unused
+	size_t total_len;
 	if(!input || !(total_len = strlen(input)))
-		return;
+		return 0;
 	const int num_suffixes = sizeof(tor_log_removed_suffixes)/sizeof(char *);
 	for (char *start = input,*end = NULL; (end = strchr(start, '\n')) != NULL; ) // Move past the newline character
 	{
@@ -2697,7 +2699,7 @@ static inline void remove_lines_with_suffix(char *input)
 		}
 		if(should_remove)
 		{
-			total_len -= line_len; // so far unused
+			total_len -= line_len;
 			size_t iter = 0;
 			for(; (end+1)[iter] != '\0'; iter++)
 				start[iter] = (end+1)[iter];
@@ -2706,6 +2708,7 @@ static inline void remove_lines_with_suffix(char *input)
 		else
 			start = end + 1;
 	}
+	return total_len; // Excludes null pointer
 }
 
 static inline void *tor_log_reader(void *arg)
@@ -2745,11 +2748,14 @@ static inline void *tor_log_reader(void *arg)
 				msg = torx_secure_malloc((size_t)len+1);
 				memcpy(msg,data,(size_t)len+1); // includes copying null terminator
 			}
-			remove_lines_with_suffix(msg);
+			const size_t remaining_len = remove_lines_with_suffix(msg);
 			pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
-			const size_t remaining_len = strlen(msg);
 			if(remaining_len && utf8_valid(msg,remaining_len))
+			{
+				if(remaining_len < (size_t)len)
+					msg = torx_realloc(msg,remaining_len+1);
 				tor_log_cb(msg);
+			}
 			else
 			{
 				if(remaining_len) // 2024/12/25 This can occur when restarting Tor
