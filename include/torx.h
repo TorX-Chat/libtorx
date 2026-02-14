@@ -697,7 +697,7 @@ int protocol_registration(const uint16_t protocol,const char *name,const char *d
 void torx_fn_read(const int n);
 void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);
-void error_printf(const int level,const char *format,...);
+void error_printf(const int level,const char *format,...)__attribute__((format(printf, 2, 3)));
 void error_simple(const int debug_level,const char *error_message);
 unsigned char *read_bytes(const char *path)__attribute__((warn_unused_result));
 void zero_pthread(void *thrd);
