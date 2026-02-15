@@ -226,7 +226,7 @@ else()
 endif()
 
 add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/blake3.c core/libevent.c core/serv_init.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${ASYNC_CALLBACKS_SRC} ${QR_GENERATOR_SRC} ${AUDIO_CALL_SRC} ${STICKERS_SRC} ${FILE_TRANSFER_SRC})
-set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.36) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
+set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.39) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
