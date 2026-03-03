@@ -3894,7 +3894,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		error_printf(0,"Failure of group_check_sig. Unknown signer or bad signature. Protocol: %u",untrusted_protocol); // Unknown signer (bug, malicious peer, blocked peer, deleted peer)
 		error_printf(3,MAGENTA"Checkpoint failed signature: %s"RESET,b64_encode(sig,crypto_sign_BYTES));
 		error_printf(3,MAGENTA"Checkpoint failed signing pk key: %s"RESET,b64_encode(ed25519_pk,sizeof(ed25519_pk)));
-		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %lu: %s"RESET,message_len,b64_encode(message, message_len));
+		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %u: %s"RESET,message_len,b64_encode(message, message_len));
 	//	breakpoint();
 	}
 	else if(g_peercount != 0)
@@ -3903,7 +3903,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		breakpoint();
 	}
 	else
-		error_printf(0,"Group=%d has no peerlist and peercount=%d. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
+		error_printf(0,"Group=%d has no peerlist and peercount=%u. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	torx_free((void*)&prefixed_message);
 	return -1;

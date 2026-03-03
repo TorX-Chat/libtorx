@@ -449,7 +449,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		if(message)
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d has message",n,p_iter);
 		else // TODO currently triggers on all non-PM GROUP_PEER messages
-			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %u, nstime: %u, base_message_len: %u, signature_length: %lu, protocol: %s",n,p_iter,time,nstime,base_message_len,signature_length,name);
+			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %ld, nstime: %ld, base_message_len: %u, signature_length: %lu, protocol: %s",n,p_iter,time,nstime,base_message_len,signature_length,name);
 		return INT_MIN;
 	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));

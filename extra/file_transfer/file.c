@@ -827,7 +827,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 { // Populates peer[n].file[f].{stuff} for outbound ENUM_PROTOCOL_FILE_OFFER
 	if(n < 0 || !checksum || !file_path || !size)
 	{
-		error_printf(0,"Sanity check failed in process_file_offer_outbound: n=%d size=%llu. Coding error. Report this.",n,size);
+		error_printf(0,"Sanity check failed in process_file_offer_outbound: n=%d size=%lu. Coding error. Report this.",n,size);
 		breakpoint();
 		return -1;
 	}
@@ -1215,7 +1215,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 				sodium_memzero(checksum,sizeof(checksum));
 				if(ret1 == 0 || ret2)
 				{ // Has been tested, works.
-					error_printf(0,"Bad section checksum: n=%d f=%d peer_n=%d sec=%u. Blacklisting peer and marking section as incomplete. Requesting from others, if available.",n,f,peer_n,section);
+					error_printf(0,"Bad section checksum: n=%d f=%d peer_n=%d sec=%d. Blacklisting peer and marking section as incomplete. Requesting from others, if available.",n,f,peer_n,section);
 					torx_write(n) // 🟥🟥🟥
 					if(peer[n].file[f].split_progress) // sanity check to prevent race condition
 						peer[n].file[f].split_progress[section] = 0;
@@ -1741,7 +1741,7 @@ void file_accept(const int n,const int f)
 	}
 	else
 	{ // NOTE: This is probably a UI error caused by ENUM_FILE_INACTIVE_CANCELLED
-		error_printf(0,"Attempted file_accept on file %d with unrecognized file_status: %u. Coding error. Report this.",f,file_status);
+		error_printf(0,"Attempted file_accept on file %d with unrecognized file_status: %d. Coding error. Report this.",f,file_status);
 		breakpoint();
 	}
 }

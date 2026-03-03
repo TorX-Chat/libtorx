@@ -281,7 +281,7 @@ static inline void begin_cascade(struct event_strc *event_strc)
 	torx_unlock(event_strc->n) // 🟩🟩🟩
 	if(event_strc->authenticated == 0 || socket_utilized > INT_MIN)
 	{ // If socket_utilized EVER triggers here, it indicates either that we call begin_cascade somewhere we shouldn't (where a message_send is already called), or otherwise a race condition (where begin_cascade is being called twice).
-		error_printf(0,"Sanity check failed in begin_cascade. Possible coding error. Report this. Owner=%u n=%d fd_type=%d utilized=%i authenticated=%u",event_strc->owner,event_strc->n,event_strc->fd_type,socket_utilized,event_strc->authenticated);
+		error_printf(0,"Sanity check failed in begin_cascade. Possible coding error. Report this. Owner=%u n=%d fd_type=%d utilized=%i authenticated=%d",event_strc->owner,event_strc->n,event_strc->fd_type,socket_utilized,event_strc->authenticated);
 		return;
 	}
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
@@ -421,7 +421,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							send_prep(event_strc->n,packet_file_n,f,p_iter,event_strc->fd_type); // sends next packet on same fd, or closes it
 						}
 						else // Ceasing send due to status change
-							error_printf(0,"Ceasing to send file file_n=%d f=%d status=%u",packet_file_n,f,file_status);
+							error_printf(0,"Ceasing to send file file_n=%d f=%d status=%d",packet_file_n,f,file_status);
 					}
 					else
 						torx_unlock(packet_file_n) // 🟩🟩🟩
@@ -1593,7 +1593,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										call_peer_joining(call_n, call_c, event_strc->n);
 								}
 								else
-									error_printf(0, "Received a audio stream related message for an unknown call: %lu %lu",time,nstime); // If DATA, consider sending _LEAVE once. Otherwise it is _LEAVE, so ignore.
+									error_printf(0, "Received a audio stream related message for an unknown call: %ld %ld",time,nstime); // If DATA, consider sending _LEAVE once. Otherwise it is _LEAVE, so ignore.
 							}
 							else
 							#endif // NO_AUDIO_CALL
@@ -1806,13 +1806,13 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 		}
 		if(event_strc->owner == ENUM_OWNER_SING)
 		{ // Spoil SING after bad handshake
-			error_printf(0,"Wrong size connection attempt of size %lu received. Onion spoiled. Report this.",len);
+			error_printf(0,"Wrong size connection attempt of size %d received. Onion spoiled. Report this.",len);
 			disconnect_forever(event_strc,3); // XXX Run last and return immediately after, will exit event base
 			return; // redundant, but for safety.
 		}
 		else if(event_strc->owner == ENUM_OWNER_MULT)
 		{ // Disconnect MULT after bad handshake
-			error_printf(0,"Invalid attempt of size %lu received on mult. Should notify user of this.",len);
+			error_printf(0,"Invalid attempt of size %d received on mult. Should notify user of this.",len);
 			disconnect(event_strc);
 		}
 	}

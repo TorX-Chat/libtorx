@@ -272,7 +272,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			else if(start >= message_len)
 			{ // 2024/12/25 This is a serious error but we're not making it fatal because it currently is only triggering on restarts.
-				error_printf(0,"Start >= message_len: %u >= %u. n=%d i=%d stat=%u. Coding error. Report this.",start,message_len,n,i,getter_uint8(n,i,-1,offsetof(struct message_list,stat))); // Added check 2024/05/04
+				error_printf(0,"Start >= message_len: %lu >= %u. n=%d i=%d stat=%u. Coding error. Report this.",start,message_len,n,i,getter_uint8(n,i,-1,offsetof(struct message_list,stat))); // Added check 2024/05/04
 				goto error;
 			}
 			if(prefix_len + message_len - start < PACKET_SIZE_MAX)
@@ -294,7 +294,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(n) // 🟩🟩🟩
 			const size_t reading = start + (size_t)packet_len - prefix_len;
 			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
-				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %lu < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
+				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %u < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
 			/* sanity check end XXX */
 			torx_read(n) // 🟧🟧🟧
 			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
@@ -373,7 +373,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(n) // 🟩🟩🟩
 		}
 		else
-			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%u %s"RESET,n,fd_type,i,socket_utilized,start,name);
+			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%lu %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
 			error_printf(0,PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%zu to pos=0"RESET,n,i,fd_type,start);
