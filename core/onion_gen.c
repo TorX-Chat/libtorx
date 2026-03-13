@@ -71,7 +71,7 @@ severable if found in contradiction with the License or applicable law.
 	// TODO consider using setpriority(PRIO_PROCESS, 0, 19), but can we do this specific to one pthread?
 */
 
-struct thread_data { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct thread_data { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	size_t suffix_length_local;
 	uint32_t thrd_num;
 	uint8_t *winner;

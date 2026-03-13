@@ -75,7 +75,7 @@ void (*initialize_f_registered)(const int n,const int f) = NULL;
 void (*expand_file_struc_registered)(const int n,const int f) = NULL;
 void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred) = NULL;
 
-struct file_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct file_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	char *path;
 	time_t modified;

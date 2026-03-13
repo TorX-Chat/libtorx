@@ -101,10 +101,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		i = f_i;
 		const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 		if(stat != ENUM_MESSAGE_FAIL)
-		{ // Race condition. This can happen where cascade sends off a message before we anticipated.
-			error_printf(0,"Send_prep message already sent: n=%d i=%d stat=%u.",n,i,stat);
-			breakpoint();
-			goto error;
+		{ // This can happen where, after calling increment_i in message_distribute, begin_cascade in another thread calls send_prep before we call send_prep in message_distribute. (Ex: sending multiple files at once, they go out on different sockets)
+			error_printf(2,"Send_prep message already sent (not harmful): n=%d i=%d stat=%u.",n,i,stat);
+			return 0; // NOTE: A race condition, but not a harmful one. We should inform the caller it was sent.
 		}
 		const int true_p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter != true_p_iter) // TODO 2024/03/21 more efficient would be to just *not* pass p_iter as an arg. We just need to pass whether or not its ENUM_PROTOCOL_FILE_PIECE

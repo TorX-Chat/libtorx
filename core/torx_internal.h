@@ -137,12 +137,12 @@ struct tor_call_strc {
 	void (*callback)(char*);
 	char *msg;
 };
-struct pass_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct pass_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	char *password_old;
 	char *password_new;
 	char *password_verify;
 };
-struct event_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct event_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	evutil_socket_t sockfd;
 	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
 	int8_t fd_type; // 0 recvfd, 1 sendfd
@@ -156,13 +156,13 @@ struct event_strc { // XXX Do not sodium_malloc structs unless they contain sens
 	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
 	uint8_t killed;
 };
-struct int_char { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct int_char { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	int i; // cannot make const, not necessary anyway
 	const char *p;
 	const unsigned char *up;
 };
 #ifndef NO_FILE_TRANSFER
-struct file_request_strc { // XXX Do not sodium_malloc structs unless they contain sensitive arrays XXX
+struct file_request_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	int f;
 	int8_t fd_type;
