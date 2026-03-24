@@ -1347,7 +1347,7 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 			was_transferring++;
 		}
 		else if(peer[n].file[f].split_status_n[section] > -1)
-			*active_transfers_ongoing = *active_transfers_ongoing + 1; // cannot use ++ here. Would be invalid pointer math.
+			*active_transfers_ongoing += 1; // NOT the same as ++
 	}
 	torx_unlock(n) // 🟩🟩🟩
 	return was_transferring;
