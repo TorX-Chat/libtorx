@@ -946,6 +946,7 @@ struct sticker_list {
 extern struct sticker_list *sticker;
 extern uint8_t stickers_save_all;
 extern uint8_t stickers_offload_all;
+extern uint8_t stickers_offload_on_startup;
 extern uint8_t stickers_request_data;
 extern uint8_t stickers_send_data;
 int set_s(const unsigned char checksum[CHECKSUM_BIN_LEN])__attribute__((warn_unused_result));

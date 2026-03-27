@@ -76,7 +76,8 @@ pthread_rwlock_t mutex_sticker = PTHREAD_RWLOCK_INITIALIZER;
 struct sticker_list *sticker = {0};
 uint8_t stickers_save_all = 0; // (UI toggleable) Do not default to 1 for legal reasons
 uint8_t stickers_offload_all = 0; // Do not cache stickers in RAM. NOTE: If !stickers_save_all && stickers_offload_all, stickers data will not be requested.
-uint8_t stickers_request_data = 1; // (UI toggleable) request data from peers when they send a sticker, subject to above condition
+uint8_t stickers_offload_on_startup = 0; // (UI toggleable) Do not cache stickers in RAM on startup. Reduces RAM requirements on startup.
+uint8_t stickers_request_data = 1; // (UI toggleable) Request data from peers when they send a sticker, subject to Note on stickers_offload_all
 uint8_t stickers_send_data = 1; // not really that useful because if we don't send stickers, people can't request stickers.
 
 static inline int8_t sticker_invalid(const int s)

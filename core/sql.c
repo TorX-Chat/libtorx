@@ -1714,6 +1714,8 @@ void sql_populate_setting(const int force_plaintext)
 						pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 						sticker[s].saved = 1; // we got this from disk, so we must mark it as saved
 						pthread_rwlock_unlock(&mutex_sticker); // 🟩
+						if(stickers_offload_on_startup)
+							sticker_offload(s);
 						if(peer_index < 0) // should always be true
 							pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 					}
