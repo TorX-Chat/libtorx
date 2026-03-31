@@ -289,7 +289,8 @@ const char *table_setting_peer = \
 		setting_index	INTEGER	PRIMARY KEY AUTOINCREMENT,\
 		peer_index	INT	STRICT,\
 		setting_name	TEXT	STRICT NOT NULL,\
-		setting_value   BLOB\
+		setting_value   BLOB,\
+		UNIQUE(peer_index, setting_name)\
 	);"; // REFERENCES peer(peer_index) ON DELETE CASCADE
 const char *table_message = /* Messages can be null (ex: GROUP_PEER). Message must be text-only for full-text search support*/\
 	"CREATE TABLE IF NOT EXISTS message (\
@@ -3256,7 +3257,11 @@ void initial_keyed(void)
 	sqlcipher_db_configuration(&db_encrypted);
 
 	if(!first_run)
+	{ // Migration: deduplicate setting_peer and add UNIQUE(peer_index, setting_name) constraint for existing databases TODO delete at version *.1.* or 3.*.*
+	//	sql_exec(&db_encrypted,"DELETE FROM setting_peer WHERE setting_index NOT IN (SELECT MAX(setting_index) FROM setting_peer GROUP BY peer_index, setting_name);",NULL); // Doesn't appear to function, but the next call could in theory fail without it functioning?
+		sql_exec(&db_encrypted,"CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_peer_unique ON setting_peer(peer_index, setting_name);",NULL); // important
 		sql_populate_setting(0); // encrypted settings
+	}
 	else // if(first_run)
 	{
 		sql_exec(&db_encrypted,table_setting_global,NULL);
@@ -4010,7 +4015,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	char setting_name[64]; // arbitrary size
 	snprintf(setting_name,sizeof(setting_name),"group_peer%d",peer_index); // "group_peer" + peer_index, for uniqueness. might make deleting complex.
 	const int peer_index_group = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-	sql_setting(0,peer_index_group,setting_name,"",0);
+	sql_setting(0,peer_index_group,setting_name,"1",1); // the 1 is just to bypass NULL/zero len checks in sql_setting and is not used.
 	// Add it to our peerlist
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	if(group[g].peerlist)
@@ -4070,8 +4075,8 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 	const int peer_index = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index,"group_id",(const char*)group_id,GROUP_ID_SIZE); // IMPORTANT: This MUST be the FIRST setting saved because it will also be the first loaded.
 	char p1[21];
-	snprintf(p1,sizeof(p1),"%d",g_invite_required);
-	sql_setting(0,peer_index,"invite_required",p1,strlen(p1));
+	const size_t len = (size_t)snprintf(p1,sizeof(p1),"%d",g_invite_required);
+	sql_setting(0,peer_index,"invite_required",p1,len);
 	if(responding_to_first_offer)
 	{ // Responding to a ENUM_PROTOCOL_GROUP_OFFER_FIRST. Need to sign invitor's creator_onion.
 		struct int_char int_char;
@@ -4148,8 +4153,8 @@ int group_generate(const uint8_t invite_required,const char *name)
 	sodium_memzero(x25519_pk,sizeof(x25519_pk));
 	sodium_memzero(x25519_sk,sizeof(x25519_sk));
 	char p1[21];
-	snprintf(p1,sizeof(p1),"%u",invite_required);
-	sql_setting(0,peer_index,"invite_required",p1,strlen(p1));
+	const size_t len = (size_t)snprintf(p1,sizeof(p1),"%u",invite_required);
+	sql_setting(0,peer_index,"invite_required",p1,len);
 	return g;
 }
 
@@ -4579,12 +4584,12 @@ static inline void *login_threaded(void *arg)
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		sql_setting(1,-1,"salt",(char*)salt,sizeof(salt));
 		char p1[21];
-		snprintf(p1,sizeof(p1),"%llu",local_crypto_pwhash_OPSLIMIT);
-		sql_setting(1,-1,"crypto_pwhash_OPSLIMIT",p1,strlen(p1));
-		snprintf(p1,sizeof(p1),"%zu",local_crypto_pwhash_MEMLIMIT);
-		sql_setting(1,-1,"crypto_pwhash_MEMLIMIT",p1,strlen(p1));
-		snprintf(p1,sizeof(p1),"%d",local_crypto_pwhash_ALG);
-		sql_setting(1,-1,"crypto_pwhash_ALG",p1,strlen(p1));
+		size_t len = (size_t)snprintf(p1,sizeof(p1),"%llu",local_crypto_pwhash_OPSLIMIT);
+		sql_setting(1,-1,"crypto_pwhash_OPSLIMIT",p1,len);
+		len = (size_t)snprintf(p1,sizeof(p1),"%zu",local_crypto_pwhash_MEMLIMIT);
+		sql_setting(1,-1,"crypto_pwhash_MEMLIMIT",p1,len);
+		len = (size_t)snprintf(p1,sizeof(p1),"%d",local_crypto_pwhash_ALG);
+		sql_setting(1,-1,"crypto_pwhash_ALG",p1,len);
 	}
 	else
 	{
@@ -4672,8 +4677,8 @@ void cleanup_lib(const int sig_num)
 			if(sendfd_connected > 0 && recvfd_connected > 0 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
 			{
 				char p1[21];
-				snprintf(p1,sizeof(p1),"%lld",(long long)time(NULL));
-				sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
+				const size_t len = (size_t)snprintf(p1,sizeof(p1),"%lld",(long long)time(NULL));
+				sql_setting(0,peer_index,"last_seen",p1,len);
 			}
 		}
 	}

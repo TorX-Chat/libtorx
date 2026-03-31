@@ -335,7 +335,7 @@ int sql_exec(sqlite3** db,const char *command,...)
 	va_end(ap);
 	if((val = sqlite3_step(stmt)) != SQLITE_DONE) // Execute the statement
 	{ // Occurs whenever already exists
-		error_printf(4, "Cannot execute statement: %s",sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
+		error_printf(0, "Cannot execute statement %s: %s",command,sqlite3_errmsg(*db)); // return value is const, cannot be freed, so leave it as is
 		sqlite3_finalize(stmt);
 		pthread_mutex_unlock(mutex); // 🟩🟩
 		return val;
@@ -345,93 +345,37 @@ int sql_exec(sqlite3** db,const char *command,...)
 	return SQLITE_OK; // == 0
 }
 
-static inline int sql_insert_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len)
-{ // INTERNAL FUNCTION ONLY. DO NOT USE DIRECTLY. Call sql_setting instead.
-	if(force_plaintext && peer_index != -1)
-	{
-		error_simple(0,"Tried to save a peer specific setting in plaintext database. Rejected. Report this.");
-		breakpoint();
-		return -1;
-	}
-	if(!setting_name || !setting_value/* || !setting_value_len*/)
-	{
-		error_simple(0,"Tried to save a NULL setting or setting value in database. Rejected. Report this.");
-		breakpoint();
-		return -1;
-	}
-	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-	if(force_plaintext)
-		snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_clear (setting_name,setting_value) VALUES (?,?);");
-	else if(peer_index == -1)
-		snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_global (setting_name,setting_value) VALUES (?,?);");
-	else /* encrypted */
-	{ // For plaintext we have a unqiue setting_name, so we don't need to check first with a select whether it exists (find row)
-		sqlite3_stmt *stmt;
-		const int len = snprintf(command,sizeof(command),"SELECT *FROM setting_peer WHERE peer_index = %d AND setting_name = (?);",peer_index);
-		pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
-		if(sqlite3_prepare_v2(db_encrypted,command, len, &stmt, NULL) != SQLITE_OK)
-		{
-			error_printf(0, "Can't prepare setting statement: %s",sqlite3_errmsg(db_encrypted)); // return value is const, cannot be freed, so leave it as is
-			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			sodium_memzero(command,sizeof(command));
-			return -1;
-		}
-		sqlite3_bind_text(stmt, 1, setting_name, (int)strlen(setting_name), SQLITE_TRANSIENT);
-		if(sqlite3_step(stmt) == SQLITE_ROW)
-		{
-			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			sodium_memzero(command,sizeof(command));
-			return SQLITE_CONSTRAINT; // unique failure, same as would be returned by force_plaintext == 1 unique failure
-		}
-		else 
-		{
-			sqlite3_finalize(stmt); // XXX: this frees ALL returned data from anything regarding stmt, so be sure it has been copied before this XXX
-			pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-			snprintf(command,sizeof(command),"INSERT OR ABORT INTO setting_peer (peer_index,setting_name,setting_value) VALUES (%d,?,?);",peer_index);
-		}
-	}
-	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_name,strlen(setting_name),setting_value,setting_value_len,NULL);
-	sodium_memzero(command,sizeof(command));
-	return val;
-}
-
-static inline int sql_update_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len)
-{ // INTERNAL FUNCTION ONLY. DO NOT USE DIRECTLY. Call sql_setting instead.
-	if((force_plaintext && peer_index != -1) || !setting_name || !setting_value || !setting_value_len)
-	{
-		error_simple(0,"Tried to update a peer specific setting in plaintext database, or sanity check otherwise failed. Coding error. Report this.");
-		breakpoint();
-		return -1;
-	}
-	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-	if(force_plaintext)
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_clear SET setting_value = (?) WHERE setting_name = (?);");
-	else if(peer_index == -1)
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_global SET setting_value = (?) WHERE setting_name = (?);");
-	else // encrypted
-		snprintf(command,sizeof(command),"UPDATE OR ABORT setting_peer SET setting_value = (?) WHERE peer_index = %d AND setting_name = (?);",peer_index);
-	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_value,setting_value_len,setting_name,strlen(setting_name),NULL);
-	sodium_memzero(command,sizeof(command));
-	return val;
-}
-
 int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len)
-{ // For inserting or modifying setting. For GLOBAL setting, pass -1 as peer_index.
+{ // For inserting or modifying setting. Passing a NULL setting_value or !setting_value_len results in deletion. For GLOBAL setting, pass -1 as peer_index.
 	if(peer_index < -1)
 	{
 		error_printf(0,"Attempted to save %s setting with an uninitialized peer_index. Coding error. Report this.",setting_name);
 		breakpoint();
 		return -1;
 	}
-	int val;
-	if((val = sql_insert_setting(force_plaintext,peer_index,setting_name,setting_value,setting_value_len)) == SQLITE_CONSTRAINT)
+	else if(force_plaintext && peer_index != -1)
 	{
-		error_simple(4,"Setting exists, updating");
-		val = sql_update_setting(force_plaintext,peer_index,setting_name,setting_value,setting_value_len);
+		error_simple(0,"Tried to save a peer specific setting in plaintext database. Rejected. Report this.");
+		breakpoint();
+		return -1;
 	}
-	if(torx_debug_level(-1) > 3)
-		error_printf(4,"Saved setting peer_index=%d %s",peer_index,setting_name);
+	else if(!setting_name)
+	{
+		error_simple(0,"Tried to save a NULL setting in database. Rejected. Report this.");
+		breakpoint();
+		return -1;
+	}
+	else if(!setting_value || !setting_value_len)
+		return sql_delete_setting(force_plaintext,peer_index,setting_name);
+	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
+	if(force_plaintext)
+		snprintf(command,sizeof(command),"INSERT INTO setting_clear (setting_name,setting_value) VALUES (?,?) ON CONFLICT(setting_name) DO UPDATE SET setting_value = excluded.setting_value;");
+	else if(peer_index == -1)
+		snprintf(command,sizeof(command),"INSERT INTO setting_global (setting_name,setting_value) VALUES (?,?) ON CONFLICT(setting_name) DO UPDATE SET setting_value = excluded.setting_value;");
+	else /* encrypted */
+		snprintf(command,sizeof(command),"INSERT INTO setting_peer (peer_index,setting_name,setting_value) VALUES (%d,?,?) ON CONFLICT(peer_index,setting_name) DO UPDATE SET setting_value = excluded.setting_value;",peer_index);
+	const int val = sql_exec(force_plaintext ? &db_plaintext : &db_encrypted,command,setting_name,strlen(setting_name),setting_value,setting_value_len,NULL);
+//	sodium_memzero(command,sizeof(command)); // unnecessary
 	return val;
 }
 
@@ -1803,6 +1747,12 @@ int sql_delete_setting(const int force_plaintext,const int peer_index,const char
 	if(force_plaintext && peer_index != -1)
 	{
 		error_simple(0,"Tried to delete a peer specific setting in plaintext database. Rejected. Report this.");
+		breakpoint();
+		return -1;
+	}
+	else if(!setting_name)
+	{
+		error_simple(0,"Tried to delete a NULL setting in database. Rejected. Report this.");
 		breakpoint();
 		return -1;
 	}

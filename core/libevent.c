@@ -140,9 +140,9 @@ static inline void peer_online(struct event_strc *event_strc)
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
-		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
+		const size_t len = (size_t)snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
 		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
+		sql_setting(0,peer_index,"last_seen",p1,len);
 	}
 	#ifndef NO_FILE_TRANSFER
 	if(threadsafe_read_uint8(&mutex_global_variable,&auto_resume_inbound)) // XXX Experimental 2023/10/29: Might need to prevent FILE_REQUEST from being sent when we are potentially already receiving data... not sure if this will be an issue
@@ -202,8 +202,8 @@ static inline void peer_offline(struct event_strc *event_strc)
 	if(threadsafe_read_uint8(&mutex_global_variable,&log_last_seen) == 1)
 	{
 		char p1[21];
-		snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
-		sql_setting(0,peer_index,"last_seen",p1,strlen(p1));
+		const size_t len = (size_t)snprintf(p1,sizeof(p1),"%lld",(long long)last_seen);
+		sql_setting(0,peer_index,"last_seen",p1,len);
 	}
 	const int max_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,min_i));
