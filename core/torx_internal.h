@@ -189,6 +189,7 @@ int invitee_remove(const int g,const int n);
 char *mit_strcasestr(char *dumpster,const char *diver)__attribute__((warn_unused_result));
 size_t stripbuffer(char *buffer);
 char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
+void initial_keyed(void);
 void expand_message_struc(const int n,const int i); // must be called from within locks
 void expand_message_struc_followup(const int n,const int i);
 int increment_i(const int n,const int offset,const time_t time,const time_t nstime,const uint8_t stat,const int8_t fd_type,const int p_iter,char *message)__attribute__((warn_unused_result));

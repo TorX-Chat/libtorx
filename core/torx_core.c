@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 40 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 41 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2843,17 +2843,6 @@ static inline uint16_t extract_port(const char *input,const char *type)
 	return 0; // Not found
 }
 
-static inline void unlock(void)
-{
-	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
-	{
-		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-		lockout = 0;
-		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-		login_cb(0);
-	}
-}
-
 static inline void kill_tor(const uint8_t wait_to_reap)
 { // XXX Note: should be called from within mutex_tor_pipe locks XXX
 	if(tor_pid > 0) // Necessary sanity check
@@ -3071,8 +3060,14 @@ static inline void *start_tor_threaded(void *arg)
 		error_printf(3,"Tor Control Port: %u",tor_ctrl_port_local);
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		sql_populate_peer();
+	} // not else if
+	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
+	{ // Unlock: We allow login even in the event of connection failure because it may need to be fixed in UI
+		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
+		lockout = 0;
+		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+		login_cb(0);
 	}
-	unlock(); // We allow login even in the event of connection failure because it may need to be fixed in UI
 	return 0;
 }
 

@@ -735,7 +735,6 @@ void start_tor(void);
 size_t b64_decoded_size(const char *in)__attribute__((warn_unused_result));
 size_t b64_decode(unsigned char *out,const size_t destination_size,const char *in); // caller must allocate space
 char *b64_encode(const void *in,const size_t len)__attribute__((warn_unused_result)); // torx_free required
-void initial_keyed(void);
 void re_expand_callbacks(void);
 int set_last_message(int *last_message_n,const int n,const int count_back)__attribute__((warn_unused_result));
 int group_online(const int g)__attribute__((warn_unused_result));
