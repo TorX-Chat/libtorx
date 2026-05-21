@@ -2509,9 +2509,7 @@ static inline int hash_password_internal(const char *password)
 	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
 	torx_free((void*)&arg5);
 	size_t len = 0;
-	if(ret)
-		len = strlen(ret);
-	if(len == 61)
+	if(ret && (len = strlen(ret)) == 61)
 	{
 		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		memcpy(control_password_hash,ret,sizeof(control_password_hash));
@@ -2520,7 +2518,7 @@ static inline int hash_password_internal(const char *password)
 		error_printf(3,"Hashed Tor Control Password: %s",ret);
 	}
 	else
-		error_printf(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect? Length: %zu Output: %s",len,ret);
+		error_printf(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect? Length: %zu Output: %s",len,ret ? ret : "None.");
 	torx_free((void*)&ret);
 	return (int)len;
 }
