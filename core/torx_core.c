@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 41 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 42 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -2209,8 +2209,8 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	sodium_memzero(peer[n].sign_sk,crypto_sign_SECRETKEYBYTES);
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
-	peer[n].thrd_send = 0; // thread_kill(peer[n].thrd_send); // NO. will result in deadlocks.
-	peer[n].thrd_recv = 0; // thread_kill(peer[n].thrd_recv); // NO. will result in deadlocks.
+	peer[n].thrd = 0; // thread_kill(peer[n].thrd); // NO. will result in deadlocks.
+	peer[n].base = NULL;
 	peer[n].broadcasts_inbound = 0;
 	#ifndef NO_AUDIO_CALL
 	for (size_t c = 0; c < torx_allocation_len(peer[n].call)/sizeof(struct call_list); c++)
@@ -3313,8 +3313,8 @@ static void initialize_n(const int n) // XXX do not put locks in here
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
 	pthread_rwlock_init(&peer[n].mutex_page,NULL);
-	peer[n].thrd_send = 0;
-	peer[n].thrd_recv = 0;
+	peer[n].thrd = 0;
+	peer[n].base = NULL;
 	peer[n].broadcasts_inbound = 0;
 	#ifndef NO_AUDIO_CALL
 	peer[n].audio_cache = NULL;
@@ -4707,8 +4707,7 @@ void cleanup_lib(const int sig_num)
 	pthread_rwlock_wrlock(&mutex_expand); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
 	for(int n = 0 ; peer[n].onion[0] != 0 || peer[n].peer_index > -1 ;  n++)
 	{ // DO NOT USE getter_ functions
-		thread_kill(peer[n].thrd_send); // must go before zero_n
-		thread_kill(peer[n].thrd_recv); // must go before zero_n
+		thread_kill(peer[n].thrd); // must go before zero_n
 		zero_n(n); // XXX INCLUDES LOCKS in zero_i on protocol struct (mutex_protocols)
 		const int pointer_location = find_message_struc_pointer(peer[n].min_i); // Note: returns negative
 		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
@@ -5152,13 +5151,7 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		sodium_memzero(peeronion_local,sizeof(peeronion_local));
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 		torx_free((void*)&peeronion);
-		const uint16_t vport = INIT_VPORT;
-		setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
-		torx_read(n) // 🟧🟧🟧
-		pthread_t *thrd_send = &peer[n].thrd_send;
-		torx_unlock(n) // 🟩🟩🟩
-		if(pthread_create(thrd_send,&ATTR_DETACHED,&peer_init,itovp(n)))
-			error_simple(-1,"Failed to create thread1");
+		start_outgoing_friend_request(n);
 		return 0;
 	} while(0);
 	sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));

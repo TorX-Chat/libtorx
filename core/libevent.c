@@ -85,6 +85,9 @@ XXX	To Do		XXX
 //TODO: see "KNOWN BUG:" On a successful sing or MULT, the socket does not close due to the CTRL coming up. It is not the same socket nor the same port. We don't know what is going on.
 // Something to do with serv_init being a child process, I think. The socket doesn't close until the child process that called it ends.
 
+static void try_connect_cb(evutil_socket_t fd,short event,void *arg);
+static inline void schedule_reconnect(struct event_strc *event_strc);
+
 static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 { // Internal Function only. For handling or initializing a disconnection
 	struct bufferevent *bev;
@@ -112,22 +115,27 @@ static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 }
 
 static inline void disconnect_forever(struct event_strc *event_strc,const int takedown_delete)
-{ // Do NOT call from out of libevent thread.
+{ // Do NOT call from out of libevent thread. Tears down the entire peer (both fd directions) — exits the per-peer base.
 	struct bufferevent *bev = disconnect(event_strc);
+	(void)bev;
 	if(takedown_delete > -1)
 	{
-		event_strc->killed = 1;
 		const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		takedown_onion(peer_index,takedown_delete);
 	}
-	// error_printf(0,"Checkpoint disconnect_forever n=%d delete=%d killed=%u",event_strc->n,takedown_delete,event_strc->killed);
+	// error_printf(0,"Checkpoint disconnect_forever n=%d delete=%d",event_strc->n,takedown_delete);
 	if(event_strc->fd_type == 0 && (event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_GROUP_CTRL))
 	{ // Necessary because accept_conn creates a copy for each connection
 		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&event_strc); // event_strc_unique
+		return; // do not loopexit; these per-accept copies live independently of the peer thread
 	}
-	if(bev) // Just in case we got here after zero_n for some reason
-		event_base_loopexit(bufferevent_get_base(bev), NULL);
+	struct event_base *base = NULL;
+	torx_read(event_strc->n) // 🟧🟧🟧
+	base = peer[event_strc->n].base;
+	torx_unlock(event_strc->n) // 🟩🟩🟩
+	if(base)
+		event_base_loopexit(base, NULL);
 }
 
 static inline void peer_online(struct event_strc *event_strc)
@@ -167,7 +175,7 @@ static inline void peer_online(struct event_strc *event_strc)
 
 static inline void peer_offline(struct event_strc *event_strc)
 { // Internal Function only. Use the callback. Could combine with peer_online() to be peer_online_change() and peer_online_change_cb()
-	if(!event_strc || event_strc->killed) // Sanity check
+	if(!event_strc) // Sanity check
 		return;
 	if(event_strc->owner == ENUM_OWNER_GROUP_CTRL)
 	{
@@ -620,8 +628,6 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 static void close_conn(struct bufferevent *bev, short events, void *ctx)
 { /* Peer closes connection, or we do. (either of us closes software) */
 	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	if(event_strc->killed)
-		return;
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(events & BEV_EVENT_ERROR)
 	{ // 2024/02/20 happened during outbound file transfer when peer (or we) went offline
@@ -669,6 +675,13 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	{ // Necessary because accept_conn creates a copy for each connection
 		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&ctx); // event_strc_unique
+		return;
+	}
+	if(event_strc->fd_type == 1 && status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER))
+	{ // Sendfd disconnected and peer is still active. Schedule an async reconnect attempt on the same base.
+		event_strc->socks_state = SOCKS_STATE_IDLE;
+		event_strc->socks_bev = NULL;
+		schedule_reconnect(event_strc);
 	}
 }
 
@@ -1884,120 +1897,414 @@ static void error_conn(struct evconnlistener *listener,void *ctx)
 	disconnect_forever(ctx,-1); // XXX Run last and return immediately after, will exit event base
 } // TODO TEST: this caused our whole application to shutdown on 2022/07/29 when deleting a peer. Got an error 22 (Invalid argument) on the listener. Shutting down.
 
-void *torx_events(void *ctx)
-{ /* Is called ONLY ONCE for .recvfd (which never closes, unless block/delete), but MULTIPLE TIMES for .sendfd (which closes every time there is disconnect) */
-	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	struct event_strc *event_strc = (struct event_strc*) ctx; // Casting passed struct
-	int failed_tor_call = 0; // must initialize as 0
-	if(event_strc->fd_type == 0)
+/* SOCKS5 async handshake + reconnect machinery for fd_type==1
+ *
+ * Lifecycle on the peer's shared event_base:
+ *   try_connect_cb (timer) → bufferevent_socket_connect to TOR_SOCKS_IP:tor_socks_port
+ *     → socks_event_cb gets BEV_EVENT_CONNECTED → write 3-byte greeting, state=AWAIT_METHOD
+ *     → socks_read_cb sees ≥2 bytes → write CONNECT request, state=AWAIT_REPLY
+ *     → socks_read_cb sees ≥4 bytes → state=AWAIT_BIND
+ *     → socks_read_cb sees ≥6 bytes → socks_finalize: rewire callbacks for peer traffic
+ *   On error: free the handshake bev, schedule_reconnect (1s timer).
+ *
+ * The handshake bev becomes peer[n].bev_send on DONE; nothing publishes it before then.
+ */
+
+static void socks_event_cb(struct bufferevent *bev, short events, void *ctx);
+static void socks_read_cb(struct bufferevent *bev, void *ctx);
+static inline void peerinit_finalize(struct event_strc *event_strc,const unsigned char reply[2+56+crypto_sign_PUBLICKEYBYTES]);
+
+static inline void schedule_reconnect(struct event_strc *event_strc)
+{ // Schedules try_connect_cb to fire on event_strc->base after 1 second.
+	if(event_strc == NULL || event_strc->base == NULL)
+		return;
+	struct timeval one_second = { .tv_sec = 1, .tv_usec = 0 };
+	if(event_base_once(event_strc->base,-1,EV_TIMEOUT,try_connect_cb,event_strc,&one_second))
+		error_simple(0,"schedule_reconnect: event_base_once failed. Report this.");
+}
+
+static inline void socks_handshake_abort(struct event_strc *event_strc)
+{ // Frees the handshake bev (if any) and schedules a retry. Safe to call repeatedly.
+	if(event_strc == NULL)
+		return;
+	struct bufferevent *bev = event_strc->socks_bev;
+	event_strc->socks_bev = NULL;
+	event_strc->socks_state = SOCKS_STATE_IDLE;
+	if(bev)
+		bufferevent_free(bev); // CLOSE_ON_FREE will close the underlying socket
+	schedule_reconnect(event_strc);
+}
+
+static inline void socks_finalize(struct event_strc *event_strc)
+{ // SOCKS handshake complete. Promote the handshake bev to peer[n].bev_send and run the post-connect flow.
+	struct bufferevent *bev = event_strc->socks_bev;
+	if(!bev)
 	{
-		torx_write(event_strc->n) // 🟥🟥🟥
-		pusher(zero_pthread,(void*)&peer[event_strc->n].thrd_recv)
-		torx_unlock(event_strc->n) // 🟩🟩🟩
-		failed_tor_call = add_onion_call(event_strc->n);
+		error_simple(0,"socks_finalize called with NULL socks_bev. Coding error. Report this.");
+		return;
 	}
-	struct event_base *base = event_base_new();
-	if(!base)
+	evbuffer_enable_locking(bufferevent_get_output(bev),NULL); // TODO may no longer be necessary
+	bufferevent_setcb(bev, read_conn, write_finished, close_conn, event_strc); // swap to normal peer callbacks
+	const evutil_socket_t real_fd = bufferevent_getfd(bev);
+	if(real_fd >= 0)
 	{
-		error_simple(0,"Couldn't open event base.");
-		goto complete_failure;
+		DisableNagle(real_fd);
+		setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd),&real_fd,sizeof(real_fd));
+		event_strc->sockfd = real_fd;
 	}
-	while(!failed_tor_call)
-	{ // not a real while loop, just to avoid goto
-		if(event_strc->fd_type == 0)
-		{ /* Exclusively comes here from load_onion */
-			struct evconnlistener *listener = evconnlistener_new(base, accept_conn, ctx, LEV_OPT_THREADSAFE|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE/*|EVLOOP_ONCE*/, -1, event_strc->sockfd);	// |LEV_OPT_DEFERRED_ACCEPT could cause issues. It is the source of problems if connections fail
-			if(!listener)
-			{
-				error_simple(0,"Couldn't create libevent listener. Report this.");
-				break;
-			}
-			evconnlistener_set_error_cb(listener, error_conn);
-		}
-		else if(event_strc->fd_type == 1)
-		{ /* Exclusively comes here from send_init() */
-			struct bufferevent *bev_send = bufferevent_socket_new(base, event_strc->sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
-			if(bev_send == NULL) // -1 replacing sockfd for testing
-			{
-				error_simple(0,"Couldn't create bev_send.");
-				break;
-			}
-			evbuffer_enable_locking(bufferevent_get_output(bev_send),NULL); // 2023/08/11 Necessary for full-duplex. Will lock and unlock automatically, no need to manually evbuffer_lock/evbuffer_unlock.
-			bufferevent_setcb(bev_send, read_conn, write_finished, close_conn,ctx);
-	//		bufferevent_disable(bev_send,EV_WRITE); // ENABLED BY DEFAULT, TESTING DISABLED
-			bufferevent_enable(bev_send, EV_READ/*|EV_ET|EV_PERSIST*/);
-			torx_write(event_strc->n) // 🟥🟥🟥
-			peer[event_strc->n].bev_send = bev_send;
-			torx_unlock(event_strc->n) // 🟩🟩🟩
-			// TODO 0u92fj20f230fjw ... to here. TODO
-			const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
-			/// Handle message types that should be in front of the queue
-			const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-			const uint8_t sendfd_connected = 1;
-			setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
-			if(event_strc->owner == ENUM_OWNER_CTRL)
-			{
-				uint8_t have_triggered_cascade = 0;
-				if(local_v3auth_enabled == 0 || peerversion < 2)
-				{
-					pipe_auth_and_request_peerlist(event_strc); // send ENUM_PROTOCOL_PIPE_AUTH
-					have_triggered_cascade = 1;
-				}
-				if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
-				{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
-					error_printf(0,PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u"RESET,peerversion);
-					const uint16_t trash_version = htobe16(torx_library_version[0]);
-					message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
-				}
-				else if(!have_triggered_cascade)
-					begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
-			}
-			else if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
-			{ // Put this in front of the queue.
-				const uint8_t stat = getter_uint8(event_strc->n,0,-1,offsetof(struct message_list,stat));
-				uint8_t first_connect = 0;
-				int p_iter;
-				if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(event_strc->n,0,-1,offsetof(struct message_list,p_iter))) > -1)
-				{ // Put queue skipping protocols first, if unsent, before pipe auth
-					pthread_rwlock_rdlock(&mutex_protocols); // 🟧
-					const uint16_t protocol = protocols[p_iter].protocol;
-					pthread_rwlock_unlock(&mutex_protocols); // 🟩
-					if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
-					{
-						send_prep(event_strc->n,-1,0,p_iter,1);
-						first_connect = 1;
-					}
-				}
-				if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
-					pipe_auth_and_request_peerlist(event_strc); // send ENUM_PROTOCOL_PIPE_AUTH
-			}
-			peer_online(event_strc); // internal callback, keep after pipe auth, after peer[n].bev_recv = bev_recv; AND AFTER send_prep
-		}
-		else
+	torx_write(event_strc->n) // 🟥🟥🟥
+	peer[event_strc->n].bev_send = bev;
+	torx_unlock(event_strc->n) // 🟩🟩🟩
+	const uint8_t sendfd_connected = 1;
+	setter(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected),&sendfd_connected,sizeof(sendfd_connected));
+	event_strc->socks_state = SOCKS_STATE_DONE;
+	event_strc->socks_bev = NULL; // bev is now owned by peer[n].bev_send
+
+	const uint16_t peerversion = getter_uint16(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
+	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+	if(event_strc->owner == ENUM_OWNER_CTRL)
+	{
+		uint8_t have_triggered_cascade = 0;
+		if(local_v3auth_enabled == 0 || peerversion < 2)
 		{
-			error_simple(0,"Did not specify socket type (send, recv). Report this.");
+			pipe_auth_and_request_peerlist(event_strc); // send ENUM_PROTOCOL_PIPE_AUTH
+			have_triggered_cascade = 1;
+		}
+		if(local_v3auth_enabled == 1 && peerversion < torx_library_version[0]) // NOTE: NOT ELSE IF
+		{ // propose upgrade (NOTE: this won't catch if they are already > 1, so we also do it elsewhere)
+			error_printf(0,PINK"Checkpoint ENUM_PROTOCOL_PROPOSE_UPGRADE 1: %u"RESET,peerversion);
+			const uint16_t trash_version = htobe16(torx_library_version[0]);
+			message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
+		}
+		else if(!have_triggered_cascade)
+			begin_cascade(event_strc); // should go immediately after <fd_type>_connected = 1
+	}
+	else if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
+	{ // Put this in front of the queue.
+		const uint8_t stat = getter_uint8(event_strc->n,0,-1,offsetof(struct message_list,stat));
+		uint8_t first_connect = 0;
+		int p_iter;
+		if(stat == ENUM_MESSAGE_FAIL && (p_iter = getter_int(event_strc->n,0,-1,offsetof(struct message_list,p_iter))) > -1)
+		{ // Put queue skipping protocols first, if unsent, before pipe auth
+			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
+			const uint16_t protocol = protocols[p_iter].protocol;
+			pthread_rwlock_unlock(&mutex_protocols); // 🟩
+			if(stat == ENUM_MESSAGE_FAIL && (protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST))
+			{
+				send_prep(event_strc->n,-1,0,p_iter,1);
+				first_connect = 1;
+			}
+		}
+		if(!first_connect) // otherwise wait for successful entry, or messages could end up out of order.
+			pipe_auth_and_request_peerlist(event_strc); // send ENUM_PROTOCOL_PIPE_AUTH
+	}
+	peer_online(event_strc); // internal callback, keep after pipe auth AND AFTER send_prep
+}
+
+static inline void peerinit_teardown(struct event_strc *event_strc)
+{ // Friend-request finished or failed: delete the temporary PEER and exit the base. No retry — matches legacy peer_init, which made a single reply attempt then tore down the PEER. The dispatcher thread frees socks_bev (CLOSE_ON_FREE closes the TCP socket), event_strc, and base.
+	const int peer_index_peer = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	takedown_onion(peer_index_peer,1); // do this AFTER load_onion (in the success path) so the new onion's peernick is preserved.
+	if(event_strc->base)
+		event_base_loopexit(event_strc->base,NULL);
+}
+
+static inline void peerinit_finalize(struct event_strc *event_strc,const unsigned char reply[2+56+crypto_sign_PUBLICKEYBYTES])
+{ // Friend-request reply received from peer over the SOCKS-tunneled stream. Promote the fresh CTRL onion to a real peer and tear down the temporary PEER. Runs on the dispatcher's event_base.
+	if(event_strc->fresh_n > -1)
+	{
+		unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
+		memcpy(peer_sign_pk,&reply[2+56],sizeof(peer_sign_pk));
+		const uint16_t fresh_peerversion = be16toh(align_uint16((const void*)&reply[0]));
+		char fresh_peeronion[56+1];
+		memcpy(fresh_peeronion,&reply[2],56);
+		fresh_peeronion[56] = '\0';
+		stripbuffer(fresh_peeronion);
+		char *peernick = getter_string(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+		if(load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,event_strc->fresh_privkey,fresh_peerversion,fresh_peeronion,peernick,event_strc->ed25519_sk,peer_sign_pk,NULL) != event_strc->fresh_n)
+		{
+			error_simple(0,"peerinit_finalize: load_peer_struc returned unexpected n. Report this.");
 			breakpoint();
-			break;
+			sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
+			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+			torx_free((void*)&peernick);
+			peerinit_teardown(event_strc);
+			return;
 		}
-		event_base_dispatch(base); // XXX this is the important loop... this is the blocker
-		if(!event_strc->killed)
-		{
-			peer_offline(event_strc);
-			const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
-			if(status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_CTRL) && event_strc->fd_type == 0) // Its not an error for a 0'd (deleted) onion to get here.
-			{
-				const uint8_t sendfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-				const uint8_t recvfd_connected = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
-				error_printf(0,"Recv ctrl got out of base. It will die but this is unexpected. NOTE: fd_type recv should not get out unless deleted or blocked. sendfd: %d recvfd: %d owner: %u fd_type: %d",sendfd_connected,recvfd_connected,event_strc->owner,event_strc->fd_type); 	// NOTICE: ONLY SING AND PIPEMODE WILL EVER GET OUT OF BASE edit: i think no one gets out
-			}
-			else
-				error_printf(2,"Disconnected in torx_events for reasons other than killcode n=%d",event_strc->n);
-		}
-		break;
+		char *peernick_fresh_n = getter_string(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+		const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,event_strc->fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
+		setter(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
+		error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);
+		torx_free((void*)&peernick_fresh_n);
+		torx_free((void*)&peernick);
+		sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
+		sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+		sql_update_peer(event_strc->fresh_n);
+		load_onion(event_strc->fresh_n);
+		peer_new_cb(event_strc->fresh_n);
 	}
-	event_base_free(base);
-	complete_failure: {}
-	torx_free((void*)&event_strc->buffer);
-	torx_free((void*)&ctx);
-	return 0;
+	peerinit_teardown(event_strc);
+}
+
+static void socks_event_cb(struct bufferevent *bev, short events, void *ctx)
+{
+	struct event_strc *event_strc = (struct event_strc *)ctx;
+	if(event_strc->socks_bev != bev)
+		return;
+	if(events & BEV_EVENT_CONNECTED)
+	{ // TCP connect to Tor SOCKS port succeeded. Send greeting.
+		unsigned char greeting[3];
+		const size_t glen = socks_build_greeting(greeting);
+		if(bufferevent_write(bev,greeting,glen) != 0)
+		{
+			error_simple(0,"socks_event_cb: failed to write greeting. Retrying.");
+			socks_handshake_abort(event_strc);
+			return;
+		}
+		event_strc->socks_state = SOCKS_STATE_AWAIT_METHOD;
+		return;
+	}
+	if(events & (BEV_EVENT_ERROR|BEV_EVENT_EOF|BEV_EVENT_TIMEOUT))
+	{
+		if(event_strc->owner == ENUM_OWNER_PEER && event_strc->socks_state == SOCKS_STATE_PEERINIT_SENT)
+		{ // Friend-request reply never arrived (peer dropped or sent garbage). Tear down the temporary PEER instead of retrying forever, matching legacy peer_init.
+			error_printf(0,"socks_event_cb: friend-request reply not received (events=0x%x) n=%d. Tearing down.",(unsigned int)events,event_strc->n);
+			peerinit_teardown(event_strc);
+			return;
+		} // Otherwise (connection-stage failure): could be Tor restarting, Tor SOCKS port unreachable, etc. Retry.
+		error_printf(2,"socks_event_cb: connect/handshake error events=0x%x n=%d. Will retry.",(unsigned int)events,event_strc->n);
+		socks_handshake_abort(event_strc);
+		return;
+	}
+}
+
+static void socks_read_cb(struct bufferevent *bev, void *ctx)
+{
+	struct event_strc *event_strc = (struct event_strc *)ctx;
+	if(event_strc->socks_bev != bev)
+		return;
+	struct evbuffer *input = bufferevent_get_input(bev);
+	while(1)
+	{
+		const size_t avail = evbuffer_get_length(input);
+		if(event_strc->socks_state == SOCKS_STATE_AWAIT_METHOD)
+		{
+			if(avail < 2)
+				return;
+			unsigned char method[2];
+			if(evbuffer_remove(input,method,2) != 2)
+			{
+				error_simple(0,"socks_read_cb: short read on method. Retrying.");
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			if(socks_validate_method(method) < 0)
+			{
+				error_simple(0,"socks_read_cb: SOCKS server rejected NOAUTH. Retrying.");
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			unsigned char req[5+56+6+sizeof(uint16_t)]; // 5 + host(62) + 2-byte port
+			const size_t rlen = socks_build_connect(req,sizeof(req),event_strc->suffixonion,event_strc->port_string);
+			if(rlen == 0 || bufferevent_write(bev,req,rlen) != 0)
+			{
+				error_simple(0,"socks_read_cb: failed to send CONNECT. Retrying.");
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			event_strc->socks_state = SOCKS_STATE_AWAIT_REPLY;
+			continue;
+		}
+		if(event_strc->socks_state == SOCKS_STATE_AWAIT_REPLY)
+		{
+			if(avail < 4)
+				return;
+			unsigned char hdr[4];
+			if(evbuffer_remove(input,hdr,4) != 4)
+			{
+				error_simple(0,"socks_read_cb: short read on reply header. Retrying.");
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			if(socks_validate_reply_header(hdr) < 0)
+			{
+				error_printf(2,"socks_read_cb: SOCKS reply rejected (status=%u atyp=%u). Retrying.",hdr[1],hdr[3]);
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			event_strc->socks_state = SOCKS_STATE_AWAIT_BIND;
+			continue;
+		}
+		if(event_strc->socks_state == SOCKS_STATE_AWAIT_BIND)
+		{
+			if(avail < 6)
+				return;
+			if(evbuffer_drain(input,6) != 0)
+			{
+				error_simple(0,"socks_read_cb: failed to drain bind addr. Retrying.");
+				socks_handshake_abort(event_strc);
+				return;
+			}
+			if(event_strc->owner == ENUM_OWNER_PEER)
+			{ // Friend-request flow: SOCKS handshake done. Send the 2+56+32 friend-request payload and await the same-sized reply.
+				if(bufferevent_write(bev,event_strc->peerinit_outbound,sizeof(event_strc->peerinit_outbound)) != 0)
+				{
+					error_simple(0,"socks_read_cb: failed to write peerinit payload. Abandoning.");
+					socks_handshake_abort(event_strc);
+					return;
+				}
+				event_strc->socks_state = SOCKS_STATE_PEERINIT_SENT;
+				continue;
+			}
+			socks_finalize(event_strc); // From here on, the bev's callbacks are read_conn / write_finished / close_conn; this function won't be called again on this bev.
+			return;
+		}
+		if(event_strc->socks_state == SOCKS_STATE_PEERINIT_SENT)
+		{ // owner==PEER only.
+			if(avail < sizeof(event_strc->peerinit_outbound))
+				return;
+			unsigned char reply[2+56+crypto_sign_PUBLICKEYBYTES];
+			if(evbuffer_remove(input,reply,sizeof(reply)) != (ssize_t)sizeof(reply))
+			{ // owner==PEER here: a malformed reply tears down the temporary PEER (no retry), matching legacy peer_init.
+				error_simple(0,"socks_read_cb: short read on peerinit reply. Tearing down.");
+				peerinit_teardown(event_strc);
+				return;
+			}
+			peerinit_finalize(event_strc,reply);
+			sodium_memzero(reply,sizeof(reply));
+			return;
+		}
+		// Unexpected state — drain and abort.
+		error_printf(0,"socks_read_cb: unexpected state %u. Retrying.",event_strc->socks_state);
+		socks_handshake_abort(event_strc);
+		return;
+	}
+}
+
+static void try_connect_cb(evutil_socket_t fd,short event,void *arg)
+{ // Timer callback: initiate an async SOCKS5 connection attempt to the peer's onion via Tor.
+	(void)fd; (void)event;
+	struct event_strc *event_strc = (struct event_strc *)arg;
+	if(event_strc == NULL || event_strc->base == NULL)
+		return;
+	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
+	const uint8_t status_ok = (event_strc->owner == ENUM_OWNER_PEER) ? (status != ENUM_STATUS_BLOCKED) : (status == ENUM_STATUS_FRIEND);
+	if(!status_ok)
+	{ // Peer was blocked/deleted/etc.; do not retry.
+		error_printf(2,"try_connect_cb: peer n=%d ineligible status=%u owner=%u; ceasing outbound attempts.",event_strc->n,status,event_strc->owner);
+		return;
+	}
+	if(event_strc->socks_bev != NULL)
+	{ // A previous handshake bev is still around (shouldn't happen, but be safe).
+		bufferevent_free(event_strc->socks_bev);
+		event_strc->socks_bev = NULL;
+	}
+	struct sockaddr_in socks_addr = {0};
+	if(socks_build_tor_sockaddr(&socks_addr) != 0)
+	{
+		error_simple(0,"try_connect_cb: socks_build_tor_sockaddr failed. Retrying.");
+		schedule_reconnect(event_strc);
+		return;
+	}
+	struct bufferevent *bev = bufferevent_socket_new(event_strc->base, -1, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
+	if(!bev)
+	{
+		error_simple(0,"try_connect_cb: bufferevent_socket_new failed. Retrying.");
+		schedule_reconnect(event_strc);
+		return;
+	}
+	bufferevent_setcb(bev, socks_read_cb, NULL, socks_event_cb, event_strc);
+	if(bufferevent_enable(bev, EV_READ|EV_WRITE) != 0)
+	{
+		error_simple(0,"try_connect_cb: bufferevent_enable failed. Retrying.");
+		bufferevent_free(bev);
+		schedule_reconnect(event_strc);
+		return;
+	}
+	event_strc->socks_bev = bev;
+	event_strc->socks_state = SOCKS_STATE_CONNECTING;
+	if(bufferevent_socket_connect(bev, (struct sockaddr *)&socks_addr, sizeof(socks_addr)) != 0)
+	{ // immediate failure (e.g., out of fds)
+		error_simple(0,"try_connect_cb: bufferevent_socket_connect failed. Retrying.");
+		socks_handshake_abort(event_strc);
+		return;
+	}
+}
+
+void torx_events(struct event_strc *event_strc)
+{ // Register events on event_strc->base for the given fd_type. Does NOT dispatch. Returns immediately. Called from load_onion (twice for owners with both directions).
+	if(event_strc == NULL || event_strc->base == NULL)
+	{
+		error_simple(0,"torx_events called with NULL event_strc or base. Coding error. Report this.");
+		return;
+	}
+	if(event_strc->fd_type == 0)
+	{ // Recv listener: bind socket already created and stored in event_strc->sockfd by load_onion.
+		struct evconnlistener *listener = evconnlistener_new(event_strc->base, accept_conn, event_strc, LEV_OPT_THREADSAFE|LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1, event_strc->sockfd);
+		if(!listener)
+		{
+			error_simple(0,"torx_events: couldn't create libevent listener. Report this.");
+			return;
+		}
+		evconnlistener_set_error_cb(listener, error_conn);
+	}
+	else if(event_strc->fd_type == 1)
+	{ // Send side: arm an immediate try_connect_cb. Fires once dispatch starts.
+		event_strc->socks_state = SOCKS_STATE_IDLE;
+		event_strc->socks_bev = NULL;
+		struct timeval immediate = { .tv_sec = 0, .tv_usec = 0 };
+		if(event_base_once(event_strc->base,-1,EV_TIMEOUT,try_connect_cb,event_strc,&immediate))
+			error_simple(0,"torx_events: event_base_once failed to schedule initial connect. Report this.");
+	}
+	else
+	{
+		error_simple(0,"torx_events: invalid fd_type. Report this.");
+		breakpoint();
+	}
+}
+
+void *peer_dispatcher_thread(void *arg)
+{ // Single thread per peer: dispatches the shared event_base. Cleans up after exit.
+	struct peer_base_strc *wrap = (struct peer_base_strc *)arg;
+	const int n = wrap->n;
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
+	torx_write(n) // 🟥🟥🟥
+	pusher(zero_pthread,(void*)&peer[n].thrd)
+	struct event_base *base = peer[n].base;
+	torx_unlock(n) // 🟩🟩🟩
+	if(base)
+		event_base_dispatch(base); // blocks until event_base_loopexit
+	// Cleanup. Either event_strc may have been freed already if a per-accept copy path applied — but the *primary* recv/send strcs are not freed by callbacks.
+	struct bufferevent *bev_recv,*bev_send;
+	torx_write(n) // 🟥🟥🟥
+	bev_recv = peer[n].bev_recv;
+	peer[n].bev_recv = NULL;
+	bev_send = peer[n].bev_send;
+	peer[n].bev_send = NULL;
+	peer[n].recvfd_connected = 0;
+	peer[n].sendfd_connected = 0;
+	peer[n].base = NULL;
+	torx_unlock(n) // 🟩🟩🟩
+	if(bev_recv)
+		bufferevent_free(bev_recv);
+	if(bev_send)
+		bufferevent_free(bev_send);
+	if(wrap->event_strc_send)
+	{ // Free any in-flight SOCKS handshake bev that wasn't yet promoted.
+		struct bufferevent *socks_bev = wrap->event_strc_send->socks_bev;
+		wrap->event_strc_send->socks_bev = NULL;
+		if(socks_bev)
+			bufferevent_free(socks_bev);
+		torx_free((void*)&wrap->event_strc_send->buffer);
+		torx_free((void*)&wrap->event_strc_send);
+	}
+	if(wrap->event_strc_recv)
+	{
+		torx_free((void*)&wrap->event_strc_recv->buffer);
+		torx_free((void*)&wrap->event_strc_recv);
+	}
+	if(base)
+		event_base_free(base);
+	torx_free((void*)&wrap);
+	return NULL;
 }

@@ -613,94 +613,74 @@ void kill_code(const int n,const char *explanation)
 	}
 }
 
-void *peer_init(void *arg)
-{ /* For sending an outgoing friend request */
-	const int n = vptoi(arg);
-	torx_write(n) // 🟥🟥🟥
-	pusher(zero_pthread,(void*)&peer[n].thrd_send)
-	torx_unlock(n) // 🟩🟩🟩
-	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	char suffixonion[56+6+1];
-	getter_array(suffixonion,56,n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
-	snprintf(&suffixonion[56],6+1,"%6s",".onion");
+void start_outgoing_friend_request(const int n)
+{ // For sending an outgoing friend request. Runs synchronously to do one-time setup (cheap: keygen + base alloc), then hands off to a dispatcher thread that drives an async SOCKS5 handshake + friend-request exchange.
 	const uint16_t vport = INIT_VPORT;
 	setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
-	char port_string[21];
-	snprintf(port_string,sizeof(port_string),"%d",vport);
-	evutil_socket_t proxyfd;
-	while((proxyfd = socks_connect(suffixonion,port_string)) < 1) // this is blocking
-		sleep(1); // not sure if necessary. could probably be eliminated or reduced without any ill effect
-	char fresh_privkey[88+1] = {0};
 	char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
+	char fresh_privkey[88+1] = {0};
 	const int fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
-	// generate keypair here, do not store it yet except locally
+	torx_free((void*)&peernick);
+	if(fresh_n < 0)
+	{
+		sodium_memzero(fresh_privkey,sizeof(fresh_privkey));
+		error_simple(0,"start_outgoing_friend_request: generate_onion failed. Aborting.");
+		return;
+	}
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
 	unsigned char ed25519_sk[crypto_sign_SECRETKEYBYTES];
 	crypto_sign_keypair(ed25519_pk,ed25519_sk);
-	char buffer[2+56+crypto_sign_PUBLICKEYBYTES];
-	uint16_t trash;
-	if(!threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled))
-		trash = htobe16(1);
-	else
-		trash = htobe16(torx_library_version[0]);
-	memcpy(&buffer[0],&trash,sizeof(uint16_t));
-	getter_array(&buffer[2],56,fresh_n,INT_MIN,-1,offsetof(struct peer_list,onion));
-	memcpy(&buffer[2+56],ed25519_pk,sizeof(ed25519_pk));
-	listen(SOCKET_CAST_OUT proxyfd,1); // Maximum one connect at a time
-	const ssize_t s = send(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // this is blocking
-	if(s < 0)
-		error_simple(0,"Error writing to client socket. should probably try again?");
-	else if(s != sizeof(buffer))
-		error_printf(0,"Message only partially sent: %ld bytes. This probably means our peer will spoil their onion.",s);
-	else // 2+56+32
-	{ /* Good send, Expecting response */
-		const ssize_t r = recv(SOCKET_CAST_OUT proxyfd,buffer,sizeof(buffer),0); // XXX BLOCKING
-		do { // not a real while loop... just avoiding goto
-			if(r >= (ssize_t) sizeof(buffer))
-			{ // Correct sized reply
-				if(fresh_n > -1) // sanity check of n
-				{ // XXX WARNING: Use fresh_n (ctrl) not n (peer) XXX
-					unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-					memcpy(peer_sign_pk,&buffer[2+56],sizeof(peer_sign_pk));
-					buffer[2+56] = '\0';// null terminate our expected onion, which corrupts our already removed peer_sign_pk
-					stripbuffer(buffer); // stripping invalid characters after we remove binary data
-					const uint16_t fresh_peerversion = be16toh(align_uint16((void*)&buffer[0]));
-					char fresh_peeronion[56+1];
-					memcpy(fresh_peeronion,&buffer[2],56);
-					fresh_peeronion[56] = '\0'; // necessary null termination
-					if(load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_privkey,fresh_peerversion,fresh_peeronion,peernick,ed25519_sk,peer_sign_pk,NULL) != fresh_n)
-					{
-						error_simple(0,"Error 12091241. Report this.");
-						breakpoint();
-						sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
-						sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-						break;
-					}
-					char *peernick_fresh_n = getter_string(fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
-					const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
-					setter(fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
-					error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);
-					torx_free((void*)&peernick_fresh_n);
-					sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
-					sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-					sql_update_peer(fresh_n);
-					load_onion(fresh_n);
-					peer_new_cb(fresh_n);
-				}
-			}
-			else
-				error_printf(0,"Wrong sized init reply received from peer of length: %ld after sending length: %ld. Handshake failed.",r,s); //  Could consider deleting peer (no, because their onion could be a mult)
-		} while(0);
-		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-		takedown_onion(peer_index,1); // delete our PEER XXX after load_onion, otherwise we'll have zeros in our new onion's peernick
+	struct event_base *base = event_base_new();
+	if(!base)
+	{
+		sodium_memzero(fresh_privkey,sizeof(fresh_privkey));
+		sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
+		sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
+		error_simple(0,"start_outgoing_friend_request: event_base_new failed. Aborting.");
+		return;
 	}
-	if(evutil_closesocket(proxyfd) < 0)
-		error_simple(0,"Failed to close socket in peer_init.");
-	torx_free((void*)&peernick);
+	torx_write(n) // 🟥🟥🟥
+	peer[n].base = base;
+	torx_unlock(n) // 🟩🟩🟩
+	struct event_strc *event_strc = torx_secure_malloc(sizeof(struct event_strc));
+	event_strc->sockfd = -1;
+	event_strc->authenticated = 0;
+	event_strc->fd_type = 1;
+	event_strc->owner = ENUM_OWNER_PEER;
+	event_strc->invite_required = 0;
+	event_strc->g = -1;
+	event_strc->group_n = -1;
+	event_strc->n = n;
+	event_strc->fresh_n = fresh_n;
+	event_strc->buffer = NULL;
+	event_strc->untrusted_message_len = 0;
+	event_strc->base = base;
+	event_strc->socks_state = SOCKS_STATE_IDLE;
+	event_strc->socks_bev = NULL;
+	getter_array(event_strc->suffixonion,56,n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+	snprintf(&event_strc->suffixonion[56],sizeof(event_strc->suffixonion)-56,".onion");
+	snprintf(event_strc->port_string,sizeof(event_strc->port_string),"%u",vport);
+	memcpy(event_strc->fresh_privkey,fresh_privkey,sizeof(event_strc->fresh_privkey));
+	memcpy(event_strc->ed25519_sk,ed25519_sk,sizeof(event_strc->ed25519_sk));
+	uint16_t version_be;
+	if(!threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled))
+		version_be = htobe16(1);
+	else
+		version_be = htobe16(torx_library_version[0]);
+	memcpy(&event_strc->peerinit_outbound[0],&version_be,sizeof(uint16_t));
+	getter_array(&event_strc->peerinit_outbound[2],56,fresh_n,INT_MIN,-1,offsetof(struct peer_list,onion));
+	memcpy(&event_strc->peerinit_outbound[2+56],ed25519_pk,sizeof(ed25519_pk));
+	sodium_memzero(fresh_privkey,sizeof(fresh_privkey));
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
-	sodium_memzero(buffer,sizeof(buffer));
-	sodium_memzero(fresh_privkey,sizeof(fresh_privkey));
-	sodium_memzero(suffixonion,sizeof(suffixonion));
-	return 0;
+	torx_events(event_strc); // arms initial try_connect_cb on base; does not dispatch
+	struct peer_base_strc *wrap = torx_insecure_malloc(sizeof(struct peer_base_strc));
+	wrap->n = n;
+	wrap->event_strc_recv = NULL;
+	wrap->event_strc_send = event_strc;
+	torx_read(n) // 🟧🟧🟧
+	pthread_t *thrd = &peer[n].thrd;
+	torx_unlock(n) // 🟩🟩🟩
+	if(pthread_create(thrd,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
+		error_simple(-1,"Failed to create dispatcher thread from start_outgoing_friend_request");
 }

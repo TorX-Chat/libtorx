@@ -142,7 +142,15 @@ struct pass_strc { // XXX Do not torx_secure_malloc structs unless they contain 
 	char *password_new;
 	char *password_verify;
 };
-struct event_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
+/* SOCKS5 async handshake states. Only meaningful for fd_type==1 event_strc, while connecting outbound. */
+#define SOCKS_STATE_IDLE		0
+#define SOCKS_STATE_CONNECTING		1 // waiting for TCP connect to Tor SOCKS port
+#define SOCKS_STATE_AWAIT_METHOD	2 // sent greeting, waiting for 2-byte method reply
+#define SOCKS_STATE_AWAIT_REPLY		3 // sent CONNECT, waiting for 4-byte reply header
+#define SOCKS_STATE_AWAIT_BIND		4 // got header, waiting for 6-byte bind addr+port
+#define SOCKS_STATE_DONE		5 // handshake complete; bev rewired for peer traffic
+#define SOCKS_STATE_PEERINIT_SENT	6 // owner==PEER only: SOCKS done, friend-request bytes sent, awaiting 2+56+32 reply
+struct event_strc { // peer_init flow stores sensitive keys here, so its event_strc must be torx_secure_malloc'd; other flows may stay torx_insecure_malloc'd.
 	evutil_socket_t sockfd;
 	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
 	int8_t fd_type; // 0 recvfd, 1 sendfd
@@ -151,10 +159,17 @@ struct event_strc { // XXX Do not torx_secure_malloc structs unless they contain
 	int g;
 	int group_n;
 	int n;
-	int fresh_n; // for SING/MULT to pass internally
+	int fresh_n; // for SING/MULT to pass internally; for owner==PEER (peer_init), holds the fresh CTRL n awaiting friend-request reply.
 	char *buffer; // for use with incomplete messages in read_conn.
 	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
-	uint8_t killed;
+	struct event_base *base; // peer's shared event base (owned by peer[n].base)
+	char suffixonion[56+6+1]; // fd_type==1 only: peeronion + ".onion", cached at load_onion time
+	char port_string[21]; // fd_type==1 only: vport as string, cached at load_onion time
+	uint8_t socks_state; // fd_type==1 only: SOCKS_STATE_*
+	struct bufferevent *socks_bev; // fd_type==1 only: handshake bufferevent (transient until SOCKS_STATE_DONE)
+	char fresh_privkey[88+1]; // owner==PEER only: fresh CTRL privkey awaiting friend-request reply (secure arena)
+	unsigned char ed25519_sk[crypto_sign_SECRETKEYBYTES]; // owner==PEER only: fresh CTRL sign secret key (secure arena)
+	unsigned char peerinit_outbound[2+56+crypto_sign_PUBLICKEYBYTES]; // owner==PEER only: pre-built friend-request payload (peerversion + fresh onion + ed25519_pk)
 };
 struct int_char { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	int i; // cannot make const, not necessary anyway
@@ -219,7 +234,7 @@ int sql_delete_history(const int peer_index);
 int sql_delete_peer(const int peer_index);
 
 /* client_init.c */
-void *peer_init(void *arg);
+void start_outgoing_friend_request(const int n); // async, returns immediately; sets up event_base + dispatcher thread to perform friend-request over Tor
 
 /* serv_init.c */
 int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t fd_type);
@@ -227,7 +242,13 @@ int add_onion_call(const int n);
 void load_onion(const int n);
 
 /* libevent.c */
-void *torx_events(void *ctx);
+struct peer_base_strc { // passed to peer_dispatcher_thread, freed when it returns
+	int n;
+	struct event_strc *event_strc_recv; // may be NULL (e.g., GROUP_PEER has no listener)
+	struct event_strc *event_strc_send; // may be NULL (e.g., SING/MULT/GROUP_CTRL have no outbound connect)
+};
+void torx_events(struct event_strc *event_strc); // registers events on event_strc->base, no dispatch
+void *peer_dispatcher_thread(void *arg); // pthread entry: dispatches one peer's event_base, cleans up on exit
 
 /* onion_gen.c */
 void generate_onion_simple(char onion[56+1],char privkey[88+1]);
@@ -235,7 +256,11 @@ void gen_truncated_sha3(unsigned char *truncated_checksum,unsigned char *ed25519
 
 /* socks.c */
 void DisableNagle(const evutil_socket_t sendfd);
-evutil_socket_t socks_connect(const char *host, const char *port)__attribute__((warn_unused_result));
+int socks_build_tor_sockaddr(struct sockaddr_in *out); // fills out with TOR_SOCKS_IP:tor_socks_port. Returns 0 on success.
+size_t socks_build_greeting(unsigned char buf[3]); // returns 3, writes the SOCKS5 greeting bytes
+int socks_validate_method(const unsigned char buf[2]); // returns 0 if [V5, valid method], -1 otherwise
+size_t socks_build_connect(unsigned char *buf,size_t buflen,const char *host,const char *port); // writes CONNECT request, returns bytes written or 0 on failure
+int socks_validate_reply_header(const unsigned char buf[4]); // returns 0 if [V5, status=0, _, IPv4], -1 otherwise
 
 /* sha3.c */
 #define DIGEST 32 // 256-bit digest in bytes.

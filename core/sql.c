@@ -1203,14 +1203,10 @@ int sql_populate_peer(void)
 			}
 		}
 		else if(owner == ENUM_OWNER_PEER)
-		{ // handle pending outgoing	PEER		load struct + peer_init()
+		{ // handle pending outgoing	PEER		load struct + async friend request
 			if((n = load_peer_struc(peer_index,owner,status,privkey,peerversion,peeronion,peernick,sign_sk,peer_sign_pk,invitation)) == -1)
 				continue;
-			torx_read(n) // 🟧🟧🟧
-			pthread_t *thrd_send = &peer[n].thrd_send;
-			torx_unlock(n) // 🟩🟩🟩
-			if(pthread_create(thrd_send,&ATTR_DETACHED,&peer_init,itovp(n))) // TODO 2023/01/17 issue: this must not be run on re-loads (when start_tor() restarts tor)
-				error_simple(-1,"Failed to create thread1");
+			start_outgoing_friend_request(n); // TODO 2023/01/17 issue: this must not be run on re-loads (when start_tor() restarts tor)
 		}
 		else
 		{

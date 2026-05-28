@@ -215,239 +215,76 @@ void DisableNagle(const evutil_socket_t sendfd)
 		}
 }
 
-static inline int timeout_connect(evutil_socket_t proxyfd, const struct sockaddr *name,const size_t namelen)
-{
-	#ifdef WIN32
-	WSAPOLLFD pfd = {0};
-	#else
-	struct pollfd pfd = {0};
-	#endif
-	int optval = 0;
-	int ret;
-	if((ret = connect(SOCKET_CAST_OUT proxyfd, name, (socklen_t)namelen)) != 0) // && errno == EINPROGRESS
+int socks_build_tor_sockaddr(struct sockaddr_in *out)
+{ // Fill *out for connect()/bufferevent_socket_connect() to Tor's SOCKS port. TOR_SOCKS_IP is an IP literal; no DNS.
+	if(!out)
+		return -1;
+//	memset(out,0,sizeof(*out));
+	out->sin_family = AF_INET;
+	out->sin_port = htobe16(threadsafe_read_uint16(&mutex_global_variable,&tor_socks_port));
+	if(evutil_inet_pton(AF_INET,TOR_SOCKS_IP,&out->sin_addr) != 1)
 	{
-		pfd.fd = SOCKET_CAST_OUT proxyfd;
-		pfd.events = POLLOUT;
-		#ifdef WIN32
-		ret = WSAPoll(&pfd, 1, MESSAGE_TIMEOUT);
-		#else
-		ret = poll(&pfd, 1, MESSAGE_TIMEOUT);
-		#endif
-		if(ret == 1)
-		{
-			socklen_t optlen = sizeof(optval);
-			if((ret = getsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_ERROR, (char *) &optval, &optlen)) == 0) // This occurs on startup with optval == 0, if connections get attempted before sockets are up. Not a big deal. // errno = optval;
-				ret = -1; // 2023/08/13 put this instead of ret = optval == 0 ? 0 : -1;
-		}
-		else if(ret == 0)
-		{
-			error_simple(0, "timeout_connect error: timeout");
-			ret = -1;
-		}
-		else
-		{
-			error_simple(0, "timeout_connect error: poll failed");
-			ret = -1;
-		}
-	}
-	return ret;
-}
-
-static inline evutil_socket_t socks_establish(const char *host, const char *port, struct addrinfo hints)
-{
-	struct addrinfo *res = {0}, *res0 = {0};
-	evutil_socket_t proxyfd = -1;
-	const int error = getaddrinfo(host, port, &hints, &res0); // essentially DNS query of TOR_SOCKS_IP
-	if(error)
-	{
-		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
+		error_simple(0,"socks_build_tor_sockaddr: evutil_inet_pton failed for TOR_SOCKS_IP. Report this.");
 		return -1;
 	}
-	uint8_t success = 0;
-	for (res = res0; res; res = res->ai_next)
-	{ // XXX This for NOT a loop for our purposes because "DNS queries" of TOR_SOCKS_IP return a maximum of one res. There will be no res->ai_next.
-		if((proxyfd = SOCKET_CAST_IN socket(res->ai_family, res->ai_socktype, res->ai_protocol)) == -1)
-		{
-			error_simple(0,"socks_establish failed to bind.");
-			continue;
-		}
-		#ifndef WIN32
-		{
-			const int one = 1;
-			setsockopt(SOCKET_CAST_OUT proxyfd, SOL_SOCKET, SO_REUSEADDR, OPTVAL_CAST &one, sizeof(one));
-		}
-		#endif
-		if(timeout_connect(proxyfd, res->ai_addr, res->ai_addrlen) == 0)
-		{ // Connected
-			success = 1;
-			DisableNagle(proxyfd);
-			break;
-		}
-		if(evutil_closesocket(proxyfd) == -1)
-			error_simple(0,"Failed to close socket in socks_establish.");
-	}
-	freeaddrinfo(res0);
-	if(success)
-		return proxyfd;
-	return -1; // NOTE: This occurs when Tor isn't running yet or is being restarted
-}
-
-static inline int decode_addrport(const char *host, const char *port, struct sockaddr *addr,const size_t addrlen)
-{ // Decode address of TOR_SOCKS_IP
-	struct addrinfo hints = {0}, *res = {0};
-	hints.ai_family = PF_INET;
-	hints.ai_flags = 0;
-	hints.ai_socktype = SOCK_STREAM;
-	const int error = getaddrinfo(host, port, &hints, &res); // essentially DNS query of TOR_SOCKS_IP
-	if(error)
-	{
-		error_printf(0,"getaddrinfo for host %s port %s: %s",host,port,gai_strerror(error)); // return value is const, cannot be freed, so leave it as is
-		return -1;
-	}
-	if(addrlen < res->ai_addrlen) 
-	{
-		freeaddrinfo(res);
-		error_simple(0,"decode_addrport internal error: addrlen < res->ai_addrlen");
-		return -1;
-	}
-	memcpy(addr, res->ai_addr, res->ai_addrlen);
-	freeaddrinfo(res);
 	return 0;
 }
 
-static inline size_t atomicio(const short int pollin_or_pollout,const evutil_socket_t fd,void *_s,const size_t n)
-{ // ensure all of data on socket comes through. f==read || f==vwrite
-	char *s = _s;
-	size_t pos = 0;
-	#ifdef WIN32
-	WSAPOLLFD pfd = {0};
-	#else
-	struct pollfd pfd = {0};
-	#endif
-	pfd.fd = SOCKET_CAST_OUT fd;
-	pfd.events = pollin_or_pollout;
-	while (n > pos)
-	{
-		ssize_t res;
-		if(pollin_or_pollout == POLLIN)
-			res = recv(SOCKET_CAST_OUT fd, s + pos, SOCKET_WRITE_SIZE (n - pos),0);
-		else if(pollin_or_pollout == POLLOUT)
-			res = send(SOCKET_CAST_OUT fd, s + pos, SOCKET_WRITE_SIZE (n - pos),0);
-		else
-		{
-			error_simple(-1,"Coding error in atomicio. Report this.");
-			return 0;
-		}
-		switch (res)
-		{
-			case -1:
-				#ifdef WIN32
-				if (WSAGetLastError() == WSAEINTR)
-					continue;
-				if ((WSAGetLastError() == WSAEWOULDBLOCK) || (WSAGetLastError() == WSAENOBUFS))
-				{
-					(void)WSAPoll(&pfd, 1, -1);
-					continue;
-				}
-				#else
-				if(errno == EINTR)
-					continue;
-				if((errno == EAGAIN) || (errno == ENOBUFS))
-				{
-					(void)poll(&pfd, 1, -1);
-					continue;
-				}
-				#endif
-				return 0;
-			case 0:
-				#ifdef WIN32
-				WSASetLastError(WSAESHUTDOWN);
-				#else
-				errno = EPIPE;
-				#endif
-				return pos;
-			default:
-				pos += (size_t)res;
-		}
-	}
-	return pos;
-}
-
-evutil_socket_t socks_connect(const char *host, const char *port)
+size_t socks_build_greeting(unsigned char buf[3])
 {
-	size_t hlen;
-	if(!port || strtoll(port, NULL, 10) < 1025)
-	{
-		error_printf(0,"Attempted socks_connect to invalid port: %s. Report this.",port);
-		return -1;
-	}
-	if(!host || (hlen = strlen(host)) != (56+6))
-	{ // includes .onion
-		error_simple(0,"Attempted socks_connect to null or invalid host. Should be 62 chars including domain. Report this.");
-		return -1;
-	}
-	char proxyport[6];
-	snprintf(proxyport,sizeof(proxyport),"%d",threadsafe_read_uint16(&mutex_global_variable,&tor_socks_port));
-	struct addrinfo hints = {0};
-	hints.ai_family = PF_INET;
-	hints.ai_flags = 0;
-	hints.ai_socktype = SOCK_STREAM;
-	struct sockaddr_storage addr = {0};
-	struct sockaddr_in *in4 = (struct sockaddr_in *)&addr;
-	if(decode_addrport(TOR_SOCKS_IP, port, (struct sockaddr *)&addr, sizeof(addr)) == -1)
-	{
-		error_simple(0,"Proxy port not specified to socks_connect");
-		return -1;
-	}
-	in_port_t serverport = in4->sin_port;
-	evutil_socket_t proxyfd;
-	if((proxyfd = socks_establish(TOR_SOCKS_IP, proxyport, hints)) < 0)
-		return -1;
-//	addr.ss_family = 0;
-	unsigned char buf[5 + hlen + sizeof(serverport)]; // 5+62+2
 	buf[0] = SOCKS_V5;
 	buf[1] = 1;
 	buf[2] = SOCKS_NOAUTH;
-	if(atomicio(POLLOUT, proxyfd, buf, 3) != 3 || atomicio(POLLIN, proxyfd, buf, 2) != 2)
-	{
-		error_simple(0,"socks_connect read or write failed");
-		goto error;
-	}
+	return 3;
+}
+
+int socks_validate_method(const unsigned char buf[2])
+{
+	if(buf[0] != SOCKS_V5)
+		return -1;
 	if(buf[1] == SOCKS_NOMETHOD)
+		return -1;
+	return 0;
+}
+
+size_t socks_build_connect(unsigned char *buf,size_t buflen,const char *host,const char *port)
+{ // Build [V5, CONNECT, 0, DOMAIN, hlen, host..., be16(port)] into buf. Returns total bytes written, or 0 on failure.
+	if(!buf || !host || !port)
+		return 0;
+	const size_t hlen = strlen(host);
+	if(hlen != (56+6)) // expecting "<56-char-onion>.onion"
 	{
-		error_simple(0,"socks_connect authentication failed");
-		goto error;
+		error_simple(0,"socks_build_connect: invalid host length. Report this.");
+		return 0;
 	}
+	const long long portll = strtoll(port,NULL,10);
+	if(portll < 1025 || portll > 65535)
+	{
+		error_printf(0,"socks_build_connect: invalid port: %s. Report this.",port);
+		return 0;
+	}
+	const size_t total = 5 + hlen + sizeof(uint16_t);
+	if(buflen < total)
+		return 0;
+	const uint16_t port_be = htobe16((uint16_t)portll);
 	buf[0] = SOCKS_V5;
 	buf[1] = SOCKS_CONNECT;
 	buf[2] = 0;
 	buf[3] = SOCKS_DOMAIN;
-	buf[4] = (unsigned char)hlen; // looks bad but should be ok due to prior check
-	memcpy(buf + 5, host, hlen);
-	memcpy(buf + 5 + hlen, &serverport, sizeof(serverport));
-	if(atomicio(POLLOUT, proxyfd, buf, sizeof(buf)) != sizeof(buf))
-	{
-		error_simple(0,"socks_connect write failed");
-		goto error;
-	}
-	if(atomicio(POLLIN, proxyfd, buf, 4) != 4 || buf[1] != 0)
-	{
-		error_simple(5,"Read failed. Could be a 120 second timeout, or Tor has been restarted / shutdown"); // or we attempted a connection before Tor came up.
-		goto error;
-	}
-	if(buf[3] != SOCKS_IPV4)
-	{
-		error_simple(0, "Connection failed, unsupported address type. This should never occur."); // occured 2024/02/26 when deleting some group peers, occurs 2024/12/27 frequently, occurred 2025/01/16 when doing nothing, then reconnected just fine.
-		goto error;
-	}
-	if(atomicio(POLLIN, proxyfd, buf + 4, 6) != 6)
-	{ // Occured on 2024/02/21 when taking down a group peer.
-		error_simple(0,"Read failed, this will probably never occur because we don't use ipv6"); // occurred 2025/01/16 when doing nothing, then reconnected just fine.
-		goto error;
-	}
-	return proxyfd;
-	error: {}
-	if(evutil_closesocket(proxyfd) == -1)
-		error_simple(0,"Failed to close socket in socks_connect."); // Might already be closed?
-	return -1;
+	buf[4] = (unsigned char)hlen;
+	memcpy(buf + 5,host,hlen);
+	memcpy(buf + 5 + hlen,&port_be,sizeof(port_be));
+	return total;
 }
+
+int socks_validate_reply_header(const unsigned char buf[4])
+{
+	if(buf[0] != SOCKS_V5)
+		return -1;
+	if(buf[1] != 0) // 0 == success
+		return -1;
+	if(buf[3] != SOCKS_IPV4)
+		return -1;
+	return 0;
+}
+

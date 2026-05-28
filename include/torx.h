@@ -331,8 +331,8 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES]; // ONLY use for CTRL + GROUP_PEER, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
 	unsigned char invitation[crypto_sign_BYTES]; // PRIVATE groups only. ONLY for GROUP_PEER, 64 this the SIGNATURE on our onion, from who invited us, which we will need when connecting to other peers.
 	pthread_rwlock_t mutex_page;
-	pthread_t thrd_send; // for peer_init / send_init (which calls torx_events (send)
-	pthread_t thrd_recv; // for torx_events (recv)
+	pthread_t thrd; // single dispatcher thread per peer (runs event_base_dispatch on .base); used for inbound listeners, sendfd reconnects, and outgoing friend-request handshakes.
+	struct event_base *base; // single event_base per peer, shared by recv listener and send bufferevent
 	uint32_t broadcasts_inbound;
 	#ifndef NO_AUDIO_CALL
 	struct call_list {

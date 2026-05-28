@@ -456,64 +456,11 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 	event_strc->fresh_n = -1;
 	event_strc->buffer = NULL;
 	event_strc->untrusted_message_len = 0;
-	event_strc->killed = 0;
-}
-
-static inline void *send_init(void *arg)
-{ /* This should be called for every peer on startup and should set the peer [n]. sendfd. */
-	const int n = vptoi(arg);
-	torx_write(n) // 🟥🟥🟥
-	pusher(zero_pthread,(void*)&peer[n].thrd_send)
-	torx_unlock(n) // 🟩🟩🟩
-	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	char peeronion[56+1];
-	getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
-	uint8_t status; // must constantly re-check
-	char suffixonion[56+6+1]; // Correct length to handle the .onion suffix required.
-	memcpy(suffixonion,peeronion,56);
-	snprintf(&suffixonion[56],sizeof(suffixonion)-56,".onion");
-	const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
-	const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
-	char privkey[88+1];
-	getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
-	if(local_v3auth_enabled == 1 && peerversion > 1 && owner == ENUM_OWNER_CTRL && outgoing_auth_x25519(peeronion,privkey))
-	{
-		sodium_memzero(peeronion,sizeof(peeronion));
-		sodium_memzero(privkey,sizeof(privkey));
-		sodium_memzero(suffixonion,sizeof(suffixonion));
-		error_simple(0,"Failure of send_init due to outgoing_auth_x25519. Bailing. Report this.");
-		return 0;
-	}
-	sodium_memzero(peeronion,sizeof(peeronion));
-	sodium_memzero(privkey,sizeof(privkey));
-	const uint16_t vport = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,vport));
-	char port_string[21];
-	snprintf(port_string,sizeof(port_string),"%u",vport);
-	while((status = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,status))) == ENUM_STATUS_FRIEND)
-	{
-		const evutil_socket_t socket = socks_connect(suffixonion,port_string);
-		if(socket < 1)
-		{ // this causes blocking only until connected
-			sleep(1); // slow down attempts to reconnect. This is one place we should have sleep. MUST be before the sendfd_connected check to give libevent time to close.
-			const uint8_t sendfd_connected = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
-			if(sendfd_connected) // This used to occur when doing repeated blocks/unblocks of online peer. Unsure of implications. Lots of warnings happened after. 2024/09/28 No longer occurs after moving sleep(1) above instead of below check on sendfd_connected.
-				error_printf(0,"Nulling a peer[%d].bev_send here possibly without doing any necessary free in libevent. Coding error. Report this.",n);
-		} // TODO 2024/12/25 This happens when restarting Tor. Cannot make this fatal until we resolve it. Perhaps it shouldn't be fatal anyway. This may be a side effect of LEV_OPT_CLOSE_ON_FREE.
-		else
-		{
-			evutil_make_socket_nonblocking(socket); // for libevent
-			setter(n,INT_MIN,-1,offsetof(struct peer_list,sendfd),&socket,sizeof(socket));
-			error_printf(1,"Connected to existing peer n=%d",n);
-			struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
-			initialize_event_strc(event_strc,n,owner,1,socket);
-			torx_events(event_strc); // NOTE: deleted peers will come out of here with owner "0000"
-			// XXX DO NOT ATTEMPT TO CLOSE socket: Causes fsan errors on Android because the socket has already been closed by disconnect() XXX
-		}
-	}
-//	torx_free((void*)&port_string);
-	sodium_memzero(suffixonion,sizeof(suffixonion));
-	return 0; // peer blocked TODO did we close sockets?
+	event_strc->base = NULL;
+	event_strc->suffixonion[0] = '\0';
+	event_strc->port_string[0] = '\0';
+	event_strc->socks_state = SOCKS_STATE_IDLE;
+	event_strc->socks_bev = NULL;
 }
 
 static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uint16_t tport,const int maxstreams,...)
@@ -610,7 +557,7 @@ int add_onion_call(const int n)
 }
 
 void load_onion(const int n)
-{ // Not to be called on ENUM_OWNER_PEER
+{ // Not to be called on ENUM_OWNER_PEER. Sets up one event_base + one dispatcher thread per peer, registering recv listener and/or async outbound SOCKS connect on the shared base.
 	if(n < 0)
 	{
 		error_simple(0,"Attempted to load_onion an negative value. Report this.");
@@ -639,44 +586,118 @@ void load_onion(const int n)
 	setter(n,INT_MIN,-1,offsetof(struct peer_list,vport),&vport,sizeof(vport));
 	const uint16_t tport = randport(0);
 	setter(n,INT_MIN,-1,offsetof(struct peer_list,tport),&tport,sizeof(tport));
-	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER)
-	{
-		torx_read(n) // 🟧🟧🟧
-		pthread_t *thrd_send = &peer[n].thrd_send;
-		torx_unlock(n) // 🟩🟩🟩
-		if(pthread_create(thrd_send,&ATTR_DETACHED,&send_init,itovp(n)))
-			error_simple(-1,"Failed to create thread1");
+	const uint8_t needs_listener = (owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL);
+	const uint8_t needs_outbound = (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER);
+	if(!needs_listener && !needs_outbound)
+		return; // nothing to do (shouldn't reach)
+	struct event_base *existing_base;
+	torx_read(n) // 🟧🟧🟧
+	existing_base = peer[n].base;
+	torx_unlock(n) // 🟩🟩🟩
+	if(existing_base)
+	{ // A base + dispatcher thread already exists for this peer (e.g. a redundant load_onion on Tor restart). Bailing prevents orphaning the running base/thread/listener and its bufferevents. Best-effort: assumes load_onion is not called concurrently for the same n.
+		error_printf(2,"load_onion: peer n=%d already has an event_base; skipping redundant load.",n);
+		return;
 	}
-	if(owner == ENUM_OWNER_GROUP_PEER)
-		return; // done, do not need to load listener because we no sockets to listen on
-	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT || owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL)
-	{ // Open .recvfd for a SING/MULT/CTRL/GROUP_CTRL onion, then call torx_events() on it
+	struct event_base *base = event_base_new();
+	if(!base)
+	{
+		error_simple(0,"load_onion: event_base_new failed. Report this.");
+		return;
+	}
+	torx_write(n) // 🟥🟥🟥
+	peer[n].base = base;
+	torx_unlock(n) // 🟩🟩🟩
+	struct event_strc *event_strc_recv = NULL;
+	struct event_strc *event_strc_send = NULL;
+	if(needs_listener)
+	{ // Register listener for SING/MULT/CTRL/GROUP_CTRL onion. add_onion_call publishes the onion to Tor.
+		if(add_onion_call(n))
+		{
+			error_simple(0,"load_onion: add_onion_call failed. Aborting peer load.");
+			torx_write(n) // 🟥🟥🟥
+			peer[n].base = NULL;
+			torx_unlock(n) // 🟩🟩🟩
+			event_base_free(base);
+			return;
+		}
 		const evutil_socket_t sock = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0);
 		if(sock < 0)
 		{
 			error_simple(0,"Failed to open socket for recvfd");
+			torx_write(n) // 🟥🟥🟥
+			peer[n].base = NULL;
+			torx_unlock(n) // 🟩🟩🟩
+			event_base_free(base);
 			return;
 		}
 		DisableNagle(sock);
 		evutil_make_socket_nonblocking(sock); // for libevent
-		struct sockaddr_in serv_addr = {0}; //, cli_addr;
+		struct sockaddr_in serv_addr = {0};
 		serv_addr.sin_family = AF_INET;
 		serv_addr.sin_addr.s_addr = inet_addr(TOR_CTRL_IP); // IP associated with tport, not necessarily TOR_CTRL_IP
 		serv_addr.sin_port = htobe16(tport);
 		if(bind(SOCKET_CAST_OUT sock, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0)
 		{
-			error_simple(0,"Failed to bind. Perhaps the random port is already in use. Coding fail."); //  TODO hit this on 2023/08/11
+			error_simple(0,"Failed to bind. Perhaps the random port is already in use. Coding fail.");
 			if(evutil_closesocket(sock) < 0)
 				error_simple(0,"Unlikely socket failed to close error.6");
+			torx_write(n) // 🟥🟥🟥
+			peer[n].base = NULL;
+			torx_unlock(n) // 🟩🟩🟩
+			event_base_free(base);
 			return;
 		}
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
-		struct event_strc *event_strc = torx_insecure_malloc(sizeof(struct event_strc));
-		initialize_event_strc(event_strc,n,owner,0,sock);
-		torx_read(n) // 🟧🟧🟧
-		pthread_t *thrd_recv = &peer[n].thrd_recv;
-		torx_unlock(n) // 🟩🟩🟩
-		if(pthread_create(thrd_recv,&ATTR_DETACHED,&torx_events,(void*)event_strc))
-			error_simple(-1,"Failed to create thread from load_onion");
+		event_strc_recv = torx_insecure_malloc(sizeof(struct event_strc));
+		initialize_event_strc(event_strc_recv,n,owner,0,sock);
+		event_strc_recv->base = base;
+		torx_events(event_strc_recv); // registers the listener on `base`; does not dispatch
 	}
+	if(needs_outbound)
+	{ // One-time outbound setup that send_init used to do per-iteration: outgoing_auth_x25519 (v3auth) and cache suffixonion + port_string.
+		char peeronion[56+1];
+		getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
+		const uint16_t peerversion = getter_uint16(n,INT_MIN,-1,offsetof(struct peer_list,peerversion));
+		if(local_v3auth_enabled == 1 && peerversion > 1 && owner == ENUM_OWNER_CTRL)
+		{
+			char privkey[88+1];
+			getter_array(&privkey,sizeof(privkey),n,INT_MIN,-1,offsetof(struct peer_list,privkey));
+			const int auth_failed = outgoing_auth_x25519(peeronion,privkey);
+			sodium_memzero(privkey,sizeof(privkey));
+			if(auth_failed)
+			{
+				sodium_memzero(peeronion,sizeof(peeronion));
+				error_simple(0,"load_onion: outgoing_auth_x25519 failed. Continuing without sendfd setup.");
+				goto skip_send_setup;
+			}
+		}
+		event_strc_send = torx_insecure_malloc(sizeof(struct event_strc));
+		initialize_event_strc(event_strc_send,n,owner,1,-1);
+		event_strc_send->base = base;
+		memcpy(event_strc_send->suffixonion,peeronion,56);
+		snprintf(&event_strc_send->suffixonion[56],sizeof(event_strc_send->suffixonion)-56,".onion");
+		snprintf(event_strc_send->port_string,sizeof(event_strc_send->port_string),"%u",vport);
+		sodium_memzero(peeronion,sizeof(peeronion));
+		torx_events(event_strc_send); // arms initial try_connect_cb on `base`; does not dispatch
+		skip_send_setup: {}
+	}
+	if(!event_strc_recv && !event_strc_send)
+	{ // Nothing got registered; tear down the base.
+		torx_write(n) // 🟥🟥🟥
+		peer[n].base = NULL;
+		torx_unlock(n) // 🟩🟩🟩
+		event_base_free(base);
+		return;
+	}
+	struct peer_base_strc *wrap = torx_insecure_malloc(sizeof(struct peer_base_strc));
+	wrap->n = n;
+	wrap->event_strc_recv = event_strc_recv;
+	wrap->event_strc_send = event_strc_send;
+	torx_read(n) // 🟧🟧🟧
+	pthread_t *thrd = &peer[n].thrd;
+	torx_unlock(n) // 🟩🟩🟩
+	if(pthread_create(thrd,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
+		error_simple(-1,"Failed to create dispatcher thread from load_onion");
 }
