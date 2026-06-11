@@ -130,12 +130,11 @@ static inline void disconnect_forever(struct event_strc *event_strc,const int ta
 		torx_free((void*)&event_strc); // event_strc_unique
 		return; // do not loopexit; these per-accept copies live independently of the peer thread
 	}
-	struct event_base *base = NULL;
-	torx_read(event_strc->n) // 🟧🟧🟧
-	base = peer[event_strc->n].base;
-	torx_unlock(event_strc->n) // 🟩🟩🟩
-	if(base)
-		event_base_loopexit(base, NULL);
+	// XXX Do NOT read peer[n].base here: takedown_onion (delete 1 or 3) runs zero_n, which nulls it, and the loopexit would be skipped, leaking the dispatcher thread + base + event_strcs forever.
+	if(event_strc->base)
+		event_base_loopexit(event_strc->base, NULL);
+	else
+		error_simple(0,"disconnect_forever: event_strc->base is NULL, cannot exit event base. Report this.");
 }
 
 static inline void peer_online(struct event_strc *event_strc)
@@ -242,15 +241,6 @@ static inline void peer_offline(struct event_strc *event_strc)
 			}
 		}
 }
-
-/*void enter_thread_to_disconnect_forever(evutil_socket_t fd,short event,void *ctx)
-{
-	error_printf(YELLOW"Checkpoint enter_thread_to_disconnect_forever"RESET);
-	(void) fd;
-	(void) event;
-	struct bufferevent *bev_recv = (struct bufferevent*)ctx;
-	disconnect_forever(bev_recv,NULL);
-}*/
 
 static inline void pipe_auth_and_request_peerlist(struct event_strc *event_strc)
 { // Send ENUM_PROTOCOL_PIPE_AUTH && ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST
@@ -1098,6 +1088,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									message_send(event_strc->n,ENUM_PROTOCOL_PROPOSE_UPGRADE,&trash_version,sizeof(trash_version));
 								}
 								error_simple(0,RED"Checkpoint authed a CTRL"RESET);
+								discard_after_processing = 1;
 							}
 						}
 					}
@@ -1536,6 +1527,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							#ifndef NO_AUDIO_CALL
 							if(data_len >= 8 && (protocol == ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN || protocol == ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE || protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE))
 							{
+								discard_after_processing = 1; // audio_cache_add copies the data; free the buffer below (not delivered via stream_cb)
 								const time_t time = be32toh(align_uint32((void*)event_strc->buffer)); // this is for the CALL, not MESSAGE
 								const time_t nstime = be32toh(align_uint32((void*)&event_strc->buffer[4])); // this is for the CALL, not MESSAGE
 								if(!time && !nstime)
@@ -1613,6 +1605,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							#ifndef NO_STICKERS
 							if(data_len >= CHECKSUM_BIN_LEN && protocol == ENUM_PROTOCOL_STICKER_DATA_GIF)
 							{
+								discard_after_processing = 1; // sticker data is copied; free the buffer below (not delivered via stream_cb)
 								int s = set_s((unsigned char*)event_strc->buffer);
 								if(s > -1)
 									error_simple(0,"We already have this sticker data, not registering it again.");
@@ -1739,7 +1732,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
 						}
 					}
-					event_strc->buffer = NULL; // XXX IMPORTANT: to prevent the message from being torx_free'd if we hit a continue;
+					if(discard_after_processing) // ASSUMPTION: every discard_after_processing protocol is also stream, so it never reaches increment_i; a non-stream discard protocol would double-free the buffer here
+						torx_free((void*)&event_strc->buffer); // copied or discarded internally
+					else
+						event_strc->buffer = NULL; // ownership transferred (stream_cb / increment_i): do not free
 				}
 				else
 					continued = 0; // important or oversized messages will break
@@ -1905,7 +1901,7 @@ static void error_conn(struct evconnlistener *listener,void *ctx)
  *     → socks_read_cb sees ≥2 bytes → write CONNECT request, state=AWAIT_REPLY
  *     → socks_read_cb sees ≥4 bytes → state=AWAIT_BIND
  *     → socks_read_cb sees ≥6 bytes → socks_finalize: rewire callbacks for peer traffic
- *   On error: free the handshake bev, schedule_reconnect (1s timer).
+ *   On error: free the handshake bev, schedule_reconnect (RECONNECT_SLEEP timer).
  *
  * The handshake bev becomes peer[n].bev_send on DONE; nothing publishes it before then.
  */
@@ -1915,11 +1911,11 @@ static void socks_read_cb(struct bufferevent *bev, void *ctx);
 static inline void peerinit_finalize(struct event_strc *event_strc,const unsigned char reply[2+56+crypto_sign_PUBLICKEYBYTES]);
 
 static inline void schedule_reconnect(struct event_strc *event_strc)
-{ // Schedules try_connect_cb to fire on event_strc->base after 1 second.
+{ // Schedules try_connect_cb to fire on event_strc->base after RECONNECT_SLEEP seconds.
 	if(event_strc == NULL || event_strc->base == NULL)
 		return;
-	struct timeval one_second = { .tv_sec = 1, .tv_usec = 0 };
-	if(event_base_once(event_strc->base,-1,EV_TIMEOUT,try_connect_cb,event_strc,&one_second))
+	struct timeval reconnect_delay = { .tv_sec = RECONNECT_SLEEP, .tv_usec = 0 };
+	if(event_base_once(event_strc->base,-1,EV_TIMEOUT,try_connect_cb,event_strc,&reconnect_delay))
 		error_simple(0,"schedule_reconnect: event_base_once failed. Report this.");
 }
 
@@ -1943,7 +1939,7 @@ static inline void socks_finalize(struct event_strc *event_strc)
 		error_simple(0,"socks_finalize called with NULL socks_bev. Coding error. Report this.");
 		return;
 	}
-	evbuffer_enable_locking(bufferevent_get_output(bev),NULL); // TODO may no longer be necessary
+	bufferevent_set_timeouts(bev,NULL,NULL); // clear the handshake timeouts set in try_connect_cb; established CTRL connections allowed to idle indefinitely
 	bufferevent_setcb(bev, read_conn, write_finished, close_conn, event_strc); // swap to normal peer callbacks
 	const evutil_socket_t real_fd = bufferevent_getfd(bev);
 	if(real_fd >= 0)
@@ -1999,6 +1995,8 @@ static inline void socks_finalize(struct event_strc *event_strc)
 			pipe_auth_and_request_peerlist(event_strc); // send ENUM_PROTOCOL_PIPE_AUTH
 	}
 	peer_online(event_strc); // internal callback, keep after pipe auth AND AFTER send_prep
+	if(evbuffer_get_length(bufferevent_get_input(bev)))
+		read_conn(bev,event_strc); // peer data arrived in the same flush as the SOCKS reply; bufferevent_setcb alone won't re-fire read_conn for already-buffered bytes
 }
 
 static inline void peerinit_teardown(struct event_strc *event_strc)
@@ -2188,16 +2186,17 @@ static void try_connect_cb(evutil_socket_t fd,short event,void *arg)
 	if(event_strc == NULL || event_strc->base == NULL)
 		return;
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
-	const uint8_t status_ok = (event_strc->owner == ENUM_OWNER_PEER) ? (status != ENUM_STATUS_BLOCKED) : (status == ENUM_STATUS_FRIEND);
+	const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	const uint8_t status_ok = (event_strc->owner == ENUM_OWNER_PEER) ? (status != ENUM_STATUS_BLOCKED && peer_index > -1) : (status == ENUM_STATUS_FRIEND);
 	if(!status_ok)
-	{ // Peer was blocked/deleted/etc.; do not retry.
+	{ // Peer was blocked/deleted/etc.; do not retry. Ceasing leaves the base event-less for outbound-only owners, so dispatch returns and the thread cleans up.
 		error_printf(2,"try_connect_cb: peer n=%d ineligible status=%u owner=%u; ceasing outbound attempts.",event_strc->n,status,event_strc->owner);
 		return;
 	}
-	if(event_strc->socks_bev != NULL)
-	{ // A previous handshake bev is still around (shouldn't happen, but be safe).
-		bufferevent_free(event_strc->socks_bev);
-		event_strc->socks_bev = NULL;
+	if(event_strc->socks_state == SOCKS_STATE_DONE || event_strc->socks_bev != NULL || getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected)))
+	{ // Already connected, or a handshake is already in flight (e.g. duplicate timers). Do not start a competing connection, which could overwrite peer[n].bev_send and orphan a live one.
+		error_printf(2,"try_connect_cb: peer n=%d already connected or handshake in flight; skipping.",event_strc->n);
+		return;
 	}
 	struct sockaddr_in socks_addr = {0};
 	if(socks_build_tor_sockaddr(&socks_addr) != 0)
@@ -2214,6 +2213,8 @@ static void try_connect_cb(evutil_socket_t fd,short event,void *arg)
 		return;
 	}
 	bufferevent_setcb(bev, socks_read_cb, NULL, socks_event_cb, event_strc);
+	const struct timeval handshake_timeout = { .tv_sec = SOCKSTIMEOUT, .tv_usec = 0 }; // SOCKSTIMEOUT is Tor's default SocksTimeout. Prevents a wedged handshake, or an unanswered friend-request reply, from hanging forever. BEV_EVENT_TIMEOUT lands in socks_event_cb (retry, or peerinit_teardown for owner PEER). Cleared by socks_finalize upon promotion.
+	bufferevent_set_timeouts(bev,&handshake_timeout,&handshake_timeout);
 	if(bufferevent_enable(bev, EV_READ|EV_WRITE) != 0)
 	{
 		error_simple(0,"try_connect_cb: bufferevent_enable failed. Retrying.");
@@ -2232,7 +2233,7 @@ static void try_connect_cb(evutil_socket_t fd,short event,void *arg)
 }
 
 void torx_events(struct event_strc *event_strc)
-{ // Register events on event_strc->base for the given fd_type. Does NOT dispatch. Returns immediately. Called from load_onion (twice for owners with both directions).
+{ // Register events on event_strc->base for the given fd_type. Does NOT dispatch. Returns immediately. Called from load_onion (twice for owners with both directions) and from start_outgoing_friend_request (once, fd_type==1).
 	if(event_strc == NULL || event_strc->base == NULL)
 	{
 		error_simple(0,"torx_events called with NULL event_strc or base. Coding error. Report this.");
@@ -2274,16 +2275,19 @@ void *peer_dispatcher_thread(void *arg)
 	torx_unlock(n) // 🟩🟩🟩
 	if(base)
 		event_base_dispatch(base); // blocks until event_base_loopexit
-	// Cleanup. Either event_strc may have been freed already if a per-accept copy path applied — but the *primary* recv/send strcs are not freed by callbacks.
-	struct bufferevent *bev_recv,*bev_send;
+	// Cleanup. The per-accept copies (event_strc_unique) are separate allocations freed by their own callbacks; the *primary* recv/send strcs held by wrap are never freed by callbacks, so we free them here.
+	struct bufferevent *bev_recv = NULL,*bev_send = NULL;
 	torx_write(n) // 🟥🟥🟥
-	bev_recv = peer[n].bev_recv;
-	peer[n].bev_recv = NULL;
-	bev_send = peer[n].bev_send;
-	peer[n].bev_send = NULL;
-	peer[n].recvfd_connected = 0;
-	peer[n].sendfd_connected = 0;
-	peer[n].base = NULL;
+	if(peer[n].base == base)
+	{ // Guard: if the peer was deleted (zero_n nulled .base and the slot may have been reused by a new peer), these fields no longer belong to this thread's base and must not be touched.
+		bev_recv = peer[n].bev_recv;
+		peer[n].bev_recv = NULL;
+		bev_send = peer[n].bev_send;
+		peer[n].bev_send = NULL;
+		peer[n].recvfd_connected = 0;
+		peer[n].sendfd_connected = 0;
+		peer[n].base = NULL;
+	}
 	torx_unlock(n) // 🟩🟩🟩
 	if(bev_recv)
 		bufferevent_free(bev_recv);

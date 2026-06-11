@@ -219,7 +219,7 @@ int socks_build_tor_sockaddr(struct sockaddr_in *out)
 { // Fill *out for connect()/bufferevent_socket_connect() to Tor's SOCKS port. TOR_SOCKS_IP is an IP literal; no DNS.
 	if(!out)
 		return -1;
-//	memset(out,0,sizeof(*out));
+	sodium_memzero(out,sizeof(*out));
 	out->sin_family = AF_INET;
 	out->sin_port = htobe16(threadsafe_read_uint16(&mutex_global_variable,&tor_socks_port));
 	if(evutil_inet_pton(AF_INET,TOR_SOCKS_IP,&out->sin_addr) != 1)

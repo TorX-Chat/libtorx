@@ -729,6 +729,7 @@ uint32_t torx_allocation_len(const void *arg)__attribute__((warn_unused_result))
 void *torx_copy(const void *arg)__attribute__((warn_unused_result));
 void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data_forwards)__attribute__((warn_unused_result));
 void *torx_realloc(void *arg,const size_t len_new)__attribute__((warn_unused_result));
+char *mit_strcasestr(char *dumpster,const char *diver)__attribute__((warn_unused_result)); // case-insensitive strstr; returns pointer into dumpster or NULL
 int *refined_list(int *len,const uint8_t owner,const int peer_status,const char *search)__attribute__((warn_unused_result)); // free required
 uint16_t randport(const uint16_t arg)__attribute__((warn_unused_result));
 void start_tor(void);

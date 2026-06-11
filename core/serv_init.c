@@ -461,6 +461,9 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 	event_strc->port_string[0] = '\0';
 	event_strc->socks_state = SOCKS_STATE_IDLE;
 	event_strc->socks_bev = NULL;
+	sodium_memzero(event_strc->fresh_privkey,sizeof(event_strc->fresh_privkey)); // owner==PEER fields, unused here, but must not be left as uninitialized garbage (this strc is memcpy'd by accept_conn for per-accept copies)
+	sodium_memzero(event_strc->ed25519_sk,sizeof(event_strc->ed25519_sk));
+	sodium_memzero(event_strc->peerinit_outbound,sizeof(event_strc->peerinit_outbound));
 }
 
 static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uint16_t tport,const int maxstreams,...)
@@ -523,7 +526,7 @@ int add_onion_call(const int n)
 				return -1;
 			}
 			sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-			if(base32_encode((unsigned char*)incomingauthkey,x25519_pk,sizeof(ed25519_pk)) != 56)
+			if(base32_encode((unsigned char*)incomingauthkey,x25519_pk,sizeof(x25519_pk)) != 56)
 			{
 				error_simple(0,"Serious error in load_onion relating to incoming auth key. Report this");
 				sodium_memzero(x25519_pk,sizeof(x25519_pk));
@@ -572,9 +575,7 @@ void load_onion(const int n)
 		return; // do not load unaccepted friend requests
 	}
 	uint16_t vport;
-	if(owner == ENUM_OWNER_CTRL)
-		vport = CTRL_VPORT;
-	else if(owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
+	if(owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER)
 		vport = CTRL_VPORT;
 	else if(owner == ENUM_OWNER_SING || owner == ENUM_OWNER_MULT)
 		vport = INIT_VPORT;
@@ -593,11 +594,27 @@ void load_onion(const int n)
 	struct event_base *existing_base;
 	torx_read(n) // 🟧🟧🟧
 	existing_base = peer[n].base;
+	if(existing_base)
+		event_base_loopexit(existing_base,NULL); // XXX Held under the read lock deliberately, for two separate reasons:
+			//   (1) Lifetime — peer_dispatcher_thread nulls peer[n].base under the write lock and only frees the base AFTER releasing that write lock. So as long as we hold the read lock and observe a non-null base, that base cannot be freed out from under this call. (Capturing the pointer is not enough; the read lock is what keeps the object alive across the call.)
+			//   (2) Calling into libevent while holding our lock cannot deadlock — event_base_loopexit does not wait for the loop to actually exit. It briefly takes libevent's own internal lock for this base, sets the exit flag, wakes the loop, and returns. libevent releases that internal lock both while the loop waits for socket activity and around every callback it runs, so no callback ever holds libevent's internal lock while blocking on our peer read/write lock. Because the two locks are therefore never acquired in opposite orders, holding the read lock across this call is safe.
 	torx_unlock(n) // 🟩🟩🟩
 	if(existing_base)
-	{ // A base + dispatcher thread already exists for this peer (e.g. a redundant load_onion on Tor restart). Bailing prevents orphaning the running base/thread/listener and its bufferevents. Best-effort: assumes load_onion is not called concurrently for the same n.
-		error_printf(2,"load_onion: peer n=%d already has an event_base; skipping redundant load.",n);
-		return;
+	{ // A base + dispatcher thread already exists for this peer (load_onion re-called on Tor restart, or on unblock after takedown_onion closed our sockets). The old listener/connections are stale and the onion must be re-published via add_onion_call, so signal the old base to exit (threadsafe; evthread is enabled in initial()) and wait for its dispatcher thread to finish cleanup before rebuilding. Best-effort: assumes load_onion is not called concurrently for the same n, nor from peer n's own dispatcher thread.
+		error_printf(2,"load_onion: peer n=%d already has an event_base; tearing it down to rebuild.",n);
+		const struct timespec ten_ms = { .tv_sec = 0, .tv_nsec = 10*1000*1000 };
+		for(int cycles = 0; existing_base && cycles < 300; cycles++)
+		{ // Wait up to ~3 seconds for peer_dispatcher_thread to null peer[n].base
+			nanosleep(&ten_ms,NULL);
+			torx_read(n) // 🟧🟧🟧
+			existing_base = peer[n].base;
+			torx_unlock(n) // 🟩🟩🟩
+		}
+		if(existing_base)
+		{
+			error_printf(0,"load_onion: peer n=%d old event_base did not exit in time. Aborting load to avoid orphaning it. Report this.",n);
+			return;
+		}
 	}
 	struct event_base *base = event_base_new();
 	if(!base)
@@ -612,24 +629,11 @@ void load_onion(const int n)
 	struct event_strc *event_strc_send = NULL;
 	if(needs_listener)
 	{ // Register listener for SING/MULT/CTRL/GROUP_CTRL onion. add_onion_call publishes the onion to Tor.
-		if(add_onion_call(n))
-		{
-			error_simple(0,"load_onion: add_onion_call failed. Aborting peer load.");
-			torx_write(n) // 🟥🟥🟥
-			peer[n].base = NULL;
-			torx_unlock(n) // 🟩🟩🟩
-			event_base_free(base);
-			return;
-		}
 		const evutil_socket_t sock = SOCKET_CAST_IN socket(AF_INET, SOCK_STREAM, 0);
 		if(sock < 0)
 		{
 			error_simple(0,"Failed to open socket for recvfd");
-			torx_write(n) // 🟥🟥🟥
-			peer[n].base = NULL;
-			torx_unlock(n) // 🟩🟩🟩
-			event_base_free(base);
-			return;
+			goto fail_base;
 		}
 		DisableNagle(sock);
 		evutil_make_socket_nonblocking(sock); // for libevent
@@ -642,11 +646,14 @@ void load_onion(const int n)
 			error_simple(0,"Failed to bind. Perhaps the random port is already in use. Coding fail.");
 			if(evutil_closesocket(sock) < 0)
 				error_simple(0,"Unlikely socket failed to close error.6");
-			torx_write(n) // 🟥🟥🟥
-			peer[n].base = NULL;
-			torx_unlock(n) // 🟩🟩🟩
-			event_base_free(base);
-			return;
+			goto fail_base;
+		}
+		if(add_onion_call(n))
+		{ // Publish AFTER successful bind, so a bind failure cannot leave an onion published to a dead port.
+			error_simple(0,"load_onion: add_onion_call failed. Aborting peer load.");
+			if(evutil_closesocket(sock) < 0)
+				error_simple(0,"Unlikely socket failed to close error.6");
+			goto fail_base;
 		}
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,recvfd),&sock,sizeof(sock));
 		event_strc_recv = torx_insecure_malloc(sizeof(struct event_strc));
@@ -655,7 +662,7 @@ void load_onion(const int n)
 		torx_events(event_strc_recv); // registers the listener on `base`; does not dispatch
 	}
 	if(needs_outbound)
-	{ // One-time outbound setup that send_init used to do per-iteration: outgoing_auth_x25519 (v3auth) and cache suffixonion + port_string.
+	{ // One-time outbound setup that send_init used to do before its connect loop: outgoing_auth_x25519 (v3auth) and cache suffixonion + port_string.
 		char peeronion[56+1];
 		getter_array(&peeronion,sizeof(peeronion),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 		const uint8_t local_v3auth_enabled = threadsafe_read_uint8(&mutex_global_variable,&v3auth_enabled);
@@ -684,13 +691,7 @@ void load_onion(const int n)
 		skip_send_setup: {}
 	}
 	if(!event_strc_recv && !event_strc_send)
-	{ // Nothing got registered; tear down the base.
-		torx_write(n) // 🟥🟥🟥
-		peer[n].base = NULL;
-		torx_unlock(n) // 🟩🟩🟩
-		event_base_free(base);
-		return;
-	}
+		goto fail_base; // Nothing got registered; tear down the base.
 	struct peer_base_strc *wrap = torx_insecure_malloc(sizeof(struct peer_base_strc));
 	wrap->n = n;
 	wrap->event_strc_recv = event_strc_recv;
@@ -700,4 +701,10 @@ void load_onion(const int n)
 	torx_unlock(n) // 🟩🟩🟩
 	if(pthread_create(thrd,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
 		error_simple(-1,"Failed to create dispatcher thread from load_onion");
+	return;
+	fail_base: // null peer[n].base (so a later load_onion sees no stale base) and free the base, then return
+	torx_write(n) // 🟥🟥🟥
+	peer[n].base = NULL;
+	torx_unlock(n) // 🟩🟩🟩
+	event_base_free(base);
 }

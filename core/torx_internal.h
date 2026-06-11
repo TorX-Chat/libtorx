@@ -94,7 +94,6 @@ severable if found in contradiction with the License or applicable law.
 #define PORT_DEFAULT_CONTROL 9051
 #define PACKET_SIZE_MAX 498 // (CELL_PAYLOAD_SIZE-RELAY_HEADER_SIZE) = 498 https://github.com/torproject/tor/blob/main/src/core/or/or.h#L489 Appears to be 498 sometimes, 506 other times, but should verify via https://github.com/spring-epfl/tor-cell-dissector
 #define CHECKSUM_ON_COMPLETION 1 // This blocks, so it should be used for debug purposes only
-#define MESSAGE_TIMEOUT -1 // should be -1(disabled), but IN THEORY we could be recieving messages but unable to send while waiting for tor's timeout to expire. In practice, -1 has been best. Update: does nothing.
 #define AUTOMATICALLY_LOAD_CTRL 1 // 1 yes, 0 no. 1 is effectively default for -q mode. This is not a viable solution because adversaries can still monitor your disconnection times. 
 #define TOR_CTRL_IP "127.0.0.1" // Allowing this to be set by UI would be incredibly dangerous because users could set it to remote and expose their keys to unencrypted networks. Note: in *nix, we could use unix sockets.
 #define TOR_SOCKS_IP "127.0.0.1" // See above. If system tor is not using this IP for their socks port, we won't be able to connect because extract_port doesn't account for it.
@@ -102,6 +101,8 @@ severable if found in contradiction with the License or applicable law.
 #define BROADCAST_DELAY 1 // seconds, should equal to or lower than BROADCAST_DELAY_SLEEP. To disable broadcasts, set to 0.
 #define BROADCAST_DELAY_SLEEP 10 // used if no message was sent last time (sleep mode, save CPU cycles)
 #define BROADCAST_MAX_INBOUND_PER_PEER (BROADCAST_QUEUE_SIZE/16) // Prevent a single peer from filling up our queue with trash. Should be less than BROADCAST_QUEUE_SIZE.
+#define RECONNECT_SLEEP 3 // seconds before attempting reconnect
+#define SOCKSTIMEOUT 120 // not currently hardcoded into torrc, but 120 is the default SocksTimeout if unset in torrc
 
 struct packet_info {
 	int n; // adding this so we can remove it from peer struct to save HUGE amounts of RAM (confirmed), this was like 80% of our logged in RAM
@@ -166,7 +167,7 @@ struct event_strc { // peer_init flow stores sensitive keys here, so its event_s
 	char suffixonion[56+6+1]; // fd_type==1 only: peeronion + ".onion", cached at load_onion time
 	char port_string[21]; // fd_type==1 only: vport as string, cached at load_onion time
 	uint8_t socks_state; // fd_type==1 only: SOCKS_STATE_*
-	struct bufferevent *socks_bev; // fd_type==1 only: handshake bufferevent (transient until SOCKS_STATE_DONE)
+	struct bufferevent *socks_bev; // fd_type==1 only: handshake bufferevent (transient; nulled at SOCKS_STATE_DONE for normal peers, else freed at teardown — e.g. owner==PEER never reaches DONE)
 	char fresh_privkey[88+1]; // owner==PEER only: fresh CTRL privkey awaiting friend-request reply (secure arena)
 	unsigned char ed25519_sk[crypto_sign_SECRETKEYBYTES]; // owner==PEER only: fresh CTRL sign secret key (secure arena)
 	unsigned char peerinit_outbound[2+56+crypto_sign_PUBLICKEYBYTES]; // owner==PEER only: pre-built friend-request payload (peerversion + fresh onion + ed25519_pk)
@@ -201,7 +202,6 @@ int zero_i(const int n,const int i); // must be called from within locks
 void zero_g(const int g);
 void invitee_add(const int g,const int n);
 int invitee_remove(const int g,const int n);
-char *mit_strcasestr(char *dumpster,const char *diver)__attribute__((warn_unused_result));
 size_t stripbuffer(char *buffer);
 char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
 void initial_keyed(void);
