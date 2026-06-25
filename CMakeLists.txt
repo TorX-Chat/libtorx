@@ -18,8 +18,6 @@ option(EVENT__DISABLE_TESTS ON)
 option(EVENT__DISABLE_BENCHMARK ON)
 option(SODIUM_DISABLE_TESTS ON)
 option(SODIUM_LIBRARY_MINIMAL ON)
-option(PNG_TESTS OFF)
-set(PNG_TESTS OFF)
 set(EVENT__DISABLE_SAMPLES ON)
 set(EVENT__DISABLE_OPENSSL ON)
 set(EVENT__DISABLE_MBEDTLS ON)
@@ -45,7 +43,6 @@ if(LAN_REPO)
 	set(REPO_ZLIB "${LAN_REPO}/zlib.git")
 	set(REPO_SQLCIPHER "${LAN_REPO}/sqlcipher.git")
 	set(REPO_EVENT "${LAN_REPO}/libevent.git")
-	set(REPO_PNG "${LAN_REPO}/libpng.git")
 else()
 	message(STATUS "${PROJECT_NAME} using default remote repositories.")
 	set(REPO_SODIUM "https://github.com/jedisct1/libsodium")
@@ -53,7 +50,6 @@ else()
 	set(REPO_ZLIB "https://github.com/madler/zlib")
 	set(REPO_SQLCIPHER "https://github.com/sqlcipher/sqlcipher")
 	set(REPO_EVENT "https://github.com/libevent/libevent.git")
-	set(REPO_PNG "https://github.com/glennrp/libpng")
 endif()
 
 ## START BLOCK: Try to keep this the same in torx-gtk4 and libtorx. XXX It WILL be passed to libtorx, but libtorx also has a default in case of independent build. XXX
@@ -145,12 +141,6 @@ endif()
 set(SODIUM_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/${SODIUM_OUT_BIN_DIR})
 set(Z_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib-download-prefix/src/zlib/)
 if(BUILD_SHARED_LIBS)
-#	set(enable_shared yes) # might work for libpng
-#	set(enable_static no)
-	option(PNG_SHARED ON)
-	option(PNG_STATIC OFF)
-	set(PNG_SHARED ON)
-	set(PNG_STATIC OFF)
 	option(EVENT__LIBRARY_TYPE SHARED)
 	set(EVENT__LIBRARY_TYPE SHARED)
 	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/zlib.so)
@@ -174,12 +164,6 @@ if(BUILD_SHARED_LIBS)
 	#	set(SQLCIPHER_CONFIG_ARGS --enable-static=no LDFLAGS=${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/libcrypto.so ) #LDFLAGS=-lcrypto )
 	endif()
 else()
-	option(PNG_SHARED OFF)
-	option(PNG_STATIC ON)
-	set(PNG_SHARED OFF)
-	set(PNG_STATIC ON)
-#	set(enable_shared no) # might work for libpng
-#	set(enable_static yes)
 	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/zlib.a)
 	set(SODIUM_BUILD_BYPRODUCT ${SODIUM_LIB_DIR}/libsodium.a)
 	set(SODIUM_CONFIG_ARGS --disable-shared --enable-static)
@@ -231,8 +215,6 @@ set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.43) # Do not set SO
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
 		PUBLIC
-		${CMAKE_CURRENT_BINARY_DIR}/_deps/png-src/
-		${CMAKE_CURRENT_BINARY_DIR}/_deps/png-build/
 	##	${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 	##	${CMAKE_CURRENT_BINARY_DIR}/_deps/event-build/include
 		${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/include
@@ -306,40 +288,24 @@ if(BUILD_TORX_DEPS)
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(event)
-	FetchContent_Declare( # TODO set some env variable to define when this should build .a/.so. by default it seems to link .a at late stages and .so at early stages. Bad either way. MUST BE FIXED FOR GTK
-		png
-		GIT_REPOSITORY ${REPO_PNG}
-		GIT_TAG c22ef3b2e342bdfe3140b7e94879996d0e18c95b # DO NOT GO TO MASTER. They broke android builds somewhere after this commit.
-		UPDATE_DISCONNECTED TRUE
-		OVERRIDE_FIND_PACKAGE
-	)
-	FetchContent_MakeAvailable(png)
 	if(BUILD_SHARED_LIBS) # https://cmake.org/cmake/help/latest/guide/tutorial/Selecting%20Static%20or%20Shared%20Libraries.html
-#no use		set(PNG_BUILD_BYPRODUCT ${CMAKE_CURRENT_BINARY_DIR}/_deps/png-build/libpng16.so)
 		add_library(sodium SHARED IMPORTED)
 		add_library(openssl SHARED IMPORTED)
 		add_library(crypto SHARED IMPORTED)
-	#	add_library(png SHARED IMPORTED)
 # 		add_library(zlib SHARED IMPORTED)
 		add_library(sqlcipher SHARED IMPORTED)
 	else()
-#no use		set(PNG_BUILD_BYPRODUCT ${CMAKE_CURRENT_BINARY_DIR}/_deps/png-build/libpng16.a)
 		add_library(sodium STATIC IMPORTED)
 		add_library(openssl STATIC IMPORTED)
 		add_library(crypto STATIC IMPORTED)
-	#	add_library(png STATIC IMPORTED)
 # 		add_library(zlib STATIC IMPORTED)
 		add_library(sqlcipher STATIC IMPORTED)
 	endif()
 	set_target_properties(sodium PROPERTIES IMPORTED_LOCATION ${SODIUM_BUILD_BYPRODUCT})
 	set_target_properties(openssl PROPERTIES IMPORTED_LOCATION ${SSL_BUILD_BYPRODUCT})
 	set_target_properties(crypto PROPERTIES IMPORTED_LOCATION ${SSL_BUILD_BYPRODUCT})
-#no use	set_target_properties(png PROPERTIES IMPORTED_LOCATION ${PNG_BUILD_BYPRODUCT})
 # 	set_target_properties(zlib PROPERTIES IMPORTED_LOCATION ${Z_BUILD_BYPRODUCT})
 	set_target_properties(sqlcipher PROPERTIES IMPORTED_LOCATION ${SQLCIPHER_BUILD_BYPRODUCT})
-#	if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
-#		set_target_properties(png PROPERTIES PREFIX "lib") ## attempt work-around for libpng/commit/70fda1837d5de802ce5f7e04be239192b6a74d92
-#	endif()
 	add_dependencies(${PROJECT_NAME} sodium sqlcipher) # sqlcipher
 	add_dependencies(sodium sodium-download )
 # 	add_dependencies(zlib zlib-download )
@@ -351,26 +317,21 @@ if(BUILD_TORX_DEPS)
 elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
 	include_directories( # These cannot be target_ because they dont exist in time for target_
 		PUBLIC
-		${CMAKE_CURRENT_BINARY_DIR}/_deps/png-src/
-		${CMAKE_CURRENT_BINARY_DIR}/_deps/png-build/
 		${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/src/libsodium/include
 		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-build/include
 		${CMAKE_CURRENT_BINARY_DIR}/sqlcipher-download-prefix/src/sqlcipher-download/include
 	)
 	add_library(event_core SHARED IMPORTED)
 	add_library(event_pthreads SHARED IMPORTED)
-	add_library(png SHARED IMPORTED)
 	add_library(sodium SHARED IMPORTED)
 	add_library(sqlcipher SHARED IMPORTED)
 	set_target_properties(event_core PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/_deps/event-build/lib/libevent_core-2.2.so)
 	set_target_properties(event_pthreads PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/_deps/event-build/lib/libevent_pthreads-2.2.so)
-	set_target_properties(png PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/_deps/png-build/libpng16.so)
 	set_target_properties(sodium PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/src/libsodium/.libs/libsodium.so)
 	set_target_properties(sqlcipher PROPERTIES IMPORTED_LOCATION ${CMAKE_CURRENT_BINARY_DIR}/sqlcipher-download-prefix/src/sqlcipher-download/.libs/libsqlcipher.so)
 else()
 	find_package(Sodium REQUIRED)
 	find_package(LibEvent REQUIRED COMPONENTS core pthreads)
-	find_package(PNG REQUIRED)
 	if(BUILD_SHARED_LIBS)
 	#	add_library(event SHARED IMPORTED)
 		add_library(event_core_shared SHARED IMPORTED)
@@ -392,7 +353,6 @@ target_include_directories(
 		$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>		# to get torx.h
 		$<INSTALL_INTERFACE:include>			# this MIGHT make it work when distributed https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html#creating-relocatable-packages
 	PRIVATE
-		${PNG_INCLUDE_DIRS}				# probably not useful, i think this is bunk. see include_directories()
 ##		${CMAKE_CURRENT_BINARY_DIR}/_deps/event-src/include
 		${CMAKE_CURRENT_SOURCE_DIR}/core	# Necessary so that audio_call.c can find torx_internal.h
 )
@@ -405,7 +365,7 @@ target_link_libraries(
 	#	event
 		event_core
 	#	event_pthreads
-		png
+		z
 		sqlcipher
 		Ws2_32
 )
@@ -417,7 +377,7 @@ target_link_libraries(
 	#	event
 		event_core
 		event_pthreads
-		png
+		z
 		sqlcipher
 )
 endif()

@@ -61,33 +61,9 @@ severable if found in contradiction with the License or applicable law.
 */
 
 #include "torx_internal.h"
-#include <png.h>
+#include <zlib.h>
 #include "qrcodegen.h"
 #include "qrcodegen.c"
-
-/*	 // we can cut our PNG file sizes by about 70% if we get this bitwise operation working right? it seems like with compression libpng already puts us below what bitwise would be
-	png_set_IHDR(png, info, width, height, 1, PNG_COLOR_TYPE_GRAY,
-		PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-
-	png_write_info(png, info);
-
-	// Determine rows
-	for (int y = 0; y < height; y++) {
-		png_byte row[width];
-		int bits = 0;
-		int bytes = 0;
-		for (int x = 0; x < width; x++) {
-			if(bits == 8)
-				bits = 0; 
-			row[bytes] = pixel_array[y *width + x] ? 0x00 << bits : 0xFF << bits;
-			bits++;
-		}
-		png_write_row(png, row);
-	} */
-
-static pthread_mutex_t mutex_png_workaround = PTHREAD_MUTEX_INITIALIZER;
-
-static volatile size_t png_size_global = 0; // should not be global, but is ok. has been worked around via mutex_png_workaround
 
 struct qr_data *qr_bool(const char *text,const size_t multiplier)
 {
@@ -153,59 +129,69 @@ char *qr_utf8(const struct qr_data *arg)
 	return result;
 }
 
-static inline void png_raw(png_structp png_ptr, png_bytep data, png_size_t length)
-{
-	void** png_data_ptr = (void**)png_get_io_ptr(png_ptr);
-	void* png_data = *png_data_ptr;
-	png_size_t new_size = png_size_global + length;
-	if(png_data)
-		png_data = torx_realloc(png_data,new_size); // NOTE: this can get big because it is uncompressed. One byte per pixel.
-	else
-		png_data = torx_secure_malloc(new_size);
-	memcpy((char*)png_data + png_size_global, data, length);
-//	error_printf(0,"Checkpoint png_size: %d new_size: %d",png_size_global,new_size);
-	png_size_global = new_size;
-	*png_data_ptr = png_data;
+static inline void put_chunk(uint8_t *out, size_t *pos, const char *type, const uint8_t *data, size_t len)
+{ // append one PNG chunk: length, type, data, CRC(type+data)
+	uint32_t trash = htobe32((uint32_t)len);
+	memcpy(out + *pos,&trash,sizeof(trash));
+	*pos += 4;
+	memcpy(out + *pos, type, 4);
+	*pos += 4;
+	if(len)
+	{
+		memcpy(out + *pos, data, len);
+		*pos += len;
+	}
+	uLong crc = crc32(0L, (const uint8_t *)type, 4);
+	if(len)
+		crc = crc32(crc, data, (uInt)len);
+	trash = htobe32((uint32_t)crc);
+	memcpy(out + *pos, &trash, sizeof(trash));
+	*pos += 4;
 }
 
 void *return_png(const struct qr_data *qr_data)
 {
-	png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-	if(!png)
-		return NULL;
-	png_infop info = png_create_info_struct(png);
-	if(!info)
+	// Build the raw image in 1-bit grayscale, sample 0 = black and 1 = white.
+	const size_t rowbytes = (qr_data->width + 7) / 8;
+	const size_t raw_len = (size_t)qr_data->height * (1 + rowbytes);
+	uint8_t *raw = torx_secure_malloc(raw_len); // NOTE: Requires a malloc that zeros after allocation
+	for(size_t y = 0; y < qr_data->height; y++)
 	{
-		png_destroy_write_struct(&png, NULL);
+		uint8_t *row = raw + (size_t)y * (1 + rowbytes);
+		for(size_t x = 0; x < qr_data->width; x++)
+			if(qr_data->data[y * qr_data->width + x])
+				row[1 + (x >> 3)] |= (uint8_t)(0x80 >> (x & 7));
+	}
+	// Compress with zlib. compress2() emits a complete zlib stream
+	uLongf zl = compressBound(raw_len);
+	uint8_t *compressed = torx_secure_malloc(zl);
+	if(compress2(compressed, &zl, raw, raw_len, Z_BEST_COMPRESSION) != Z_OK)
+	{
+		torx_free((void*)&compressed);
+		torx_free((void*)&raw);
 		return NULL;
 	}
-	if(setjmp(png_jmpbuf(png)))
-	{
-		png_destroy_write_struct(&png, &info);
-		return NULL;
-	}
-	void* png_data = NULL;
-	png_size_global = 0;
-	pthread_mutex_lock(&mutex_png_workaround);
-	png_set_write_fn(png, &png_data, png_raw, NULL);
-//	png_init_io(png, fp);
-	// XXX Note these (png_uint_32) casts aren't ideal but shouldn't matter since we'll never be generating a QR of the size that would matter
-	png_set_IHDR(png, info,(png_uint_32)qr_data->width,(png_uint_32)qr_data->height, 8, PNG_COLOR_TYPE_GRAY, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_BASE, PNG_FILTER_TYPE_BASE);
-	png_write_info(png, info);
-	for (size_t y = 0; y < qr_data->height; y++)
-	{
-		png_byte row[qr_data->width];
-		for (size_t x = 0; x < qr_data->width; x++)
-			row[x] = qr_data->data[y *qr_data->width + x] ? 0xFF : 0x00;
-		png_write_row(png, row);
-	}
-	png_write_end(png, NULL);
-	pthread_mutex_unlock(&mutex_png_workaround);
-	return png_data;
-// To destroy: 	png_destroy_write_struct(&png, &info);
-// To write:	FILE *fp = fopen(filename, "wb");
-//		fwrite(png_data,1,png_size_global,fp);
-//		fclose(fp);
+	// Append signature, IHDR, IDAT, IEND into one big output buffer. 8-byte signature + (12-byte chunk overhead each) + payloads, with plenty of slack so we never have to grow it.
+	uint8_t *out = torx_secure_malloc(8 + 3 * 12 + 13 + zl);
+	static const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+	memcpy(out, sig, 8);
+	const uint8_t ihdr[13] = {
+		(qr_data->width >> 24) & 0xff, (qr_data->width >> 16) & 0xff, (qr_data->width >> 8) & 0xff, qr_data->width & 0xff,
+		(qr_data->height >> 24) & 0xff, (qr_data->height >> 16) & 0xff, (qr_data->height >> 8) & 0xff, qr_data->height & 0xff,
+		1, /* bit depth */
+		0, /* color type : 0 = grayscale */
+		0, /* compression : 0 = deflate */
+		0, /* filter : 0 = adaptive */
+		0 /* interlace : 0 = none */
+	};
+	size_t pos = 8; // since we already appended sig
+	put_chunk(out, &pos, "IHDR", ihdr, sizeof(ihdr));
+	put_chunk(out, &pos, "IDAT", compressed, zl);
+	put_chunk(out, &pos, "IEND", NULL, 0);
+
+	torx_free((void*)&raw);
+	torx_free((void*)&compressed);
+	return out; // holds `pos` bytes of finished PNG.
 }
 
 size_t write_bytes(const char *filename,const void *png_data,const size_t length)

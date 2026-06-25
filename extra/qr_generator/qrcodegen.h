@@ -59,8 +59,7 @@ any form.
 7) Each aspect of these exemptions are to be considered independent and
 severable if found in contradiction with the License or applicable law.
 */
-// TODO Could replace this with https://github.com/bjguillot/qr which has png output, but we need to re-write it to offer "scale" and 1 bit color png files rather than 255 bit
-// Extremely low priority. The learning curve required means that it could take days at minimum. https://en.wikipedia.org/wiki/Portable_Network_Graphics#File_format
+
 /* 
  * QR Code generator library (C)
  * 
