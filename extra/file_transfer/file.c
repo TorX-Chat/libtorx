@@ -738,7 +738,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 	char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
 	{
-		error_printf(0,PINK"Checkpoint DELETING SPLIT PATH"RESET);
+		error_printf(0,PINK"Checkpoint DELETING SPLIT PATH: %s"RESET,split_path);
 		destroy_file(split_path);
 		torx_free((void*)&split_path);
 		torx_write(n) // 🟥🟥🟥

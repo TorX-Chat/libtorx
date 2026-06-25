@@ -168,9 +168,8 @@ static inline void png_raw(png_structp png_ptr, png_bytep data, png_size_t lengt
 	*png_data_ptr = png_data;
 }
 
-void *return_png(const struct qr_data *arg)
+void *return_png(const struct qr_data *qr_data)
 {
-	const struct qr_data *qr_data = (const struct qr_data*) arg; // Casting passed struct
 	png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
 	if(!png)
 		return NULL;
