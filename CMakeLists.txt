@@ -295,10 +295,14 @@ if(BUILD_TORX_DEPS)
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(event)
-	# XXX We only link event_core + event_pthreads. Drop the unused event_extra (http/dns/rpc/ws) and the combined libevent monolith from ALL so they are not built. event_core/event_pthreads stay and still build on demand (libtorx links them).
-	foreach(_evt_unused IN ITEMS event_extra_static event_extra_shared event_static event_shared)
-		if(TARGET ${_evt_unused})
-			set_target_properties(${_evt_unused} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+	## libtorx only links event_core + event_pthreads. We drop the unused event_extra and the combined libevent monolith except on Android where torx-flutter builds Tor binary and MUST statical link the combined libevent.a
+	set(_evt_unused event_extra_static event_extra_shared event_shared)
+	if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+		list(APPEND _evt_unused event_static)
+	endif()
+	foreach(_evt IN LISTS _evt_unused)
+		if(TARGET ${_evt})
+			set_target_properties(${_evt} PROPERTIES EXCLUDE_FROM_ALL TRUE)
 		endif()
 	endforeach()
 	if(BUILD_SHARED_LIBS) # https://cmake.org/cmake/help/latest/guide/tutorial/Selecting%20Static%20or%20Shared%20Libraries.html
