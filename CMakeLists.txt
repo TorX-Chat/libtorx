@@ -139,11 +139,13 @@ else()
 endif()
 
 set(SODIUM_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/sodium-download-prefix/src/sodium-download/${SODIUM_OUT_BIN_DIR})
-set(Z_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib-download-prefix/src/zlib/)
+set(Z_LIB_DIR ${CMAKE_CURRENT_BINARY_DIR}/zlib-download-prefix/src/zlib-download/)
+set(Z_LINK z)
 if(BUILD_SHARED_LIBS)
 	option(EVENT__LIBRARY_TYPE SHARED)
 	set(EVENT__LIBRARY_TYPE SHARED)
-	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/zlib.so)
+	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/libz.so)
+	set(Z_LIBRARY_TYPE SHARED)
 	set(SODIUM_BUILD_BYPRODUCT ${SODIUM_LIB_DIR}/libsodium.so)
 	set(SODIUM_CONFIG_ARGS --disable-static --enable-shared) # XXX NOTE: .a files are still built unless --enable-minimal is passed, but then we get warnings related to crypto_scalarmult_ed25519_base
 	if(${CMAKE_SYSTEM_NAME} STREQUAL "Android")
@@ -164,7 +166,8 @@ if(BUILD_SHARED_LIBS)
 	#	set(SQLCIPHER_CONFIG_ARGS --enable-static=no LDFLAGS=${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/libcrypto.so ) #LDFLAGS=-lcrypto )
 	endif()
 else()
-	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/zlib.a)
+	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/libz.a)
+	set(Z_LIBRARY_TYPE STATIC)
 	set(SODIUM_BUILD_BYPRODUCT ${SODIUM_LIB_DIR}/libsodium.a)
 	set(SODIUM_CONFIG_ARGS --disable-shared --enable-static)
 	option(EVENT__LIBRARY_TYPE STATIC)
@@ -174,6 +177,10 @@ else()
 	set(CRYPTO_BUILD_BYPRODUCT ${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/libcrypto.a)
 	set(SQLCIPHER_BUILD_BYPRODUCT ${CMAKE_CURRENT_BINARY_DIR}/sqlcipher-download-prefix/src/sqlcipher/libsqlcipher.a)
 	set(SQLCIPHER_CONFIG_ARGS --enable-shared=no LDFLAGS=${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/libcrypto.a )#--oldincludedir=/tmp ) # link .a from ssl
+endif()
+if(${CMAKE_SYSTEM_NAME} STREQUAL "Android") # XXX Always statically link zlib on Android (libz.a), regardless of BUILD_SHARED_LIBS: tor links it statically (--enable-static-zlib) and we embed it into libtorx.so. This avoids zlib's versioned soname (libz.so.1), which Android can neither package nor resolve, and removes the runtime dependency entirely. zlib's `make` builds libz.a regardless.
+	set(Z_BUILD_BYPRODUCT ${Z_LIB_DIR}/libz.a)
+	set(Z_LIBRARY_TYPE STATIC)
 endif()
 
 add_compile_definitions(SQLITE_HAS_CODEC SECURE_MALLOC)
@@ -210,7 +217,7 @@ else()
 endif()
 
 add_library(${PROJECT_NAME} core/torx_core.c core/broadcast.c core/sql.c core/client_init.c core/onion_gen.c core/thread_safety.c core/blake3.c core/libevent.c core/serv_init.c core/base32.c core/cpucount.c core/socks.c core/sha3.c core/utf8-validate.c ${ASYNC_CALLBACKS_SRC} ${QR_GENERATOR_SRC} ${AUDIO_CALL_SRC} ${STICKERS_SRC} ${FILE_TRANSFER_SRC})
-set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.43) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
+set_target_properties(${PROJECT_NAME} PROPERTIES VERSION 2.0.44) # Do not set SOVERSION because it will already be set, if unset, to VERSION. Note: SOVERSION will be ignored on Android because CMAKE_PLATFORM_NO_VERSIONED_SONAME=true
 
 if(BUILD_TORX_DEPS)
 	include_directories( # These cannot be target_ because they dont exist in time for target_
@@ -265,7 +272,7 @@ if(BUILD_TORX_DEPS)
 		CONFIGURE_COMMAND export CC=${CLANG_BINARY_PATH} && export CXX=${CLANGPP_BINARY_PATH} && ./configure
 		BUILD_COMMAND make -j${CPU_COUNT}
 		INSTALL_COMMAND ""
-# 		BUILD_BYPRODUCTS ${Z_BUILD_BYPRODUCT} # first we need to get it to be .so
+		BUILD_BYPRODUCTS ${Z_BUILD_BYPRODUCT}
 	)
 	set(SQLCIPHER_CFLAGS "-DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL -I${CMAKE_CURRENT_BINARY_DIR}/openssl-download-prefix/src/openssl-download/include")
 	ExternalProject_Add(
@@ -280,7 +287,7 @@ if(BUILD_TORX_DEPS)
 	#	INSTALL_COMMAND cp *.h include/sqlcipher/
 		BUILD_BYPRODUCTS ${SQLCIPHER_BUILD_BYPRODUCT}
 	)
-	FetchContent_Declare( # TODO building unnecessary things here like _extra and they get linked
+	FetchContent_Declare(
 		event
 		GIT_REPOSITORY ${REPO_EVENT}
 		GIT_TAG master # release-2.2.1-alpha
@@ -288,27 +295,33 @@ if(BUILD_TORX_DEPS)
 		OVERRIDE_FIND_PACKAGE
 	)
 	FetchContent_MakeAvailable(event)
+	# XXX We only link event_core + event_pthreads. Drop the unused event_extra (http/dns/rpc/ws) and the combined libevent monolith from ALL so they are not built. event_core/event_pthreads stay and still build on demand (libtorx links them).
+	foreach(_evt_unused IN ITEMS event_extra_static event_extra_shared event_static event_shared)
+		if(TARGET ${_evt_unused})
+			set_target_properties(${_evt_unused} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+		endif()
+	endforeach()
 	if(BUILD_SHARED_LIBS) # https://cmake.org/cmake/help/latest/guide/tutorial/Selecting%20Static%20or%20Shared%20Libraries.html
 		add_library(sodium SHARED IMPORTED)
 		add_library(openssl SHARED IMPORTED)
 		add_library(crypto SHARED IMPORTED)
-# 		add_library(zlib SHARED IMPORTED)
 		add_library(sqlcipher SHARED IMPORTED)
 	else()
 		add_library(sodium STATIC IMPORTED)
 		add_library(openssl STATIC IMPORTED)
 		add_library(crypto STATIC IMPORTED)
-# 		add_library(zlib STATIC IMPORTED)
 		add_library(sqlcipher STATIC IMPORTED)
 	endif()
 	set_target_properties(sodium PROPERTIES IMPORTED_LOCATION ${SODIUM_BUILD_BYPRODUCT})
 	set_target_properties(openssl PROPERTIES IMPORTED_LOCATION ${SSL_BUILD_BYPRODUCT})
 	set_target_properties(crypto PROPERTIES IMPORTED_LOCATION ${SSL_BUILD_BYPRODUCT})
-# 	set_target_properties(zlib PROPERTIES IMPORTED_LOCATION ${Z_BUILD_BYPRODUCT})
 	set_target_properties(sqlcipher PROPERTIES IMPORTED_LOCATION ${SQLCIPHER_BUILD_BYPRODUCT})
-	add_dependencies(${PROJECT_NAME} sodium sqlcipher) # sqlcipher
+	add_library(zlib ${Z_LIBRARY_TYPE} IMPORTED) # XXX SHARED on desktop shared builds, STATIC otherwise (always STATIC on Android, where libz.a is embedded into libtorx.so)
+	set_target_properties(zlib PROPERTIES IMPORTED_LOCATION ${Z_BUILD_BYPRODUCT})
+	add_dependencies(zlib zlib-download)
+	set(Z_LINK zlib) # link the bundled zlib instead of system -lz
+	add_dependencies(${PROJECT_NAME} sodium sqlcipher zlib)
 	add_dependencies(sodium sodium-download )
-# 	add_dependencies(zlib zlib-download )
 # 	add_dependencies(openssl-download zlib )
 	add_dependencies(crypto openssl-download )
 	add_dependencies(openssl openssl-download )
@@ -365,7 +378,7 @@ target_link_libraries(
 	#	event
 		event_core
 	#	event_pthreads
-		z
+		${Z_LINK}
 		sqlcipher
 		Ws2_32
 )
@@ -377,7 +390,7 @@ target_link_libraries(
 	#	event
 		event_core
 		event_pthreads
-		z
+		${Z_LINK}
 		sqlcipher
 )
 endif()
