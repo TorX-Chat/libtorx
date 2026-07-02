@@ -988,7 +988,6 @@ extern int max_group;
 extern int max_peer;
 extern time_t startup_time;
 extern const char platform_slash;
-extern char *snowflake_location;
 extern char *lyrebird_location;
 extern char *conjure_location;
 extern char *native_library_directory;

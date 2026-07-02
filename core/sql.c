@@ -1402,16 +1402,6 @@ void sql_populate_setting(const int force_plaintext)
 						tor_location[setting_value_len] = '\0';
 					}
 				}
-				else if(!strncmp(setting_name,"snowflake_location",18))
-				{
-					if(!library_settings_loaded_plaintext)
-					{
-						torx_free((void*)&snowflake_location);
-						snowflake_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
-						memcpy(snowflake_location,setting_value,setting_value_len);
-						snowflake_location[setting_value_len] = '\0';
-					}
-				}
 				else if(!strncmp(setting_name,"lyrebird_location",17))
 				{
 					if(!library_settings_loaded_plaintext)
