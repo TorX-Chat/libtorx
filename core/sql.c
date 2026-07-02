@@ -1431,7 +1431,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_plaintext && !keyed && setting_value_len > 0 && setting_value_len <= sizeof(decryption_key))
 					{
-						memcpy(decryption_key,setting_value,sizeof(decryption_key));
+						memcpy(decryption_key,setting_value,setting_value_len);
 						attempt_login = 1;
 					}
 				}

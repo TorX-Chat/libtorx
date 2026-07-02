@@ -5060,30 +5060,20 @@ int custom_input(const uint8_t owner,const char *identifier,const char *privkey)
 	return n;
 }
 
-static inline size_t stripbuffer_b32_len51(char *buffer)
-{ // For stealth addresses. This function strips anything other than 2-7 and A-Z, and strips away anything longer than 51 characters. The result should be a TorX-ID that was previously obscured with invalid and/or extraneous characters. DO NOT use this for handshakes, which contain non-base32 characters.
-	size_t j = 1; // necessary to initialize as 1 in case of 0 length
-	for(size_t i = 0; buffer[i] != '\0'; ++i)
-	{
-		while(!(buffer[i] >= 'a' && buffer[i] <= 'z') && !(buffer[i] >= 'A' && buffer[i] <= 'Z') && !(buffer[i] >= '2' && buffer[i] <= '7') && !(buffer[i] == '\0')) 
-		{
-			for(j = i; buffer[j] != '\0'; ++j)
-				buffer[j] = buffer[j + 1];
-			buffer[j] = '\0';
-		}
-		if(i == 51)
-		{
-			buffer[i] = '\0';
-			return i;
-		}
-	}
-	if(j-1 == 0 && buffer != NULL) // workaround for case where no modifications need to be done to string
-		j = j + strlen(buffer);
-	return j-1;
+static inline size_t stripbuffer_b32(char *buffer)
+{ // Note: Does not strip or convert lowercase, which is not of the base32 standard. That is handled elsewhere.
+	if(buffer == NULL)
+		return 0;
+	size_t w = 0;
+	for(size_t r = 0; buffer[r] != '\0'; ++r)
+		if((buffer[r] >= 'A' && buffer[r] <= 'Z') || (buffer[r] >= 'a' && buffer[r] <= 'z') || (buffer[r] >= '2' && buffer[r] <= '7'))
+			buffer[w++] = buffer[r];
+	buffer[w] = '\0';
+	return w;
 }
 
 int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, peernick.
-{ // Initiate a friend request.
+{ // Initiate a friend request. // TODO Document Stealth TorX-IDs: (If appending 2-7/a-z/A-Z, suffix length MUST be 0 and 2-7/a-z/A-Z must ONLY be appended at the end. 0-1 and other characters (ex: single byte symbols) can be added in any location, regardless of suffix length)
 	if(unstripped_peerid == NULL || peernick == NULL || strlen(unstripped_peerid) == 0 || strlen(peernick) == 0)
 	{
 		error_simple(0,"Passed null or 0 length peeronion or peernick to peer_save. Not allowed.");
@@ -5095,15 +5085,17 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		error_simple(0,"Highly likely that user attempted to save a public group ID as a peer.");
 		return -1;
 	}
-	char unstripped_peerid_local[id_len+1];
-	snprintf(unstripped_peerid_local,sizeof(unstripped_peerid_local),"%s",unstripped_peerid);
-	if(id_len == 56) // OnionID
-		id_len = stripbuffer(unstripped_peerid_local);
-	else // TorX-ID
-		id_len = stripbuffer_b32_len51(unstripped_peerid_local);
-	char peeronion_or_torxid[56+1];
-	snprintf(peeronion_or_torxid,sizeof(peeronion_or_torxid),"%s",unstripped_peerid_local);
-	sodium_memzero(unstripped_peerid_local,sizeof(unstripped_peerid_local));
+	char peeronion_or_torxid[id_len+1]; // NOTE: At this point it is unstripped, so it could be >56 characters
+	snprintf(peeronion_or_torxid,sizeof(peeronion_or_torxid),"%s",unstripped_peerid);
+	stripbuffer_b32(peeronion_or_torxid);
+	if(id_len > 52 && id_len < 56)
+	{ // BEWARE: Stealth TorX-IDs cannot be less than 57 characters
+		error_simple(0,"Guaranteed mistype of an OnionID. Invalid length of 53 to 55 bytes.");
+		sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
+		return -1;
+	}
+	else if(id_len > 56) // Assume this to be a Stealth TorX-ID
+		peeronion_or_torxid[51] = '\0'; // Clip Stealth TorX-IDs at 52 characters
 	char *peeronion = {0}; // must set null in case of error
 	do { // not a real while loop, just don't want to use goto
 		if(id_len == 56)
