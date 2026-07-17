@@ -296,7 +296,8 @@ uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
-void pin_inbound_file_offer(const int n,const int group_n,const uint16_t protocol,const uint8_t stat,const time_t time, const time_t nstime,const unsigned char* message,const size_t message_len);
+void file_status_apply(const int n,const uint16_t protocol,const uint8_t stat,const unsigned char *message,const size_t message_len);
+char *split_path_from_file_path(const char *file_path)__attribute__((warn_unused_result));
 int initialize_split_info(const int n,const int f);
 int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)__attribute__((warn_unused_result));
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
@@ -307,7 +308,7 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 void file_request_internal(const int n,const int f,const int8_t fd_type);
 void file_offer_internal(const int target_n,const int file_n,const int f,const uint8_t send_partial);
 unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_path,const uint8_t splits,const uint64_t size)__attribute__((warn_unused_result));
-void sql_update_file_offer_state(const int n,const int f,const uint8_t state);
+void sql_save_file_status(const int file_n,const int f,const uint8_t status);
 #endif // NO_FILE_TRANSFER
 
 #ifndef NO_AUDIO_CALL

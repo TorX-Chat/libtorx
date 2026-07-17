@@ -1276,7 +1276,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							discard_after_processing = 1;
 						}
 						else // if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
-							process_pause_cancel(event_strc->n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV);
+						{
+							if(protocol == ENUM_PROTOCOL_FILE_CANCEL && file_n == event_strc->n)
+								sql_save_file_status(file_n,f,ENUM_FILE_INACTIVE_CANCELLED); // peer cancelled a p2p/PM transfer entirely; persist before process_pause_cancel potentially frees .file_path
+							process_pause_cancel(file_n,f,event_strc->n,protocol,ENUM_MESSAGE_RECV); // XXX passing resolved file_n, NOT event_strc->n, because f may be on group_n
+						}
 					}
 					#endif // NO_FILE_TRANSFER
 					else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
@@ -1729,8 +1733,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						else
 						{ // unique same time/nstime
 							#ifndef NO_FILE_TRANSFER
-							if(file_offer && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
-								pin_inbound_file_offer(nn,event_strc->group_n,protocol,ENUM_MESSAGE_RECV,time,nstime,(const unsigned char*)event_strc->buffer,buffer_len);
+							if(file_offer)
+								file_status_apply(nn,protocol,ENUM_MESSAGE_RECV,(const unsigned char*)event_strc->buffer,buffer_len); // applies any status/path restored from a file- peer setting (relevant when the original offer was never logged or is not yet loaded)
 							#endif // NO_FILE_TRANSFER
 							message_new_cb(nn,i);
 							sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL

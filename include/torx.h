@@ -296,9 +296,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
-		time_t offer_time; // XXX RECEIVER-ONLY: time/nstime of the logged inbound offer message row whose DB `extraneous` carries this file's resume state ([state_byte][file_path]) via sql_update_file_offer_state. 0 = unknown/not logged.
-		time_t offer_nstime;
-		int offer_n; // XXX RECEIVER-ONLY: peer whose logged offer row carries the resume state. For p2p/PM offer_n == n; for group files the struct is on group_n but offer_n is the offerer GROUP_PEER. -1 = unknown.
+		uint8_t saved_status; // INBOUND ONLY: status loaded from the file-<b64_checksum> peer setting (see sql_save_file_status). XXX Use file_status_get instead for most circumstances!
 		char *split_path;
 		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
@@ -769,7 +767,7 @@ void block_peer(const int n);
 void message_offload(const int n);
 void delete_log(const int n);
 int message_edit(const int n,const int i,const char *message);
-int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len);
+int sql_setting(const int force_plaintext,const int peer_index,const char *setting_name,const char *setting_value,const size_t setting_value_len); // NOTE: Peer settings whose name ends in b64_encode(file_checksum) (ex: the library's file-<b64>) are automatically deleted when a file offer bearing that checksum is deleted. UIs storing file-related peer settings should adopt the same suffix convention.
 void message_extra(const int n,const int i,const void *data,const uint32_t data_len);
 void sql_populate_setting(const int force_plaintext);
 int sql_delete_setting(const int force_plaintext,const int peer_index,const char *setting_name);

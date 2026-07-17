@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 45 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 0 , 46 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -3259,9 +3259,18 @@ void initial_keyed(void)
 	sqlcipher_db_configuration(&db_encrypted);
 
 	if(!first_run)
-	{ // Migration: deduplicate setting_peer and add UNIQUE(peer_index, setting_name) constraint for existing databases TODO delete at version *.1.* or 3.*.*
+	{ // Migration: deduplicate setting_peer and add UNIQUE(peer_index, setting_name) constraint for existing databases TODO delete at version *.2.* or 3.*.*
 	//	sql_exec(&db_encrypted,"DELETE FROM setting_peer WHERE setting_index NOT IN (SELECT MAX(setting_index) FROM setting_peer GROUP BY peer_index, setting_name);",NULL); // Doesn't appear to function, but the next call could in theory fail without it functioning?
 		sql_exec(&db_encrypted,"CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_peer_unique ON setting_peer(peer_index, setting_name);",NULL); // important
+		#ifndef NO_FILE_TRANSFER
+		{ // Migration (2.1.0.0): file status/path moved from message.extraneous to file-<b64_checksum> peer settings (extraneous is now exclusively message_extra), and FILE_REQUEST/FILE_PAUSE/FILE_CANCEL are no longer logged, so their legacy rows cannot be loaded. Legacy transfer statuses/paths are lost. TODO delete at version *.2.* or 3.*.*
+			char command[256];
+			snprintf(command,sizeof(command),"UPDATE message SET extraneous = NULL WHERE extraneous IS NOT NULL AND protocol IN (%u,%u,%u,%u);",(unsigned int)ENUM_PROTOCOL_FILE_OFFER,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_PRIVATE,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED);
+			sql_exec(&db_messages,command,NULL);
+			snprintf(command,sizeof(command),"DELETE FROM message WHERE protocol IN (%u,%u,%u);",(unsigned int)ENUM_PROTOCOL_FILE_REQUEST,(unsigned int)ENUM_PROTOCOL_FILE_PAUSE,(unsigned int)ENUM_PROTOCOL_FILE_CANCEL);
+			sql_exec(&db_messages,command,NULL);
+		}
+		#endif // NO_FILE_TRANSFER
 		sql_populate_setting(0); // encrypted settings
 	}
 	else // if(first_run)

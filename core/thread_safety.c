@@ -299,9 +299,7 @@ struct offsets offsets_file[] = {
 	offsize(file_list,time_left,"time_left"),
 	offsize(file_list,speed_iter,"speed_iter"),
 	offsize(file_list,last_speeds,"last_speeds"),
-	offsize(file_list,offer_time,"offer_time"),
-	offsize(file_list,offer_nstime,"offer_nstime"),
-	offsize(file_list,offer_n,"offer_n")
+	offsize(file_list,saved_status,"saved_status")
 };
 #endif // NO_FILE_TRANSFER
 struct offsets offsets_group[] = {
