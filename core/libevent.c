@@ -938,6 +938,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								error_printf(0,PINK"Checkpoint set_g=%d ?= event_strc->g=%d"RESET,set_g(event_strc->n,NULL),event_strc->g); // TODO if different, the bug is set_g / event_strc->g
 								break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
 							}
+							else if(group_peer_n == event_strc->group_n)
+							{ // If there is one day a valid need for receiving these messages ("I lost my message history, what did I say in the private group?"), we would have to skip processing then go through de-duplication before calling increment_i
+								error_simple(1,"We received a message that we signed... it was resent to us.");
+								break; // must prevent most types of type-specific handling
+							}
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
 							{ // After receiving this, we should be able to process unsigned messages as having known receiver, on this connection.
 								if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
@@ -1709,12 +1714,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 							set_time(&time,&nstime);
-						uint8_t stat;
-						if(group_peer_n > -1 && group_peer_n == event_strc->group_n) // we received a message that we signed... it was resent to us.
-							stat = ENUM_MESSAGE_SENT;
-						else
-							stat = ENUM_MESSAGE_RECV;
-						const int i = increment_i(nn,0,time,nstime,stat,-1,p_iter,event_strc->buffer);
+						const int i = increment_i(nn,0,time,nstime,ENUM_MESSAGE_RECV,-1,p_iter,event_strc->buffer);
 						int repeated = 0; // same time/nstime as another
 						if(event_strc->owner == ENUM_OWNER_GROUP_PEER && (group_msg || group_pm)) // Handle group messages
 							repeated = message_insert(event_strc->g,nn,i);
@@ -1728,6 +1728,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 						{ // unique same time/nstime
+							#ifndef NO_FILE_TRANSFER
+							if(file_offer && protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+								pin_inbound_file_offer(nn,event_strc->group_n,protocol,ENUM_MESSAGE_RECV,time,nstime,(const unsigned char*)event_strc->buffer,buffer_len);
+							#endif // NO_FILE_TRANSFER
 							message_new_cb(nn,i);
 							sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
 						}

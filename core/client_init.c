@@ -659,7 +659,7 @@ void start_outgoing_friend_request(const int n)
 	event_strc->socks_bev = NULL;
 	getter_array(event_strc->suffixonion,56,n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 	snprintf(&event_strc->suffixonion[56],sizeof(event_strc->suffixonion)-56,".onion");
-	snprintf(event_strc->port_string,sizeof(event_strc->port_string),"%u",vport);
+	snprintf(event_strc->port_string,sizeof(event_strc->port_string),"%u",(unsigned int)vport); // casting unnecessarily to avoid an incorrect GCC warning
 	memcpy(event_strc->fresh_privkey,fresh_privkey,sizeof(event_strc->fresh_privkey));
 	memcpy(event_strc->ed25519_sk,ed25519_sk,sizeof(event_strc->ed25519_sk));
 	uint16_t version_be;

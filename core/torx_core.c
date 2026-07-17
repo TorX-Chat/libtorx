@@ -4259,9 +4259,9 @@ void initial(void)
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER,"File Offer","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_NONE,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PRIVATE,"File Offer Private","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_NON_DISCARDABLE); // TODO we store file path here, so if it doesn't save, we can't resume. This means accepting a file while a peer is offline is meaningless if they don't come online before we restart our client.
-	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,1,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_NON_DISCARDABLE);
+	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
+	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
 	#endif // NO_FILE_TRANSFER
 	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
 	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,1,1,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);

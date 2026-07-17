@@ -472,6 +472,8 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 					error_simple(0,"process_file_offer_inbound returned -1 in load_messages_struc");
 					return INT_MIN;
 				}
+				if(protocol != ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
+					pin_inbound_file_offer(n,owner == ENUM_OWNER_GROUP_PEER ? set_g(n,NULL) : -1,protocol,stat,time,nstime,(const unsigned char*)tmp_message,message_len);
 			}
 			else if(message_len)  // TODO use protocol_lookup to check all protocols for minimum size
 			{
@@ -651,7 +653,7 @@ static int sql_exec_msg(const int n,const int i,const char *passed_command)
 	return val;
 }
 
-static inline void sql_message_tail_section(const int peer_index,const int n,const time_t time,const time_t nstime,const uint8_t stat,const uint16_t protocol,const uint8_t file_offer,const char *message,const uint32_t message_len,const uint32_t signature_len)
+static inline void sql_message_tail_section(const int peer_index,const int n,const time_t time,const time_t nstime,const uint8_t stat,const uint8_t file_offer,const char *message,const uint32_t message_len,const uint32_t signature_len)
 { // Warning: no error checks, this is a macro converted to a function. TODO this triggers far more often than necessary. Triggers once for every outbound file request, which occurs for every split. Ideally should just trigger upon first and then again after unpause perhaps...
 	if(signature_len) // Update signature (only)
 	{
@@ -661,8 +663,8 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 		sodium_memzero(command,sizeof(command));
 	}
 	#ifndef NO_FILE_TRANSFER
-	if((file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST) && stat != ENUM_MESSAGE_RECV)
-	{ // save file_path as extraneous
+	if(file_offer && stat != ENUM_MESSAGE_RECV)
+	{ // save file_path as extraneous (for our own outbound offers; the receiver's path+state is written separately via sql_update_file_offer_state).
 		int file_n = n;
 		int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
 		if(f < 0)
@@ -687,7 +689,6 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 	#else
 	(void)n;
 	(void)stat;
-	(void)protocol;
 	(void)file_offer;
 	#endif // NO_FILE_TRANSFER
 }
@@ -757,7 +758,7 @@ int sql_insert_message(const int n,const int i)
 		snprintf(command,sizeof(command),"INSERT OR ABORT INTO message (time,nstime,peer_index,stat,protocol,message_txt) VALUES (%lld,%lld,%d,%d,%d,?);",(long long)time,(long long)nstime,peer_index,stat,protocol);
 		val = sql_exec_msg(n,i,command);
 		sodium_memzero(command,sizeof(command));
-		sql_message_tail_section(peer_index,n,time,nstime,stat,protocol,file_offer,message,message_len,signature_len);
+		sql_message_tail_section(peer_index,n,time,nstime,stat,file_offer,message,message_len,signature_len);
 	}
 	torx_free((void*)&message);
 	return val;
@@ -792,7 +793,7 @@ int sql_update_message(const int n,const int i)
 	sodium_memzero(command,sizeof(command));
 	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
 	const uint32_t message_len = torx_allocation_len(message);
-	sql_message_tail_section(peer_index,n,time,nstime,stat,protocol,file_offer,message,message_len,signature_len);
+	sql_message_tail_section(peer_index,n,time,nstime,stat,file_offer,message,message_len,signature_len);
 	torx_free((void*)&message);
 	return val;
 }
@@ -833,6 +834,39 @@ int sql_update_peer(const int n)
 	sodium_memzero(invitation,sizeof(invitation));
 	return val;
 }
+
+#ifndef NO_FILE_TRANSFER
+void sql_update_file_offer_state(const int file_n,const int f,const uint8_t state)
+{ // Persist receiver-side resume state onto the pinned offer message row's `extraneous` column as [state_byte][file_path]. Works for group / p2p / PM transfers
+	if(file_n < 0 || f < 0)
+	{
+		error_simple(0,"Negative file_n or f in sql_update_file_offer_state. Report this.");
+		breakpoint();
+		return;
+	}
+	const int offer_n = getter_int(file_n,INT_MIN,f,offsetof(struct file_list,offer_n));
+	const time_t offer_time = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,offer_time));
+	const time_t offer_nstime = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,offer_nstime));
+	if(offer_n < 0 || (offer_time == 0 && offer_nstime == 0))
+	{
+		error_simple(0,"Unknown offer row (offer was never logged, logging disabled, or no offerer pinned). Nothing to update. Report this.");
+		return;
+	}
+	const int peer_index = getter_int(offer_n,INT_MIN,-1,offsetof(struct peer_list,peer_index)); // XXX offer_n, NOT file_n
+	char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path)); // XXX file_n, NOT offer_n. May be NULL (e.g. cancelled).
+	const uint32_t path_len = file_path ? torx_allocation_len(file_path)-1 : 0;
+	unsigned char *extraneous = torx_secure_malloc(1+path_len);
+	extraneous[0] = state;
+	if(path_len)
+		memcpy(&extraneous[1],file_path,path_len);
+	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
+	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET extraneous = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;",peer_index,offer_time,offer_nstime);
+	sql_exec(&db_messages,command,extraneous,(size_t)(1+path_len),NULL);
+	sodium_memzero(command,sizeof(command));
+	torx_free((void*)&extraneous);
+	torx_free((void*)&file_path);
+}
+#endif // NO_FILE_TRANSFER
 
 int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since)
 { // Note: Groups can only be populated by since
@@ -948,31 +982,16 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const char *extraneous;
 		uint32_t extraneous_len = (uint32_t)sqlite3_column_bytes(stmt, 8);
 		#ifndef NO_FILE_TRANSFER
-		if(protocol == ENUM_PROTOCOL_FILE_PAUSE || protocol == ENUM_PROTOCOL_FILE_CANCEL)
-		{ // Probably important to verify !offset
-			if(offset)
-				continue; // This highly likely will screw up a file's status, so we must ignore it.
-			int file_n = n;
-			int f = -1;
-			if(owner == ENUM_OWNER_GROUP_PEER)
-			{ // First check if its a PM transfer
-				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
-				if(f < 0)
-				{ // Second, assume it's a group transfer
-					const int g = set_g(n,NULL);
-					file_n = getter_group_int(g,offsetof(struct group_list,n));
-					if(file_n < 0)
-					{ // TODO 2024/05/13 hit this issue, not sure what is going on yet.
-						error_printf(0,"We tried to load a file offer for a group that has no group_n. There is a logic error here: %d %u",file_n,protocol);
-						continue;
-					}
-					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
-				}
-			}
-			else
-				f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
-			process_pause_cancel(file_n,f,n,protocol,message_stat);
+		const unsigned char *inbound_offer_extra = NULL; // [state_byte][file_path] for a received p2p/PM offer; applied after the struct is created in load_messages_struc below
+		uint32_t inbound_offer_extra_len = 0;
+		if(extraneous_len && file_offer && message_stat == ENUM_MESSAGE_RECV)
+		{ // Inbound file offer carries resume state ([state_byte][file_path]); its struct isn't created until load_messages_struc below, so capture and defer application. Do NOT deliver these bytes to message_extra_cb.
+			inbound_offer_extra = sqlite3_column_blob(stmt, 8);
+			inbound_offer_extra_len = extraneous_len;
+			extraneous = NULL;
+			extraneous_len = 0;
 		}
+		else
 		#endif // NO_FILE_TRANSFER
 		if(extraneous_len)
 		{
@@ -980,21 +999,14 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 			int file_n = n;
 			int f = -1;
 			if(file_checksum && message_stat != ENUM_MESSAGE_RECV)
-			{ // handle outbound file related messages
+			{ // handle our own (outbound) file offers
 				if(!message)
 				{ // 2025/05/07 Unknown cause: "Expected a message, but didn't find one. owner=5 f=-1 protocol=32918 file_checksum=1 stat=3"
 					error_printf(0,"Expected a message, but didn't find one. owner=%u f=%d protocol=%u file_checksum=%u stat=%u",owner,f,protocol,file_checksum,message_stat);
 					continue;
 				}
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST) // check if PM or group transfer (pm is f > -1)
-					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN-1);
-				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED || protocol == ENUM_PROTOCOL_FILE_REQUEST))
+				if(f < 0 && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED))
 				{ // do NOT make else if
-					if(owner == ENUM_OWNER_CTRL)
-					{ // TODO 2024/12/24 hit this issue. The file doesn't exist. Related messages are deleted. Not sure why this one didn't get deleted when history was cleared. This message should be deleted
-						error_printf(0,"Bunk message should probably be deleted: %d %u",file_n,protocol);
-						continue; // TODO delete instead
-					}
 					const int g = set_g(n,NULL);
 					file_n = getter_group_int(g,offsetof(struct group_list,n));
 					if(file_n < 0)
@@ -1007,8 +1019,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				else if(f < 0)
 					f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 			}
-			if(file_offer || protocol == ENUM_PROTOCOL_FILE_REQUEST)
-			{ // Retrieve file_path /* goat */
+			if(file_offer && message_stat != ENUM_MESSAGE_RECV)
+			{ // Retrieve file_path for our own (outbound) offer
 				if(f < 0)
 				{ // avoid illegal memory access
 					error_printf(0,"Expected f > -1, but it was not. owner=%u f=%d protocol=%u file_checksum=%u stat=%u",owner,f,protocol,file_checksum,message_stat);
@@ -1020,27 +1032,8 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 				peer[file_n].file[f].file_path = torx_secure_malloc(extraneous_len+1);
 				memcpy(peer[file_n].file[f].file_path,file_path,extraneous_len);
 				peer[file_n].file[f].file_path[extraneous_len] = '\0';
-				const uint8_t split_progress_exists = peer[file_n].file[f].split_progress ? 1 : 0;
 				torx_unlock(file_n) // 🟩🟩🟩
 				extraneous_len = 0; // MUST because related to callback
-				const int file_status = file_status_get(file_n,f);
-				if(protocol == ENUM_PROTOCOL_FILE_REQUEST && file_status != ENUM_FILE_INACTIVE_CANCELLED && (file_status != ENUM_FILE_INACTIVE_AWAITING_ACCEPTANCE_INBOUND || !split_progress_exists))
-				{
-					initialize_split_info(file_n,f);
-					torx_read(file_n) // 🟧🟧🟧
-					if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
-					{ // 2024/05/12 Setting transferred amount according to file size. This might be depreciated (2025/01/13).
-						torx_unlock(file_n) // 🟩🟩🟩
-						const uint64_t size_on_disk = get_file_size(file_path);
-						torx_write(file_n) // 🟥🟥🟥
-						if(peer[file_n].file[f].split_progress) // sanity check
-							peer[file_n].file[f].split_progress[0] = size_on_disk;
-					//	error_printf(0,"Checkpoint file_status=%d splits=%u size=%lu size_on_disk=%lu",file_status,peer[file_n].file[f].splits,peer[file_n].file[f].size,size_on_disk); // should only initialize if not complete
-						if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
-							torx_free((void*)&peer[file_n].file[f].split_path);
-					}
-					torx_unlock(file_n) // 🟩🟩🟩
-				}
 			}
 			else
 			#endif // NO_FILE_TRANSFER
@@ -1051,6 +1044,59 @@ int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t
 		const int i = load_messages_struc(offset,n,time,nstime,message_stat,p_iter,message,message_len,signature,signature_length);
 		if(i != INT_MIN && (message_stat == ENUM_MESSAGE_RECV || !group_msg || owner != ENUM_OWNER_GROUP_PEER))
 			loaded++; // XXX j2fjq0fiofg WARNING: The second part of this if statement MUST be the same as in inline_load_array
+		#ifndef NO_FILE_TRANSFER
+		if(inbound_offer_extra && i != INT_MIN && message && !offset)
+		{ // Apply persisted resume state to the inbound offer we just loaded. Guarded by !offset so "load more" (reverse) never disturbs an already-set-up/active file (mirrors the FILE_PAUSE/FILE_CANCEL !offset guard above).
+			const uint8_t offer_state = inbound_offer_extra[0];
+			int file_n = n; // p2p/PM: struct + offer row both live on n
+			if(owner == ENUM_OWNER_GROUP_PEER && (protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED))
+			{ // group: the file struct lives on group_n, not on this GROUP_PEER's n
+				const int g = set_g(n,NULL);
+				file_n = getter_group_int(g,offsetof(struct group_list,n));
+			}
+			const int f = file_n > -1 ? set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN) : -1; // finds the struct created by process_file_offer_inbound in load_messages_struc
+			if(f > -1 && getter_int(file_n,INT_MIN,f,offsetof(struct file_list,offer_n)) < 0)
+			{ // Important to only trigger if unset
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_n),&n,sizeof(n)); // re-pin offer identity to THIS state-bearing row so future accept/cancel updates the same row regardless of load order (matters for FILE_OFFER_GROUP_DATE_SIGNED, whose time is an embedded date)
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_time),&time,sizeof(time));
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_nstime),&nstime,sizeof(nstime));
+				const uint32_t path_len = inbound_offer_extra_len - 1;
+				if(path_len)
+				{ // restore the receiver's chosen download path
+					torx_write(file_n) // 🟥🟥🟥
+					torx_free((void*)&peer[file_n].file[f].file_path);
+					peer[file_n].file[f].file_path = torx_secure_malloc(path_len+1);
+					memcpy(peer[file_n].file[f].file_path,&inbound_offer_extra[1],path_len);
+					peer[file_n].file[f].file_path[path_len] = '\0';
+					torx_unlock(file_n) // 🟩🟩🟩
+				}
+				if(offer_state == ENUM_FILE_INACTIVE_CANCELLED)
+					process_pause_cancel(file_n,f,file_n,ENUM_PROTOCOL_FILE_CANCEL,message_stat); // tear down structs so file_status_get reports CANCELLED
+				else if(offer_state == ENUM_FILE_INACTIVE_ACCEPTED)
+				{ // Accepted/in-progress: restore split progress from the .split file (or on-disk size for splits==0). Skip if already complete on disk.
+					const int file_status = file_status_get(file_n,f);
+					if(file_status != ENUM_FILE_INACTIVE_CANCELLED && file_status != ENUM_FILE_INACTIVE_COMPLETE)
+					{
+						char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+						initialize_split_info(file_n,f);
+						torx_read(file_n) // 🟧🟧🟧
+						if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
+						{ // splits==0 has no .split file; derive transferred amount from partial file size on disk
+							torx_unlock(file_n) // 🟩🟩🟩
+							const uint64_t size_on_disk = get_file_size(file_path);
+							torx_write(file_n) // 🟥🟥🟥
+							if(peer[file_n].file[f].split_progress) // sanity check
+								peer[file_n].file[f].split_progress[0] = size_on_disk;
+							if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
+								torx_free((void*)&peer[file_n].file[f].split_path);
+						}
+						torx_unlock(file_n) // 🟩🟩🟩
+						torx_free((void*)&file_path);
+					}
+				}
+			}
+		}
+		#endif // NO_FILE_TRANSFER
 		if(extraneous_len && i != INT_MIN)
 		{ // Must allocate because _cb is probably asyncronous
 			unsigned char *extraneous_allocated = torx_secure_malloc(extraneous_len);

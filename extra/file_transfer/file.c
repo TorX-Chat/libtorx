@@ -147,6 +147,9 @@ void initialize_f(const int n,const int f) // XXX do not put locks in here
 	peer[n].file[f].size = 0;
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
+	peer[n].file[f].offer_time = 0;
+	peer[n].file[f].offer_nstime = 0;
+	peer[n].file[f].offer_n = -1;
 	peer[n].file[f].split_path = NULL;
 	peer[n].file[f].split_progress = NULL;
 	peer[n].file[f].split_status_n = NULL;
@@ -449,6 +452,9 @@ void zero_f(const int n,const int f) // XXX do not put locks in here
 	if(peer[n].file[f].request)
 		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
 			zero_r(n,f,r);
+	peer[n].file[f].offer_time = 0; // TODO not sure why we do not re-initialize all. expand_file_struc may depend on a particular one but others could be reset if there is a potential for re-use
+	peer[n].file[f].offer_nstime = 0;
+	peer[n].file[f].offer_n = -1;
 	torx_free((void*)&peer[n].file[f].offer);
 	torx_free((void*)&peer[n].file[f].request);
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
@@ -1013,6 +1019,28 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 	error_simple(0,"Got a complete file offer below minimum size. Bailing. Report this.");
 	error_printf(0,"Checkpoint below minimum size: %u protocol: %u",message_len,protocol);
 	return -1;
+}
+
+void pin_inbound_file_offer(const int n,const int group_n,const uint16_t protocol,const uint8_t stat,const time_t time, const time_t nstime,const unsigned char* message,const size_t message_len)
+{// XXX Pin this inbound offer's (offer_n/offer_time/offer_nstime) onto the file struct so file_accept/file_cancel can later persist resume state ([state_byte][file_path]) via sql_update_file_offer_state. This CANNOT occur in process_file_offer_inbound because there time/nstime is not yet guaranteed to be set.
+	if(stat == ENUM_MESSAGE_RECV && message_len >= CHECKSUM_BIN_LEN)
+	{ // sanity check
+		int file_n = -1;
+		if(protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE)
+			file_n = n; // p2p/PM: f on n
+		else if((protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED) && group_n > -1)
+			file_n = group_n; // group: f on group_n
+		if(file_n > -1) // NOT else
+		{
+			const int f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
+			if(f > -1 && getter_int(file_n,INT_MIN,f,offsetof(struct file_list,offer_n)) < 0)
+			{  // pin if no prior offer
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_n),&n,sizeof(n));
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_time),&time,sizeof(time));
+				setter(file_n,INT_MIN,f,offsetof(struct file_list,offer_nstime),&nstime,sizeof(nstime));
+			}
+		}
+	}
 }
 
 static void set_split_path(const int n,const int f)
@@ -1733,6 +1761,7 @@ void file_accept(const int n,const int f)
 			setter(n,INT_MIN,f,offsetof(struct file_list,splits),&splits,sizeof(splits));
 		}
 		initialize_split_info(n,f); // calls split_read(n,f);
+		sql_update_file_offer_state(n,f,ENUM_FILE_INACTIVE_ACCEPTED);
 		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(calculate_transferred_inbound(n,f) < size)
 			file_request_internal(n,f,-1);
@@ -1754,6 +1783,7 @@ void file_cancel(const int n,const int f)
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
 	message_send(n,ENUM_PROTOCOL_FILE_CANCEL,checksum,CHECKSUM_BIN_LEN);
 	sodium_memzero(checksum,sizeof(checksum));
+	sql_update_file_offer_state(n,f,ENUM_FILE_INACTIVE_CANCELLED);
 	process_pause_cancel(n,f,n,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL);
 }
 

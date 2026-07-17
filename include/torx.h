@@ -296,6 +296,9 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
+		time_t offer_time; // XXX RECEIVER-ONLY: time/nstime of the logged inbound offer message row whose DB `extraneous` carries this file's resume state ([state_byte][file_path]) via sql_update_file_offer_state. 0 = unknown/not logged.
+		time_t offer_nstime;
+		int offer_n; // XXX RECEIVER-ONLY: peer whose logged offer row carries the resume state. For p2p/PM offer_n == n; for group files the struct is on group_n but offer_n is the offerer GROUP_PEER. -1 = unknown.
 		char *split_path;
 		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
