@@ -296,7 +296,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
 		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
-		uint8_t saved_status; // INBOUND ONLY: status loaded from the file-<b64_checksum> peer setting (see sql_save_file_status). XXX Use file_status_get instead for most circumstances!
 		char *split_path;
 		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files

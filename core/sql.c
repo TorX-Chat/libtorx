@@ -164,8 +164,27 @@ void message_offload(const int n)
 		}
 }
 
+static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol)
+{
+	if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+		return 1; // Entry requests MUST always be logged.
+	const int8_t log_messages = getter_int8(n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
+	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
+	if(log_messages == -1 || (global < 1 && log_messages < 1))
+		return 0; // do not log these
+	if(group_pm && threadsafe_read_uint8(&mutex_global_variable,&log_pm_according_to_group_setting))
+	{
+		const int g = set_g(n,NULL);
+		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
+		const int8_t group_log_messages = getter_int8(group_n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
+		if(group_log_messages == -1 || (global < 1 && group_log_messages < 1))
+			return 0;
+	}
+	return 1;
+}
+
 #ifndef NO_FILE_TRANSFER
-static inline void sql_delete_messages_by_checksum(const int n,const unsigned char *checksum)
+static inline void sql_delete_file_messages_by_checksum(const int n,const unsigned char *checksum)
 { // Delete from disk all of a peer's logged messages bearing this checksum: any protocol registered with file_checksum, leaving room for UI protocols. Via sql_delete_message, so that GROUP_CTRL rows also remove their GROUP_PEER copies.
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	if(peer_index < 0)
@@ -192,7 +211,7 @@ static inline void sql_delete_messages_by_checksum(const int n,const unsigned ch
 		if(sqlite3_bind_blob(stmt,1,checksum,CHECKSUM_BIN_LEN,SQLITE_TRANSIENT) == SQLITE_OK)
 			while(sqlite3_step(stmt) == SQLITE_ROW)
 			{ // Copy times out, to delete only after unlocking (sql_delete_message takes the same mutex)
-				const size_t count = times ? torx_allocation_len(times)/sizeof(time_t) : 0;
+				const size_t count = torx_allocation_len(times)/sizeof(time_t);
 				if(times)
 					times = torx_realloc(times,(count+2)*sizeof(time_t));
 				else
@@ -213,52 +232,55 @@ static inline void sql_delete_messages_by_checksum(const int n,const unsigned ch
 	}
 }
 
-static inline void delete_by_checksum(const int n,const unsigned char *checksum,const char *encoded)
+static inline void delete_by_checksum(const int n,const int g,const unsigned char *checksum,const char *encoded)
 { // For a single peer: delete every message bearing this checksum (disk + RAM + callbacks) and any of its peer settings whose name ends in the b64 of the checksum (ex: file-<b64>, or UI equivalents adopting the same convention)
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	if(peer_index < 0)
 		return;
-	sql_delete_messages_by_checksum(n,checksum); // Must go first. Consider verifying return before deleting in memory.
+	sql_delete_file_messages_by_checksum(n,checksum); // Must go first. Consider verifying return before deleting in memory.
 	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-	snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND substr(setting_name,-%zu) = (?);",peer_index,strlen(encoded)); // XXX substr, NOT LIKE, because LIKE is case-insensitive whereas b64 is case-sensitive
+	snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND substr(setting_name,-%zu) = (?);",peer_index,strlen(encoded));
 	sql_exec(&db_encrypted,command,encoded,strlen(encoded),NULL);
 	sodium_memzero(command,sizeof(command));
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	const int g = (owner == ENUM_OWNER_GROUP_CTRL || owner == ENUM_OWNER_GROUP_PEER) ? set_g(n,NULL) : -1;
 	const int max_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	const int min_i = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 	for(uint8_t cycle = 0; cycle < 2; cycle++)
 		for(int i = cycle ? -1 : 0, plus_or_minus = cycle ? -1 : 1; cycle ? i >= min_i : i <= max_i ; i += plus_or_minus)
 		{ // same as 2j0fj3r202k20f
 			const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
-			if(p_iter < 0)
-				continue; // snuff out deleted messages
-			pthread_rwlock_rdlock(&mutex_protocols); // 🟧
-			const uint8_t file_checksum = protocols[p_iter].file_checksum;
-			const uint8_t group_msg = protocols[p_iter].group_msg;
-			const uint8_t group_pm = protocols[p_iter].group_pm;
-			pthread_rwlock_unlock(&mutex_protocols); // 🟩
-			if(!file_checksum)
-				continue;
-			torx_read(n) // 🟧🟧🟧
-			const uint8_t matches = peer[n].message[i].message && torx_allocation_len(peer[n].message[i].message) >= CHECKSUM_BIN_LEN && !memcmp(peer[n].message[i].message,checksum,CHECKSUM_BIN_LEN) ? 1 : 0;
-			torx_unlock(n) // 🟩🟩🟩
-			if(!matches)
-				continue;
-			const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
-			if(g > -1 && (owner == ENUM_OWNER_GROUP_CTRL || (stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm))) // XXX VERY IMPORTANT / COMPLEX if statement, do not change (mirrors message_offload)
-				message_remove(g,n,i);
-			torx_write(n) // 🟥🟥🟥
-			const int shrinkage = zero_i(n,i);
-			torx_unlock(n) // 🟩🟩🟩
-			message_deleted_cb(n,i);
-			if(shrinkage)
-				shrinkage_cb(n,shrinkage); // must be AFTER message_deleted_cb or UI structs might have issues deleting the messages
+			if(p_iter > -1) // snuff out deleted messages
+			{
+				pthread_rwlock_rdlock(&mutex_protocols); // 🟧
+				const uint8_t file_checksum = protocols[p_iter].file_checksum;
+				const uint8_t group_msg = protocols[p_iter].group_msg;
+				const uint8_t group_pm = protocols[p_iter].group_pm;
+				pthread_rwlock_unlock(&mutex_protocols); // 🟩
+				if(!file_checksum)
+					continue;
+				torx_read(n) // 🟧🟧🟧
+				const uint8_t matches = peer[n].message[i].message && torx_allocation_len(peer[n].message[i].message) >= CHECKSUM_BIN_LEN && !memcmp(peer[n].message[i].message,checksum,CHECKSUM_BIN_LEN) ? 1 : 0;
+				torx_unlock(n) // 🟩🟩🟩
+				if(!matches)
+					continue;
+				if(g > -1)
+				{
+					const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
+					if(owner == ENUM_OWNER_GROUP_CTRL || (stat == ENUM_MESSAGE_RECV && (group_msg || group_pm)) || ((stat == ENUM_MESSAGE_SENT || stat == ENUM_MESSAGE_FAIL) && group_pm)) // XXX VERY IMPORTANT / COMPLEX if statement, do not change (mirrors message_offload)
+						message_remove(g,n,i);
+				}
+				torx_write(n) // 🟥🟥🟥
+				const int shrinkage = zero_i(n,i);
+				torx_unlock(n) // 🟩🟩🟩
+				message_deleted_cb(n,i);
+				if(shrinkage)
+					shrinkage_cb(n,shrinkage); // must be AFTER message_deleted_cb or UI structs might have issues deleting the messages
+			}
 		}
 }
 
 static inline void file_offer_delete(const int n,const int g,const unsigned char *checksum)
-{ // Cascade for a deleted file offer: delete the file itself from disk (if inbound & incomplete), plus every message and checksum-keyed peer setting bearing its checksum, for this peer or the whole group family
+{ // Not for delete_log. Cascade for a deleted file offer: delete the file itself from disk (if inbound & incomplete), plus every message and checksum-keyed peer setting bearing its checksum, for this peer or the whole group
 	int file_n = n;
 	int f = set_f(file_n,checksum,CHECKSUM_BIN_LEN-1); // XXX MUST be -1 to prevent reserving
 	const int group_n = g > -1 ? getter_group_int(g,offsetof(struct group_list,n)) : -1;
@@ -268,28 +290,32 @@ static inline void file_offer_delete(const int n,const int g,const unsigned char
 		f = set_f(file_n,checksum,CHECKSUM_BIN_LEN-1); // XXX MUST be -1 to prevent reserving
 	}
 	if(f > -1)
+	{
 		file_cancel(file_n,f);
-	char *encoded = b64_encode(checksum,CHECKSUM_BIN_LEN);
-	if(g > -1)
-	{ // GROUP_PEERs must be swept before GROUP_CTRL because their outbound group messages share the GROUP_CTRL's message allocations (see message_offload)
-		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-		for(uint32_t p = 0; p < g_peercount; p++)
-		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-			delete_by_checksum(peer_n,checksum,encoded);
+		char *encoded = b64_encode(checksum,CHECKSUM_BIN_LEN);
+		if(g > -1)
+		{ // GROUP_PEERs must be swept before GROUP_CTRL because their outbound group messages share the GROUP_CTRL's message allocations (see message_offload)
+			const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+			for(uint32_t iter = 0; iter < g_peercount; iter++)
+			{
+				pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+				const int peer_n = group[g].peerlist[iter];
+				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+				delete_by_checksum(peer_n,g,checksum,encoded);
+			}
+			if(group_n > -1)
+				delete_by_checksum(group_n,g,checksum,encoded);
 		}
-		if(group_n > -1)
-			delete_by_checksum(group_n,checksum,encoded);
+		else
+			delete_by_checksum(n,g,checksum,encoded);
+		torx_free((void*)&encoded);
 	}
 	else
-		delete_by_checksum(n,checksum,encoded);
-	torx_free((void*)&encoded);
+		error_simple(0,"File checksum not found. Cannot delete.");
 }
 
 static inline void delete_files_of_peer(const int n)
-{ // For delete_log: delete from disk all of a peer's inbound & incomplete files (whether their offers are loaded in RAM or not), then delete all of its file- settings
+{ // For delete_log. Cancel transfers and delete from disk all of a peer's inbound & incomplete files + .split, then delete all of its file- settings.
 	if(n < 0)
 		return;
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
@@ -297,53 +323,160 @@ static inline void delete_files_of_peer(const int n)
 		return;
 	torx_read(n) // 🟧🟧🟧
 	for(int f = 0 ; !is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN) ; f++)
-	{ // First, files loaded in RAM: cancels active transfers and deletes inbound & incomplete files + .split from disk
+	{
 		torx_unlock(n) // 🟩🟩🟩
-		file_cancel(n,f);
+		if(file_status_get(n,f) == ENUM_FILE_INACTIVE_ACCEPTED)
+		{ // Idle partial: must delete from disk here, because file_cancel only deletes actively-inbound files
+			char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
+			char *split_path = split_path_from_file_path(file_path);
+			destroy_file(file_path);
+			destroy_file(split_path);
+			torx_free((void*)&file_path);
+			torx_free((void*)&split_path);
+		}
+		file_cancel(n,f); // cancels active transfers, deleting actively-inbound files + .split from disk
 		torx_read(n) // 🟧🟧🟧
 	}
 	torx_unlock(n) // 🟩🟩🟩
 	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-	snprintf(command,sizeof(command),"SELECT setting_value FROM setting_peer WHERE peer_index = %d AND substr(setting_name,1,5) = 'file-';",peer_index); // XXX substr, NOT LIKE, because LIKE is case-insensitive
-	char **paths = NULL;
-	sqlite3_stmt *stmt;
-	pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
-	if(sqlite3_prepare_v2(db_encrypted,command,(int)strlen(command),&stmt,NULL) == SQLITE_OK)
-	{
-		while(sqlite3_step(stmt) == SQLITE_ROW)
-		{ // Second, files not loaded in RAM: copy out the paths of inbound & incomplete (ACCEPTED) ones, to delete from disk only after unlocking
-			const size_t setting_value_len = (size_t)sqlite3_column_bytes(stmt,0);
-			const char *setting_value = (const char *)sqlite3_column_blob(stmt,0);
-			if(!setting_value || setting_value_len < 2 || (uint8_t)setting_value[0] != ENUM_FILE_INACTIVE_ACCEPTED)
-				continue; // Only inbound & incomplete (ACCEPTED) files get deleted from disk
-			const size_t count = paths ? torx_allocation_len(paths)/sizeof(char*) : 0;
-			if(paths)
-				paths = torx_realloc(paths,(count+1)*sizeof(char*));
-			else
-				paths = torx_insecure_malloc(sizeof(char*));
-			paths[count] = torx_secure_malloc(setting_value_len); // swapping the status byte for a null terminator
-			memcpy(paths[count],&setting_value[1],setting_value_len-1);
-			paths[count][setting_value_len-1] = '\0';
-		}
-		sqlite3_finalize(stmt);
-	}
-	pthread_mutex_unlock(&mutex_sql_encrypted); // 🟩🟩
-	if(paths)
-	{
-		const size_t count = torx_allocation_len(paths)/sizeof(char*);
-		for(size_t iter = 0; iter < count; iter++)
-		{
-			destroy_file(paths[iter]); // harmless if already deleted via the loaded struct above
-			char *split_path = split_path_from_file_path(paths[iter]);
-			destroy_file(split_path);
-			torx_free((void*)&split_path);
-			torx_free((void*)&paths[iter]);
-		}
-		torx_free((void*)&paths);
-	}
-	snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND substr(setting_name,1,5) = 'file-';",peer_index); // XXX substr, NOT LIKE, because LIKE is case-insensitive
+	snprintf(command,sizeof(command),"DELETE FROM setting_peer WHERE peer_index = %d AND substr(setting_name,1,5) = 'file-';",peer_index);
 	sql_exec(&db_encrypted,command,NULL);
 	sodium_memzero(command,sizeof(command));
+}
+
+static inline void file_status_apply(const int file_n,const int f,const uint8_t saved_status)
+{ // Apply the status loaded from file-<b64_checksum> peer setting (set by sql_save_file_status). Called from sql_populate_setting's file- handler *AFTER* the setting has restored size/modified/filename/file_path.
+	if(saved_status == 0 || file_n < 0 || f < 0)
+		return; // Saved status may equal zero if this file is outbound (normal, not an error)
+	if(saved_status == ENUM_FILE_INACTIVE_CANCELLED)
+		process_pause_cancel(file_n,f,file_n,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_RECV); // tear down structs so file_status_get reports CANCELLED
+	else if(saved_status == ENUM_FILE_INACTIVE_ACCEPTED && file_status_get(file_n,f) == ENUM_FILE_INACTIVE_ACCEPTED)
+	{ // Accepted/in-progress: restore split progress from the .split file (or on-disk size for splits==0). The file_status_get check skips active, cancelled, and already complete on disk.
+		initialize_split_info(file_n,f);
+		torx_read(file_n) // 🟧🟧🟧
+		if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
+		{ // splits==0 has no .split file; derive transferred amount from partial file size on disk
+			torx_unlock(file_n) // 🟩🟩🟩
+			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
+			const uint64_t size_on_disk = get_file_size(file_path);
+			torx_free((void*)&file_path);
+			torx_write(file_n) // 🟥🟥🟥
+			peer[file_n].file[f].split_progress[0] = size_on_disk;
+			if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
+				torx_free((void*)&peer[file_n].file[f].split_path);
+		}
+		torx_unlock(file_n) // 🟩🟩🟩
+	}
+	else if(saved_status == ENUM_FILE_INACTIVE_COMPLETE)
+	{ // Reconstruct a finished transfer's end-state: split_progress sized (splits+1) with every section full, split_status_* and split_path NULL, split_hashes+splits already restored by the file- handler.
+	// file_status_get reports COMPLETE from split_progress alone (never depends on the file still being on disk), and split_hashes+splits make a group file seedable without re-hashing.
+	// XXX Deliberately does NOT call initialize_split_info: leaving split_status_fd NULL is what prevents peer_online/select_peer from re-downloading a deleted file.
+		const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
+		const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits)); // restored from the file- setting
+		torx_write(file_n) // 🟥🟥🟥
+		torx_free((void*)&peer[file_n].file[f].split_path); // file_is_complete requires split_path == NULL
+		if(size >= (uint64_t)splits + 1)
+		{ // calculate_section_start's precondition (a valid split file always satisfies it); avoids its fatal sanity check on empty/degenerate files
+			peer[file_n].file[f].split_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1)); // always NULL prior: f was freshly reserved by the file- handler
+			for(int16_t section = 0; section <= splits; section++)
+			{ // mark every section fully transferred so file_status_get reports COMPLETE and any outbound "100%" FILE_OFFER_PARTIAL advertises correctly
+				uint64_t end = 0;
+				const uint64_t start = calculate_section_start(&end,size,splits,section); // pure function, safe under lock
+				peer[file_n].file[f].split_progress[section] = end - start + 1;
+			}
+		}
+		torx_unlock(file_n) // 🟩🟩🟩
+	}
+}
+
+void sql_save_file_status(const int file_n,const int f,const uint8_t status)
+{ // Persist a file's status + metadata as a peer setting named file-<b64_checksum> on file_n's peer_index. Layout: [status:uint8_t][splits:uint8_t][size:uint64_t BE][modified:uint64_t BE][filename_len:uint16_t BE][filename][file_path_len:uint16_t BE][file_path][split_hashes]. split_hashes (group files only) has no length prefix: it occupies the remaining bytes and holds only the CHECKSUM_BIN_LEN*(splits+1) hash portion (the trailing htobe64(size) that the file's hash-of-hashes covers is redundant with size and re-appended on load). Storing all of this (not just status+path) lets the offer's metadata be reconstructed at load time, including seeding completed group files without re-hashing. Works for p2p / PM / group transfers (for group transfers, file_n's owner is GROUP_CTRL).
+	if(file_n < 0 || f < 0)
+	{
+		error_simple(0,"Negative file_n or f in sql_save_file_status. Coding error. Report this.");
+		breakpoint();
+		return;
+	}
+	const uint8_t owner = getter_uint8(file_n,INT_MIN,-1,offsetof(struct peer_list,owner));
+	if(!log_check(file_n,owner == ENUM_OWNER_GROUP_PEER ? 1 : 0,0))
+		return; // Respect logging preferences: do not persist file metadata of peers whose messages are not logged
+	const int peer_index = getter_int(file_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
+	if(peer_index < 0)
+	{
+		error_simple(0,"Invalid peer_index in sql_save_file_status. Coding error. Report this.");
+		breakpoint();
+		return;
+	}
+	unsigned char checksum[CHECKSUM_BIN_LEN]; // zero'd
+	getter_array(&checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
+	char *encoded = b64_encode(checksum,sizeof(checksum)); // free'd
+	sodium_memzero(checksum,sizeof(checksum));
+	char setting_name[256]; // zero'd
+	snprintf(setting_name,sizeof(setting_name),"file-%s",encoded);
+	torx_free((void*)&encoded);
+	const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
+	const time_t modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified));
+	char *filename = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,filename)); // May be NULL
+	char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path)); // May be NULL (ex: cancelled before accepting)
+	const size_t filename_len = filename ? torx_allocation_len(filename)-1 : 0;
+	const size_t file_path_len = file_path ? torx_allocation_len(file_path)-1 : 0;
+	if(filename_len > UINT16_MAX || file_path_len > UINT16_MAX)
+	{ // Cannot occur under PATH_MAX, but the length prefixes are uint16_t
+		error_simple(0,"Filename or file_path too long in sql_save_file_status. Report this.");
+		sodium_memzero(setting_name,sizeof(setting_name));
+		torx_free((void*)&filename);
+		torx_free((void*)&file_path);
+		return;
+	}
+	unsigned char *split_hashes = NULL; // group files only
+	torx_read(file_n) // 🟧🟧🟧
+	const uint8_t splits = peer[file_n].file[f].splits; // read under the same lock as split_hashes so the pair stays consistent
+	const size_t split_hashes_portion = (size_t)CHECKSUM_BIN_LEN*(splits+1); // hash portion only (excludes the trailing htobe64(size))
+	if(peer[file_n].file[f].split_hashes && torx_allocation_len(peer[file_n].file[f].split_hashes) >= split_hashes_portion)
+	{ // Copy just the hash portion; the trailing size is redundant with the size field and re-derived on load
+		split_hashes = torx_secure_malloc(split_hashes_portion);
+		memcpy(split_hashes,peer[file_n].file[f].split_hashes,split_hashes_portion);
+	}
+	torx_unlock(file_n) // 🟩🟩🟩
+	const size_t split_hashes_len = split_hashes ? split_hashes_portion : 0;
+	const size_t value_len = sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint16_t) + filename_len + sizeof(uint16_t) + file_path_len + split_hashes_len;
+	char *setting_value = torx_secure_malloc(value_len);
+	size_t pos = 0;
+	setting_value[pos] = (char)status;
+	pos += sizeof(uint8_t);
+	setting_value[pos] = (char)splits;
+	pos += sizeof(uint8_t);
+	const uint64_t size_be = htobe64(size);
+	memcpy(&setting_value[pos],&size_be,sizeof(uint64_t));
+	pos += sizeof(uint64_t);
+	const uint64_t modified_be = htobe64((uint64_t)modified);
+	memcpy(&setting_value[pos],&modified_be,sizeof(uint64_t));
+	pos += sizeof(uint64_t);
+	const uint16_t filename_len_be = htobe16((uint16_t)filename_len);
+	memcpy(&setting_value[pos],&filename_len_be,sizeof(uint16_t));
+	pos += sizeof(uint16_t);
+	if(filename_len)
+	{
+		memcpy(&setting_value[pos],filename,filename_len);
+		pos += filename_len;
+	}
+	const uint16_t file_path_len_be = htobe16((uint16_t)file_path_len);
+	memcpy(&setting_value[pos],&file_path_len_be,sizeof(uint16_t));
+	pos += sizeof(uint16_t);
+	if(file_path_len)
+	{
+		memcpy(&setting_value[pos],file_path,file_path_len);
+		pos += file_path_len;
+	}
+	if(split_hashes_len)
+		memcpy(&setting_value[pos],split_hashes,split_hashes_len);
+	// Not (pos+=split_hashes_len) because we no longer need it, but it should equal value_len if we update it
+	sql_setting(0,peer_index,setting_name,setting_value,value_len);
+	sodium_memzero(setting_name,sizeof(setting_name));
+	torx_free((void*)&setting_value);
+	torx_free((void*)&filename);
+	torx_free((void*)&file_path);
+	torx_free((void*)&split_hashes);
 }
 #endif // NO_FILE_TRANSFER
 
@@ -690,7 +823,6 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 					error_simple(0,"process_file_offer_inbound returned -1 in load_messages_struc");
 					return INT_MIN;
 				}
-				file_status_apply(n,protocol,stat,(const unsigned char*)tmp_message,message_len);
 			}
 			else if(message_len)  // TODO use protocol_lookup to check all protocols for minimum size
 			{
@@ -910,25 +1042,6 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 	#endif // NO_FILE_TRANSFER
 }
 
-static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol)
-{
-	if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-		return 1; // Entry requests MUST always be logged.
-	const int8_t log_messages = getter_int8(n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
-	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
-	if(log_messages == -1 || (global < 1 && log_messages < 1))
-		return 0; // do not log these
-	if(group_pm && threadsafe_read_uint8(&mutex_global_variable,&log_pm_according_to_group_setting))
-	{
-		const int g = set_g(n,NULL);
-		const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-		const int8_t group_log_messages = getter_int8(group_n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
-		if(group_log_messages == -1 || (global < 1 && group_log_messages < 1))
-			return 0;
-	}
-	return 1;	
-}
-
 int sql_insert_message(const int n,const int i)
 { // Save an new message
 	const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
@@ -1051,45 +1164,6 @@ int sql_update_peer(const int n)
 	sodium_memzero(invitation,sizeof(invitation));
 	return val;
 }
-
-#ifndef NO_FILE_TRANSFER
-void sql_save_file_status(const int file_n,const int f,const uint8_t status)
-{ // Persist a file's status + path as a peer setting named file-<b64_checksum> on file_n's peer_index, as [status_byte][file_path]. Works for p2p / PM / group transfers (for group transfers, file_n's owner is GROUP_CTRL).
-	if(file_n < 0 || f < 0)
-	{
-		error_simple(0,"Negative file_n or f in sql_save_file_status. Coding error. Report this.");
-		breakpoint();
-		return;
-	}
-	const uint8_t owner = getter_uint8(file_n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	if(!log_check(file_n,owner == ENUM_OWNER_GROUP_PEER ? 1 : 0,0))
-		return; // Respect logging preferences: do not persist file metadata of peers whose messages are not logged
-	const int peer_index = getter_int(file_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
-	if(peer_index < 0)
-	{
-		error_simple(0,"Invalid peer_index in sql_save_file_status. Coding error. Report this.");
-		breakpoint();
-		return;
-	}
-	unsigned char checksum[CHECKSUM_BIN_LEN];
-	getter_array(&checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
-	char *encoded = b64_encode(checksum,sizeof(checksum));
-	sodium_memzero(checksum,sizeof(checksum));
-	char setting_name[256];
-	snprintf(setting_name,sizeof(setting_name),"file-%s",encoded);
-	torx_free((void*)&encoded);
-	char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path)); // May be NULL (ex: cancelled before accepting)
-	const uint32_t path_len = file_path ? torx_allocation_len(file_path)-1 : 0;
-	char *setting_value = torx_secure_malloc(1+path_len);
-	setting_value[0] = (char)status;
-	if(path_len)
-		memcpy(&setting_value[1],file_path,path_len);
-	sql_setting(0,peer_index,setting_name,setting_value,1+path_len);
-	sodium_memzero(setting_name,sizeof(setting_name));
-	torx_free((void*)&setting_value);
-	torx_free((void*)&file_path);
-}
-#endif // NO_FILE_TRANSFER
 
 int sql_populate_message(const int peer_index,const uint32_t days,const uint32_t messages,const time_t since)
 { // Note: Groups can only be populated by since
@@ -1639,12 +1713,51 @@ void sql_populate_setting(const int force_plaintext)
 				else if(!strncmp(setting_name,"file-",5))
 				{
 					if(!library_settings_loaded_encrypted)
-					{ // Restore a file's status + path ([status_byte][file_path]) saved by sql_save_file_status. Applied to the file struct by file_status_apply upon an offer's arrival, because size/splits/filename are unknown until then. XXX Do NOT call sql_* functions in here (mutex is held)
+					{ // Restore a file's status + metadata saved by sql_save_file_status. Layout: [status:uint8_t][splits:uint8_t][size:uint64_t BE][modified:uint64_t BE][filename_len:uint16_t BE][filename][file_path_len:uint16_t BE][file_path][split_hashes]. split_hashes (group files only) has no length prefix: it is the remaining bytes (hash portion CHECKSUM_BIN_LEN*(splits+1); the trailing htobe64(size) is re-appended below). XXX Do NOT call sql_* functions in here (mutex is held); file_status_apply calls none.
 						sanity_check
-						unsigned char checksum[CHECKSUM_BIN_LEN];
-						if(setting_value_len < 1 || b64_decode(checksum,sizeof(checksum),&setting_name[5]) != (size_t)CHECKSUM_BIN_LEN) // we depend on setting_name to be null terminated, which it is guaranteed to be
+						if(setting_value_len < sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint16_t) + sizeof(uint16_t)) // minimum is the fixed header + both (possibly empty) filename/file_path length prefixes
 						{
 							error_simple(0,"Invalid file- setting loaded from sql. Report this.");
+							continue;
+						}
+						size_t pos = 0;
+						const uint8_t saved_status = (uint8_t)setting_value[pos];
+						pos += sizeof(uint8_t);
+						const uint8_t splits = (uint8_t)setting_value[pos];
+						pos += sizeof(uint8_t);
+						const uint64_t size = be64toh(align_uint64(&setting_value[pos]));
+						pos += sizeof(uint64_t);
+						const time_t modified = (time_t)be64toh(align_uint64(&setting_value[pos]));
+						pos += sizeof(uint64_t);
+						const uint16_t filename_len = be16toh(align_uint16(&setting_value[pos]));
+						pos += sizeof(uint16_t);
+						if(pos + filename_len + sizeof(uint16_t) > setting_value_len)
+						{
+							error_simple(0,"Invalid file- setting (filename length) loaded from sql. Report this.");
+							continue;
+						}
+						const char *filename_ptr = &setting_value[pos];
+						pos += filename_len;
+						const uint16_t file_path_len = be16toh(align_uint16(&setting_value[pos]));
+						pos += sizeof(uint16_t);
+						if(pos + file_path_len > setting_value_len)
+						{
+							error_simple(0,"Invalid file- setting (file_path length) loaded from sql. Report this.");
+							continue;
+						}
+						const char *file_path_ptr = &setting_value[pos];
+						pos += file_path_len;
+						const size_t split_hashes_portion = setting_value_len - pos; // remaining bytes = split_hashes hash portion (0 for p2p/PM)
+						if(split_hashes_portion && split_hashes_portion != (size_t)CHECKSUM_BIN_LEN*(splits+1))
+						{
+							error_simple(0,"Invalid file- setting (split_hashes length) loaded from sql. Report this.");
+							continue;
+						}
+						const char *split_hashes_ptr = &setting_value[pos];
+						unsigned char checksum[CHECKSUM_BIN_LEN];
+						if(b64_decode(checksum,sizeof(checksum),&setting_name[5]) != (size_t)CHECKSUM_BIN_LEN) // we depend on setting_name to be null terminated, which it is guaranteed to be
+						{
+							error_simple(0,"Invalid file- setting name loaded from sql. Report this.");
 							continue;
 						}
 						const int file_n = set_n(peer_index,NULL);
@@ -1652,17 +1765,34 @@ void sql_populate_setting(const int force_plaintext)
 						sodium_memzero(checksum,sizeof(checksum));
 						if(f < 0)
 							continue;
-						const uint8_t saved_status = (uint8_t)setting_value[0];
-						setter(file_n,INT_MIN,f,offsetof(struct file_list,saved_status),&saved_status,sizeof(saved_status));
-						if(setting_value_len > 1)
-						{ // Restore the file path
-							torx_write(file_n) // 🟥🟥🟥
-							torx_free((void*)&peer[file_n].file[f].file_path);
-							peer[file_n].file[f].file_path = torx_secure_malloc(setting_value_len);
-							memcpy(peer[file_n].file[f].file_path,&setting_value[1],setting_value_len-1);
-							peer[file_n].file[f].file_path[setting_value_len-1] = '\0';
-							torx_unlock(file_n) // 🟩🟩🟩
+						torx_write(file_n) // 🟥🟥🟥
+						peer[file_n].file[f].size = size;
+						peer[file_n].file[f].modified = modified;
+						peer[file_n].file[f].splits = splits;
+						torx_free((void*)&peer[file_n].file[f].filename);
+						if(filename_len)
+						{ // Restore the filename
+							peer[file_n].file[f].filename = torx_secure_malloc(filename_len+1);
+							memcpy(peer[file_n].file[f].filename,filename_ptr,filename_len);
+							peer[file_n].file[f].filename[filename_len] = '\0';
 						}
+						torx_free((void*)&peer[file_n].file[f].file_path);
+						if(file_path_len)
+						{ // Restore the file path
+							peer[file_n].file[f].file_path = torx_secure_malloc(file_path_len+1);
+							memcpy(peer[file_n].file[f].file_path,file_path_ptr,file_path_len);
+							peer[file_n].file[f].file_path[file_path_len] = '\0';
+						}
+						torx_free((void*)&peer[file_n].file[f].split_hashes);
+						if(split_hashes_portion)
+						{ // Restore split_hashes (group files): stored is the hash portion only; re-append the trailing htobe64(size) that the file's hash-of-hashes covers
+							peer[file_n].file[f].split_hashes = torx_secure_malloc(split_hashes_portion + sizeof(uint64_t));
+							memcpy(peer[file_n].file[f].split_hashes,split_hashes_ptr,split_hashes_portion);
+							const uint64_t size_be = htobe64(size);
+							memcpy(&peer[file_n].file[f].split_hashes[split_hashes_portion],&size_be,sizeof(uint64_t));
+						}
+						torx_unlock(file_n) // 🟩🟩🟩
+						file_status_apply(file_n,f,saved_status); // Must call AFTER restoring path, filename, size, modified, splits, etc. INBOUND ONLY: status loaded from the file-<b64_checksum> peer setting (see sql_save_file_status).
 					}
 				}
 				#endif // NO_FILE_TRANSFER

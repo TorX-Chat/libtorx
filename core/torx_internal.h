@@ -296,7 +296,6 @@ uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
-void file_status_apply(const int n,const uint16_t protocol,const uint8_t stat,const unsigned char *message,const size_t message_len);
 char *split_path_from_file_path(const char *file_path)__attribute__((warn_unused_result));
 int initialize_split_info(const int n,const int f);
 int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)__attribute__((warn_unused_result));

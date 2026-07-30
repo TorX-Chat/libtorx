@@ -1732,10 +1732,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						else
 						{ // unique same time/nstime
-							#ifndef NO_FILE_TRANSFER
-							if(file_offer)
-								file_status_apply(nn,protocol,ENUM_MESSAGE_RECV,(const unsigned char*)event_strc->buffer,buffer_len); // applies any status/path restored from a file- peer setting (relevant when the original offer was never logged or is not yet loaded)
-							#endif // NO_FILE_TRANSFER
 							message_new_cb(nn,i);
 							sql_insert_message(nn,i); // DO NOT set these to nn, use n/GROUP_CTRL
 						}

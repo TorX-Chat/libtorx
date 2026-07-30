@@ -147,7 +147,6 @@ void initialize_f(const int n,const int f) // XXX do not put locks in here
 	peer[n].file[f].size = 0;
 	peer[n].file[f].modified = 0;
 	peer[n].file[f].splits = 0;
-	peer[n].file[f].saved_status = 0;
 	peer[n].file[f].split_path = NULL;
 	peer[n].file[f].split_progress = NULL;
 	peer[n].file[f].split_status_n = NULL;
@@ -443,14 +442,13 @@ void zero_r(const int n,const int f,const int r) // XXX do not put locks in here
 }
 
 void zero_f(const int n,const int f) // XXX do not put locks in here
-{ // see similarities in process_pause_cancel
+{ // see similarities in process_pause_cancel // TODO not sure why we do not re-initialize all. expand_file_struc may depend on a particular one but others could be reset if there is a potential for re-use
 	if(peer[n].file[f].offer)
 		for(int o = 0 ; peer[n].file[f].offer[o].offerer_n > -1 ; o++)
 			zero_o(n,f,o);
 	if(peer[n].file[f].request)
 		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
 			zero_r(n,f,r);
-	peer[n].file[f].saved_status = 0; // TODO not sure why we do not re-initialize all. expand_file_struc may depend on a particular one but others could be reset if there is a potential for re-use
 	torx_free((void*)&peer[n].file[f].offer);
 	torx_free((void*)&peer[n].file[f].request);
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
@@ -1019,74 +1017,29 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 	return -1;
 }
 
-void file_status_apply(const int n,const uint16_t protocol,const uint8_t stat,const unsigned char *message,const size_t message_len)
-{ // XXX Apply status/path loaded from a file-<b64_checksum> peer setting (see sql_save_file_status) to this inbound offer's file struct. Consume-once: .saved_status is cleared upon application. This CANNOT occur when loading the setting because size/splits/filename are unknown until an offer arrives.
-	if(stat != ENUM_MESSAGE_RECV || message_len < CHECKSUM_BIN_LEN)
-		return; // sanity check
-	int file_n = -1;
-	if(protocol == ENUM_PROTOCOL_FILE_OFFER || protocol == ENUM_PROTOCOL_FILE_OFFER_PRIVATE)
-		file_n = n; // p2p/PM: f on n
-	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
-	{ // group: f on group_n
-		const int g = set_g(n,NULL);
-		file_n = getter_group_int(g,offsetof(struct group_list,n));
-	}
-	if(file_n < 0)
-		return;
-	const int f = set_f(file_n,message,CHECKSUM_BIN_LEN);
-	if(f < 0)
-		return;
-	const uint8_t saved_status = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,saved_status));
-	if(saved_status == 0)
-		return; // nothing pending
-	const uint8_t zero = 0;
-	setter(file_n,INT_MIN,f,offsetof(struct file_list,saved_status),&zero,sizeof(zero)); // consume-once, so that subsequent offers (or "load more") cannot disturb an already set-up file
-	if(saved_status == ENUM_FILE_INACTIVE_CANCELLED)
-		process_pause_cancel(file_n,f,file_n,ENUM_PROTOCOL_FILE_CANCEL,stat); // tear down structs so file_status_get reports CANCELLED
-	else if(saved_status == ENUM_FILE_INACTIVE_ACCEPTED && file_status_get(file_n,f) == ENUM_FILE_INACTIVE_ACCEPTED)
-	{ // Accepted/in-progress: restore split progress from the .split file (or on-disk size for splits==0). The file_status_get check skips active, cancelled, and already complete on disk.
-		char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
-		initialize_split_info(file_n,f);
-		torx_read(file_n) // 🟧🟧🟧
-		if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
-		{ // splits==0 has no .split file; derive transferred amount from partial file size on disk
-			torx_unlock(file_n) // 🟩🟩🟩
-			const uint64_t size_on_disk = get_file_size(file_path);
-			torx_write(file_n) // 🟥🟥🟥
-			if(peer[file_n].file[f].split_progress) // sanity check
-				peer[file_n].file[f].split_progress[0] = size_on_disk;
-			if(size_on_disk == peer[file_n].file[f].size) // Note: we don't need to check the split file itself because splits==0
-				torx_free((void*)&peer[file_n].file[f].split_path);
-		}
-		torx_unlock(file_n) // 🟩🟩🟩
-		torx_free((void*)&file_path);
-	}
-	// ENUM_FILE_INACTIVE_COMPLETE requires no action (file_path is already set and file_is_complete verifies on disk)
-}
-
 char *split_path_from_file_path(const char *file_path)
 { // Derive the probable .split path for a file path. Must torx_free.
 	if(!file_path)
 		return NULL;
 	char *split_path;
 	size_t allocation_size;
+	const size_t file_path_len = strlen(file_path);
 	pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
 	if(split_folder)
 	{
-		const size_t file_path_len = strlen(file_path);
 		char path_copy[file_path_len+1]; // basename() may modify the contents of path, so pass a copy
 		memcpy(path_copy,file_path,sizeof(path_copy));
-		const char *filename = basename(path_copy);
-		sodium_memzero(path_copy,sizeof(path_copy));
+		const char *filename = basename(path_copy); // do not free filename (no malloc), do not zero path_copy (yet)
 		allocation_size = strlen(split_folder) + 1 + strlen(filename) + 6 + 1;
 		split_path = torx_secure_malloc(allocation_size);
 		snprintf(split_path,allocation_size,"%s%c%s.split",split_folder,platform_slash,filename);
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+		sodium_memzero(path_copy,sizeof(path_copy)); // do not do this earlier as it will zero filename
 	}
 	else
 	{
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-		allocation_size = strlen(file_path) + 6 + 1;
+		allocation_size = file_path_len + 6 + 1;
 		split_path = torx_secure_malloc(allocation_size);
 		snprintf(split_path,allocation_size,"%s.split",file_path);
 	}
@@ -1797,8 +1750,6 @@ void file_accept(const int n,const int f)
 			setter(n,INT_MIN,f,offsetof(struct file_list,splits),&splits,sizeof(splits));
 		}
 		initialize_split_info(n,f); // calls split_read(n,f);
-		const uint8_t zero = 0;
-		setter(n,INT_MIN,f,offsetof(struct file_list,saved_status),&zero,sizeof(zero)); // any pending saved status is superseded by this action
 		sql_save_file_status(n,f,ENUM_FILE_INACTIVE_ACCEPTED);
 		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(calculate_transferred_inbound(n,f) < size)
@@ -1825,8 +1776,6 @@ void file_cancel(const int file_n,const int f)
 		message_send(file_n,ENUM_PROTOCOL_FILE_CANCEL,checksum,CHECKSUM_BIN_LEN);
 		sodium_memzero(checksum,sizeof(checksum));
 	}
-	const uint8_t zero = 0;
-	setter(file_n,INT_MIN,f,offsetof(struct file_list,saved_status),&zero,sizeof(zero)); // any pending saved status is superseded by this action
 	sql_save_file_status(file_n,f,ENUM_FILE_INACTIVE_CANCELLED); // must be before process_pause_cancel frees .file_path
 	process_pause_cancel(file_n,f,file_n,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_FAIL); // Will delete from the disk
 }
