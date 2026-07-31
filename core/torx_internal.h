@@ -189,6 +189,7 @@ struct file_request_strc { // XXX Do not torx_secure_malloc structs unless they 
 #endif // NO_FILE_TRANSFER
 
 /* torx_core.c */
+uint32_t group_peercount_nolock(const int g)__attribute__((warn_unused_result));
 int message_insert(const int g,const int n,const int i);
 void message_remove(const int g,const int n,const int i);
 void message_sort(const int g);
@@ -285,8 +286,6 @@ typedef enum _baseencode_errno {
 size_t base32_encode(unsigned char *encoded_data,const unsigned char *user_data,const size_t data_len);
 unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err)__attribute__((warn_unused_result));
 
-uint32_t group_peercount_nolock(const int g)__attribute__((warn_unused_result)); // XXX Caller must already hold mutex_expand_group. The locking group_peercount() is declared in torx.h.
-
 #ifndef NO_FILE_TRANSFER
 extern int file_piece_p_iter;
 void initialize_f(const int n,const int f);
@@ -294,7 +293,7 @@ void zero_o(const int n,const int f,const int o);
 void zero_r(const int n,const int f,const int r);
 void zero_f(const int n,const int f);
 void transfer_progress(const int n,const int f);
-uint8_t splits_determination_nolock(const int n,const int f)__attribute__((warn_unused_result)); // XXX Caller must already hold torx_read(n) or torx_write(n)
+uint8_t splits_determination_nolock(const int n,const int f)__attribute__((warn_unused_result));
 uint8_t splits_determination(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);

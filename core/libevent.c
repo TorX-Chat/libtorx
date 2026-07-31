@@ -998,13 +998,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								if(peer_g_peercount < g_peercount)
 								{ // Peer has less in their list than us, lets give them our list
 									error_printf(2,"Sending peerlist because %u < %u",peer_g_peercount,g_peercount);
-									const size_t peerlist_len = event_strc->invite_required ? GROUP_PEERLIST_PRIVATE_LEN : GROUP_PEERLIST_PUBLIC_LEN;
-									if(peerlist_len > UINT32_MAX)
-									{ // Cannot occur at any achievable peercount, but the length is carried as a uint32_t and must not be truncated into one
-										error_printf(0,"Group %d peerlist of %zu bytes is too large to send. Coding error. Report this.",event_strc->g,peerlist_len);
+									const uint32_t peercount_max = (UINT32_MAX - (uint32_t)sizeof(int32_t))/(uint32_t)(56 + crypto_sign_PUBLICKEYBYTES + (event_strc->invite_required ? crypto_sign_BYTES : 0));
+									if(g_peercount > peercount_max)
+									{
+										error_printf(0,"Group %d peerlist of %u peers is too large to send. Coding error. Report this.",event_strc->g,g_peercount);
 										breakpoint();
 										continue;
 									}
+									const size_t peerlist_len = event_strc->invite_required ? GROUP_PEERLIST_PRIVATE_LEN : GROUP_PEERLIST_PUBLIC_LEN;
 									message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),(uint32_t)peerlist_len);
 								}
 								else

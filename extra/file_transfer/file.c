@@ -386,19 +386,16 @@ void transfer_progress(const int n,const int f)
 }
 
 uint8_t splits_determination_nolock(const int n,const int f)
-{ /* XXX Caller MUST already hold torx_read(n) or torx_write(n) XXX
-	Derives the number of splits (ie: sections - 1) from the length of whichever section-sized allocation currently exists,
-	rather than storing it. Returns 0 where nothing is allocated (ex: outbound p2p files, or inbound offers not yet accepted),
-	which is correct because such files are single-section until accepted. */
+{ // Caller MUST already hold torx_read(n) or torx_write(n). Derives the number of splits (ie: sections - 1) from the length of whichever section-sized allocation currently exists.
 	uint32_t sections = 0;
-	if(peer[n].file[f].split_progress) // XXX Longest lived: split_update frees split_status_* upon completion but deliberately retains split_progress
-		sections = torx_allocation_len(peer[n].file[f].split_progress)/(uint32_t)sizeof(uint64_t);
-	else if(peer[n].file[f].split_hashes)
-	{ // XXX Group files only, but the ONLY source that exists on files we offer, and it survives process_pause_cancel
+	if(peer[n].file[f].split_hashes)
+	{ // Must be tested first. Group files only, but the count is confirmed by the hash of hashes
 		const uint32_t split_hashes_len = torx_allocation_len(peer[n].file[f].split_hashes);
 		if(split_hashes_len > sizeof(uint64_t)) // Allocation is CHECKSUM_BIN_LEN*(splits+1) followed by a trailing htobe64(size)
 			sections = (split_hashes_len - (uint32_t)sizeof(uint64_t))/(uint32_t)CHECKSUM_BIN_LEN;
 	}
+	else if(peer[n].file[f].split_progress) // Longest lived on non-group files: split_update frees split_status_* upon completion but deliberately retains split_progress
+		sections = torx_allocation_len(peer[n].file[f].split_progress)/(uint32_t)sizeof(uint64_t);
 	else if(peer[n].file[f].split_status_n)
 		sections = torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int);
 	else if(peer[n].file[f].split_status_fd)
@@ -789,9 +786,13 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 		return; // XXX DO NOT also bail on splits == 0 here, or the deletion below will be skipped when process_pause_cancel calls us after freeing split_progress
 	char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	if(split_path && (transferred == size || section == -1)) // DO NOT USE file_status or file_is_complete, use transferred from calculate_transferred_inbound here
-	{
-		error_printf(0,PINK"Checkpoint DELETING SPLIT PATH: %s"RESET,split_path);
-		destroy_file(split_path);
+	{ // Freeing .split_path is what unsticks file_is_complete, so this MUST run at splits == 0 too. DO NOT gate this on splits.
+		struct stat split_stat = {0};
+		if(stat(split_path,&split_stat) == 0)
+		{ // Delete split_path if existing
+			error_printf(0,PINK"Checkpoint DELETING SPLIT PATH: %s"RESET,split_path);
+			destroy_file(split_path);
+		}
 		torx_free((void*)&split_path);
 		torx_write(n) // 🟥🟥🟥
 		torx_free((void*)&peer[n].file[f].split_path);
@@ -1260,7 +1261,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		error_simple(0,"Sanity check failure in section_update2. Coding error. Report this.");
 		return;
 	}
-	const uint8_t splits = splits_determination_nolock(n,f); // derived from split_progress, which we just verified exists
+	const uint8_t splits = splits_determination_nolock(n,f);
 	const uint64_t section_info_current = peer[n].file[f].split_progress[section] += wrote;
 	const uint64_t section_req_current = peer[n].file[f].split_status_req[section];
 	torx_unlock(n) // 🟩🟩🟩
@@ -1367,7 +1368,7 @@ int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,c
 		error_simple(0,"Sanity check failed in calculate_file_request_start_end2. Coding error. Report this.");
 		goto error;
 	}
-	const uint8_t splits = splits_determination_nolock(n,f); // derived from split_progress, which we just verified exists
+	const uint8_t splits = splits_determination_nolock(n,f);
 	const uint64_t our_progress = peer[n].file[f].split_progress[section];
 	torx_unlock(n) // 🟩🟩🟩
 	const uint64_t section_start = calculate_section_start(end,file_size,splits,section);
@@ -1470,7 +1471,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		error_printf(0,"select_peer split_status_n/fd is NULL; file may be unaccepted, completed, or cancelled: %d",file_status_get(n,f)); //  If this is an error, call split_read or section_update first, either of which will initialize.
 		return -1;
 	}
-	const uint8_t splits = splits_determination_nolock(n,f); // derived from the split_status_*/split_progress allocations we just verified
+	const uint8_t splits = splits_determination_nolock(n,f);
 	torx_unlock(n) // 🟩🟩🟩
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
@@ -1505,10 +1506,15 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 						continue;
 					if(peer[n].file[f].offer[o].offer_progress == NULL)
 						continue; // Offerer is registered but sent no valid _PARTIAL, or it was cleared by file_remove_offer
-					const uint32_t offer_sections = torx_allocation_len(peer[n].file[f].offer[o].offer_progress)/sizeof(uint64_t); // XXX authoritative bound: sized by the offerer's claimed splits, which can differ from our own derived count
+					const uint32_t offer_sections = torx_allocation_len(peer[n].file[f].offer[o].offer_progress)/sizeof(uint64_t); // XXX sized by the offerer's claimed splits, which can but should not differ from our own derived count
+					uint32_t local_sections = torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int);
+					if(torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t) < local_sections)
+						local_sections = torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t);
+					if(torx_allocation_len(peer[n].file[f].split_progress)/(uint32_t)sizeof(uint64_t) < local_sections)
+						local_sections = torx_allocation_len(peer[n].file[f].split_progress)/(uint32_t)sizeof(uint64_t);
 					uint8_t utilized = 0;
 					int8_t utilized_fd_type = -1;
-					for(int16_t section = 0; section <= splits; section++)
+					for(int16_t section = 0; section <= splits && (uint32_t)section < local_sections; section++)
 					{ // Making sure we don't request more than two sections of the same file from the same peer concurrently, nor more than one on one fd_type.
 						const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
 						const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[section];
@@ -1520,7 +1526,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 					}
 					if(utilized >= online)
 						continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
-					for(int16_t section = 0; section <= splits && (uint32_t)section < offer_sections; section++)
+					for(int16_t section = 0; section <= splits && (uint32_t)section < offer_sections && (uint32_t)section < local_sections; section++)
 					{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 						const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
 						const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
@@ -1580,8 +1586,10 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
 		{ // There should only be 1 or 2 sections, 0 or 1 splits.
 			torx_read(n) // 🟧🟧🟧
-			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
-			{ // Sanity check to prevent race condition
+			if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL
+			|| (uint32_t)file_request_strc.section >= torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int)
+			|| (uint32_t)file_request_strc.section >= torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t))
+			{ // Sanity check to prevent race condition. XXX The length checks are mandatory, not merely the NULL checks: splits was derived before we dropped the lock, so a cancel + re-accept can leave it larger than these allocations.
 				torx_unlock(n) // 🟩🟩🟩
 				error_simple(0,"select_peer file is probably cancelled1. Possible coding error. Report this.");
 				return -1;
@@ -1610,8 +1618,11 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 			return -1;
 		}
 		torx_write(n) // 🟥🟥🟥
-		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL)
-		{ // Sanity check to prevent race condition
+		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL || peer[n].file[f].split_status_req == NULL
+		|| (uint32_t)file_request_strc.section >= torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int)
+		|| (uint32_t)file_request_strc.section >= torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t)
+		|| (uint32_t)file_request_strc.section >= torx_allocation_len(peer[n].file[f].split_status_req)/(uint32_t)sizeof(uint64_t))
+		{ // Sanity check to prevent race condition. XXX The length checks are mandatory, not merely the NULL checks: the section was chosen under an earlier lock hold, which a cancel + re-accept can have invalidated since.
 			torx_unlock(n) // 🟩🟩🟩
 			error_simple(0,"select_peer file is probably cancelled2. Possible coding error. Report this.");
 			return -1;

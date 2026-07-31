@@ -113,12 +113,8 @@ void message_offload(const int n)
 	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Handle GROUP_PEER ; not tested fully. Must go first before GROUP_CTRL
-		const uint32_t g_peercount = group_peercount(g);
-		for(uint32_t p = 0; p < g_peercount; p++)
+		for(int peer_n,p = 0; (peer_n = group_peerlist_get(g,p)) > -1 ; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 			const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 			for(uint8_t cycle = 0; cycle < 2; cycle++)
@@ -295,12 +291,8 @@ static inline void file_offer_delete(const int n,const int g,const unsigned char
 		char *encoded = b64_encode(checksum,CHECKSUM_BIN_LEN);
 		if(g > -1)
 		{ // GROUP_PEERs must be swept before GROUP_CTRL because their outbound group messages share the GROUP_CTRL's message allocations (see message_offload)
-			const uint32_t g_peercount = group_peercount(g);
-			for(uint32_t iter = 0; iter < g_peercount; iter++)
+			for(int peer_n,iter = 0; (peer_n = group_peerlist_get(g,iter)) > -1 ; iter++)
 			{
-				pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-				const int peer_n = group[g].peerlist[iter];
-				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 				delete_by_checksum(peer_n,g,checksum,encoded);
 			}
 			if(group_n > -1)
@@ -487,12 +479,8 @@ void delete_log(const int n)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // PM transfers are held by GROUP_PEER, so those must be handled too
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = group_peercount(g);
-		for(uint32_t p = 0; p < g_peercount; p++)
+		for(int peer_n,p = 0; (peer_n = group_peerlist_get(g,p)) > -1 ; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			delete_files_of_peer(peer_n);
 		}
 	}
@@ -575,12 +563,8 @@ int message_edit(const int n,const int i,const char *message)
 			}
 			if(owner == ENUM_OWNER_GROUP_CTRL)
 			{ // private messages will NOT come here
-				const uint32_t g_peercount = group_peercount(g);
-				for(uint32_t p = 0; p < g_peercount; p++)
+				for(int peer_n,p = 0; (peer_n = group_peerlist_get(g,p)) > -1 ; p++)
 				{
-					pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-					const int peer_n = group[g].peerlist[p];
-					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					const int max_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 					const int min_i = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
 					for(int ii = max_i ; ii >= min_i ; ii--)
@@ -1915,7 +1899,7 @@ void sql_populate_setting(const int force_plaintext)
 						const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
 						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 						const uint32_t count = group_peercount_nolock(g); // so, this grows as we load more. XXX Growing .peerlist IS how the peercount is incremented.
-						if(group[g].peerlist) // XXX Do NOT collapse this into a bare torx_realloc: it warns + breakpoints on a NULL arg and would assume a secure allocation, whereas .peerlist is insecure
+						if(group[g].peerlist)
 							group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)count+1)*sizeof(int));
 						else
 							group[g].peerlist = torx_insecure_malloc(((size_t)count+1)*sizeof(int));
@@ -2084,12 +2068,8 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER messages
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = group_peercount(g);
-		for(uint32_t p = 0; p < g_peercount; p++)
+		for(int specific_peer,p = 0; (specific_peer = group_peerlist_get(g,p)) > -1 ; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int specific_peer = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d AND time = %lld AND nstime = %lld;",peer_index_other,(long long)time,(long long)nstime);
 			sql_exec(&db_messages,command,NULL);
@@ -2115,12 +2095,8 @@ int sql_delete_history(const int peer_index)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER message history first
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = group_peercount(g);
-		for(uint32_t p = 0; p < g_peercount; p++)
+		for(int specific_peer,p = 0; (specific_peer = group_peerlist_get(g,p)) > -1 ; p++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int specific_peer = group[g].peerlist[p];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_index_other = getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			snprintf(command,sizeof(command),"DELETE FROM message WHERE peer_index = %d;",peer_index_other);
 			sql_exec(&db_messages,command,NULL);

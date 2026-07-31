@@ -1108,6 +1108,37 @@ void torx_free_simple(void *p)
 	torx_free((void*)&p);
 }
 
+
+uint32_t group_peercount_nolock(const int g)
+{ // XXX Caller MUST already hold mutex_expand_group (rd or wr) Returns number of CONFIRMED peers in a group, NOT including us, and NOT what a peer reports on an offer/peerlist (see untrusted_peercount).
+	return torx_allocation_len(group[g].peerlist)/(uint32_t)sizeof(int);
+}
+
+uint32_t group_peercount(const int g)
+{ // Locking wrapper. Use group_peercount_nolock where mutex_expand_group is already held.
+	if(g < 0)
+	{
+		error_simple(-1,"group_peercount sanity check failed. Coding error. Report this.");
+		return 0;
+	}
+	else if(!group) // can occur during shutdown
+		return 0;
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+	const uint32_t peercount = group_peercount_nolock(g);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	return peercount;
+}
+
+int group_peerlist_get(const int g,const int index)
+{ // Returns the peer_n held at .peerlist[index], or -1 where index is at/past the end of the list
+	if(g < 0 || index < 0 || !group) // !group can occur during shutdown
+		return -1;
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+	const int peer_n = (uint32_t)index < group_peercount_nolock(g) ? group[g].peerlist[index] : -1;
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	return peer_n;
+}
+
 int message_insert(const int g,const int n,const int i)
 { // Insert a message between two messages in our linked list
 	if(g < 0 || n < 0)
@@ -1242,8 +1273,6 @@ void message_sort(const int g)
 	const uint8_t hide_blocked_group_peer_messages_local = threadsafe_read_uint8(&mutex_global_variable,&hide_blocked_group_peer_messages);
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int group_n = group[g].n;
-	const uint32_t peercount = group_peercount_nolock(g);
-	const int *peerlist = group[g].peerlist;
 	struct msg_list *msg_list = group[g].msg_first;
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(msg_list != NULL || group_n < 0)
@@ -1320,35 +1349,31 @@ void message_sort(const int g)
 		else // TODO eliminate error message if this causes no issues
 			error_simple(0,"Message_sort called on a message with p_iter < 0. Carry on.");
 	}
-	if(peerlist && peercount > 0)
-		for(uint32_t nn = 0 ; nn < peercount ; nn++)
-		{ // Warning: use peer_n not nn
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
+	{ // Warning: use peer_n not nn // Note: an empty or absent .peerlist simply terminates this immediately
+		torx_read(peer_n) // 🟧🟧🟧
+		const uint8_t status = peer[peer_n].status;
+		const int max_i = peer[peer_n].max_i;
+		const int min_i = peer[peer_n].min_i;
+		torx_unlock(peer_n) // 🟩🟩🟩
+		if(hide_blocked_group_peer_messages_local && status == ENUM_STATUS_BLOCKED)
+			continue; // skip if appropriate
+		for(int i = min_i; i <= max_i; i++)
+		{ // Do inbound messages && outbound private messages on peers
 			torx_read(peer_n) // 🟧🟧🟧
-			const uint8_t status = peer[peer_n].status;
-			const int max_i = peer[peer_n].max_i;
-			const int min_i = peer[peer_n].min_i;
+			const int p_iter = peer[peer_n].message[i].p_iter;
+			const uint8_t stat =  peer[peer_n].message[i].stat;
 			torx_unlock(peer_n) // 🟩🟩🟩
-			if(hide_blocked_group_peer_messages_local && status == ENUM_STATUS_BLOCKED)
-				continue; // skip if appropriate
-			for(int i = min_i; i <= max_i; i++)
-			{ // Do inbound messages && outbound private messages on peers
-				torx_read(peer_n) // 🟧🟧🟧
-				const int p_iter = peer[peer_n].message[i].p_iter;
-				const uint8_t stat =  peer[peer_n].message[i].stat;
-				torx_unlock(peer_n) // 🟩🟩🟩
-				if(p_iter > -1)
-				{
-					pthread_rwlock_rdlock(&mutex_protocols); // 🟧
-					const uint8_t group_pm = protocols[p_iter].group_pm;
-					pthread_rwlock_unlock(&mutex_protocols); // 🟩
-					if(stat == ENUM_MESSAGE_RECV || group_pm)
-						message_insert(g,peer_n,i);
-				}
+			if(p_iter > -1)
+			{
+				pthread_rwlock_rdlock(&mutex_protocols); // 🟧
+				const uint8_t group_pm = protocols[p_iter].group_pm;
+				pthread_rwlock_unlock(&mutex_protocols); // 🟩
+				if(stat == ENUM_MESSAGE_RECV || group_pm)
+					message_insert(g,peer_n,i);
 			}
 		}
+	}
 }
 
 time_t message_find_since(const int n)
@@ -1518,12 +1543,8 @@ int message_load_more(const int n)
 			loaded += freshly_loaded;
 		}
 	//	error_printf(0,"Checkpoint loaded group_n=%d count=%d",group_n,freshly_loaded);
-		const uint32_t peercount = group_peercount(g);
-		for(uint32_t nn = 0 ; nn < peercount ; nn++)
+		for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const int peer_n_peer_index = getter_int(peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 			if((freshly_loaded = sql_populate_message(peer_n_peer_index,0,0,since)))
 			{ // Do each GROUP_PEER
@@ -3817,12 +3838,8 @@ int group_online(const int g)
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(peerlist != NULL)
 	{
-		const uint32_t peercount = group_peercount(g);
-		for(uint32_t nn = 0 ; nn < peercount ; nn++)
+		for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			const uint8_t sendfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,sendfd_connected));
 			const uint8_t recvfd_connected = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,recvfd_connected));
 			if(sendfd_connected > 0 || recvfd_connected > 0)
@@ -3865,11 +3882,8 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		prefix_length = 2+4;
 	}
 	if(peerlist) // NOTE: peerlist is null when adding first peer, so we skip and check for self-sign
-		for(uint32_t nn = 0; nn != g_peercount; nn++)
+		for(int peer_n,nn = 0; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
 		{
-			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // YES this is wrlock TODO why did we insist on it being wrlock???
-			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			char peeronion[56+1];
 			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
@@ -3933,7 +3947,6 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	memcpy(local_group_peeronion,group_peeronion,56);
 	local_group_peeronion[56] = '\0';
 	pthread_mutex_lock(&mutex_group_peer_add); // 🟥🟥
-	const uint32_t g_peercount = group_peercount(g);
 	const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int *peerlist = group[g].peerlist;
@@ -3942,11 +3955,8 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	{
 		char onion_group_n[56+1];
 		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
-		for(uint32_t nn = 0 ; nn < g_peercount ; nn++) // check for existing before adding
+		for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++) // check for existing before adding
 		{
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			const int peer_n = group[g].peerlist[nn];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			char peeronion[56+1];
 			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			const int ret = memcmp(peeronion,local_group_peeronion,56);
@@ -4023,8 +4033,8 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	sql_setting(0,peer_index_group,setting_name,"1",1); // the 1 is just to bypass NULL/zero len checks in sql_setting and is not used.
 	// Add it to our peerlist. XXX Growing .peerlist IS how the peercount is incremented; there is no longer a counter to keep in sync with it.
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	const uint32_t count = group_peercount_nolock(g); // Re-derived under the wrlock. Cannot differ from g_peercount above: mutex_group_peer_add serializes all of group_add_peer.
-	if(group[g].peerlist) // XXX Do NOT collapse this into a bare torx_realloc: it warns + breakpoints on a NULL arg and would assume a secure allocation, whereas .peerlist is insecure
+	const uint32_t count = group_peercount_nolock(g);
+	if(group[g].peerlist)
 		group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)count+1)*sizeof(int));
 	else
 		group[g].peerlist = torx_insecure_malloc(((size_t)count+1)*sizeof(int));
@@ -5336,21 +5346,11 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 	int g = -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Recursively takedown all GROUP_PEER in peerlist // TODO consider sending a kill code to online peers first ( pro: wastes less peer resources. Con: takes more time to shutdown, peers will be added again when someone who didn't get the kill code shares the peerlist . Conclusion: don't bother.)
-		uint32_t count = 0;
+		int count = 0; // XXX Declared out here, not in the for(), because it is read after the loop
 		g = set_g(n,NULL);
-		while(1)
-		{ // XXX The bound is re-derived under the SAME lock that reads the element, so this loop cannot outrun a .peerlist that the recursive takedown below frees or replaces
-			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-			if(count >= group_peercount_nolock(g))
-			{
-				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-				break;
-			}
-			const int specific_peer = group[g].peerlist[count++];
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+		for(int specific_peer; (specific_peer = group_peerlist_get(g,count)) > -1 ; count++)
 			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete);
-		}
-		error_printf(0,"Took down %u GROUP_PEER associated with group.",count); // TODO increase debug level after confirming this works
+		error_printf(0,"Took down %d GROUP_PEER associated with group.",count); // TODO increase debug level after confirming this works
 	}
 	if(delete > 0)
 	{

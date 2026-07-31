@@ -168,7 +168,10 @@ severable if found in contradiction with the License or applicable law.
 #define GROUP_OFFER_ACCEPT_LEN		(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES)
 #define GROUP_OFFER_ACCEPT_REPLY_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2)
 #define GROUP_OFFER_ACCEPT_FIRST_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES)
-// XXX The (size_t) casts are load-bearing: crypto_sign_PUBLICKEYBYTES/crypto_sign_BYTES are unsigned int (32U/64U), so without them these products are computed in 32 bit and wrap. Callers passing a peer-supplied g_peercount MUST additionally bound it before expanding these.
+/* XXX The (size_t) casts widen these products to 64 bit ONLY where size_t is 64 bit: crypto_sign_PUBLICKEYBYTES/crypto_sign_BYTES are unsigned int (32U/64U),
+   so without them the products are computed in 32 bit and wrap. On a 32 bit target (armeabi-v7a, x86) the casts widen nothing and the products still wrap.
+   The casts are therefore NOT sufficient on their own: EVERY caller MUST bound g_peercount BEFORE expanding these, and must do so on the peercount itself,
+   never on the resulting length (which, having already wrapped, cannot be checked after the fact). */
 #define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES))
 #define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
 #define GROUP_PRIVATE_ENTRY_REQUEST_LEN	(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)
@@ -680,7 +683,6 @@ uint16_t getter_group_uint16(const int g,const size_t offset)__attribute__((warn
 uint32_t getter_group_uint32(const int g,const size_t offset)__attribute__((warn_unused_result));
 uint64_t getter_group_uint64(const int g,const size_t offset)__attribute__((warn_unused_result));
 int getter_group_int(const int g,const size_t offset)__attribute__((warn_unused_result));
-uint32_t group_peercount(const int g)__attribute__((warn_unused_result)); // XXX Replaces the former group[g].peercount member, which no longer exists. Confirmed peers, not including us.
 /* The following are ONLY SAFE ON packet struct or global variables because of their fixed size / location. To prevent data races, not race conditions. */
 void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *source,const size_t len);
 int8_t threadsafe_read_int8(pthread_rwlock_t *mutex,const int8_t *arg)__attribute__((warn_unused_result));
@@ -713,6 +715,8 @@ void *torx_insecure_malloc(const size_t len)__attribute__((warn_unused_result));
 void *torx_secure_malloc(const size_t len)__attribute__((warn_unused_result));
 void torx_free_simple(void *p);
 void torx_free(void **p);
+uint32_t group_peercount(const int g)__attribute__((warn_unused_result));
+int group_peerlist_get(const int g,const int index)__attribute__((warn_unused_result));
 int message_load_more(const int n);
 char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const args[],const char *input)__attribute__((warn_unused_result));
 void set_time(time_t *time,time_t *nstime);

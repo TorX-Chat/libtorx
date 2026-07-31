@@ -215,8 +215,22 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		const time_t modified = getter_time(file_n,INT_MIN,file_f,offsetof(struct file_list,modified));
 		uint32_t trash32 = htobe32((uint32_t)modified);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
+		const size_t header_len = CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t);
+		if(base_message_len <= header_len)
+		{ // Cannot occur: FILE_OFFER_LEN is this header plus a filename of at least one byte
+			error_printf(0,"Attempted to send a FILE_OFFER of %u bytes, which carries no filename. Coding error. Report this.",base_message_len);
+			breakpoint();
+			goto error;
+		}
+		const size_t filename_len = base_message_len - header_len;
 		torx_read(file_n) // 🟧🟧🟧
-		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t)],peer[file_n].file[file_f].filename,strlen(peer[file_n].file[file_f].filename)); // second time calling strlen
+		if(peer[file_n].file[file_f].filename == NULL || strlen(peer[file_n].file[file_f].filename) != filename_len)
+		{ // Filename changed between the caller sizing this message and us building it
+			torx_unlock(file_n) // 🟩🟩🟩
+			error_printf(0,"Filename of file %d changed while offering it. Discarding offer.",file_f);
+			goto error;
+		}
+		memcpy(&base_message[header_len],peer[file_n].file[file_f].filename,filename_len);
 		torx_unlock(file_n) // 🟩🟩🟩
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
@@ -225,6 +239,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		torx_read(file_n) // 🟧🟧🟧
 		const uint8_t splits = splits_determination_nolock(file_n,file_f); // XXX derived from split_hashes under the same lock as the copy below, so the length necessarily matches
 		const size_t split_hashes_len = (size_t)(CHECKSUM_BIN_LEN *(splits + 1));
+		const size_t header_len = CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t);
 		if(peer[file_n].file[file_f].split_hashes == NULL) // Necessary sanity check to prevent race conditions
 		{
 			torx_unlock(file_n) // 🟩🟩🟩
@@ -232,10 +247,10 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 			breakpoint();
 			goto error;
 		}
-		else if(CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t) > base_message_len)
+		else if(header_len >= base_message_len)
 		{ // XXX Bound by the caller's FILE_OFFER_GROUP_LEN, which sized this allocation. Cannot occur unless the caller derived a different split count than we just did.
 			torx_unlock(file_n) // 🟩🟩🟩
-			error_printf(0,"FILE_OFFER_GROUP split_hashes of %zu would overflow a %u byte message. Coding error. Report this.",split_hashes_len,base_message_len);
+			error_printf(0,"FILE_OFFER_GROUP split_hashes of %zu leaves no room for a filename in a %u byte message. Coding error. Report this.",split_hashes_len,base_message_len);
 			breakpoint();
 			goto error;
 		}
@@ -248,18 +263,26 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		const time_t modified = getter_time(file_n,INT_MIN,file_f,offsetof(struct file_list,modified));
 		const uint32_t trash32 = htobe32((uint32_t)modified);
 		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)],&trash32,sizeof(uint32_t));
+		const size_t filename_len = base_message_len - header_len;
 		torx_read(file_n) // 🟧🟧🟧
-		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t)],peer[file_n].file[file_f].filename,strlen(peer[file_n].file[file_f].filename)); // second time calling strlen
+		if(peer[file_n].file[file_f].filename == NULL || strlen(peer[file_n].file[file_f].filename) != filename_len)
+		{ // Filename changed between the caller sizing this message and us building it
+			torx_unlock(file_n) // 🟩🟩🟩
+			error_printf(0,"Filename of group file %d changed while offering it. Discarding offer.",file_f);
+			goto error;
+		}
+		memcpy(&base_message[header_len],peer[file_n].file[file_f].filename,filename_len);
 	//	error_printf(3,"Checkpoint message_send group file offer: %lu %s %s\n",file_size,peer[file_n].file[file_f].filename,b64_encode(base_message,CHECKSUM_BIN_LEN));
 		torx_unlock(file_n) // 🟩🟩🟩
 	}
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
 	{ // HashOfHashes + Splits[1] + split_progress[section] *(splits + 1)
 		getter_array(base_message,CHECKSUM_BIN_LEN,file_n,INT_MIN,file_f,offsetof(struct file_list,checksum)); // hash of hashes
-		const size_t sections_size_t = base_message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) ? 0 : (base_message_len - (CHECKSUM_BIN_LEN + sizeof(uint8_t)))/sizeof(uint64_t);
-		if(sections_size_t < 1 || sections_size_t > (size_t)UINT8_MAX + 1)
-		{ // Cannot occur: FILE_OFFER_PARTIAL_LEN always carries between 1 and 256 sections, being sized from a uint8_t splits
-			error_printf(0,"FILE_OFFER_PARTIAL of %u bytes carries an impossible section count. Coding error. Report this.",base_message_len);
+		const size_t payload_len = base_message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) ? 0 : base_message_len - (CHECKSUM_BIN_LEN + sizeof(uint8_t));
+		const size_t sections_size_t = payload_len/sizeof(uint64_t);
+		if(sections_size_t < 1 || sections_size_t > (size_t)UINT8_MAX + 1 || payload_len % sizeof(uint64_t))
+		{ // Cannot occur: FILE_OFFER_PARTIAL_LEN always carries between 1 and 256 whole sections, being sized from a uint8_t splits
+			error_printf(0,"FILE_OFFER_PARTIAL of %u bytes is not a whole number of between 1 and 256 sections. Coding error. Report this.",base_message_len);
 			breakpoint();
 			goto error;
 		} // XXX The section count is taken from the caller's FILE_OFFER_PARTIAL_LEN, which sized this allocation, so these writes cannot overflow it regardless of what the struct now holds
@@ -497,14 +520,15 @@ static inline int *generate_target_list(uint32_t *target_count,const int n)
 	if(owner == ENUM_OWNER_GROUP_CTRL/* && group_msg*/)
 	{
 		const int g = set_g(n,NULL);
-		if((*target_count = group_peercount(g)) < 1)
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+		if((*target_count = group_peercount_nolock(g)) < 1)
 		{ // this isn't necessarily an error. this would be an OK place to bail out in some circumstances like broadcast messages
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			error_simple(0,"Group has no users. Refusing to queue message. This is fine.");
 			breakpoint();
 			return NULL;
 		}
 		target_list = torx_insecure_malloc(sizeof(int)*(*target_count));
-		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		for(uint32_t nn = 0; nn < *target_count; nn++)
 			target_list[nn] = group[g].peerlist[nn];
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
