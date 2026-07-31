@@ -773,7 +773,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				const uint64_t packet_start = be64toh(align_uint64((void*)&read_buffer[cur]));
 				cur += 8; // 8 --> 16
 				const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
-				const uint8_t splits_nn = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
+				torx_read(file_n) // 🟧🟧🟧
+				const uint8_t split_arrays_exist = (peer[file_n].file[f].split_status_n && peer[file_n].file[f].split_status_fd && peer[file_n].file[f].split_progress) ? 1 : 0;
+				const uint8_t splits_nn = split_arrays_exist ? splits_determination_nolock(file_n,f) : 0;
+				torx_unlock(file_n) // 🟩🟩🟩 XXX must unlock before the section math, whose sanity check failure is fatal
+				if(!split_arrays_exist)
+				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second.
+					error_simple(0,"Peer asked us to write to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
+					continue; // This could occur if a peer mistakenly sent us a FILE_PIECE of a file we initially offered
+				}
 				const int16_t section = section_determination(size,splits_nn,packet_start);
 				if(section < 0)
 				{ // Very necessary to check
@@ -783,11 +791,11 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				uint64_t section_end = 0;
 				const uint64_t section_start = calculate_section_start(&section_end,size,splits_nn,section);
 				torx_read(file_n) // 🟧🟧🟧
-				if(peer[file_n].file[f].split_status_n == NULL || peer[file_n].file[f].split_status_fd == NULL || peer[file_n].file[f].split_progress == NULL)
-				{ // TODO This triggers upon file completion when we have been offered two identical files with different names, and we selected the second.
+				if(peer[file_n].file[f].split_status_n == NULL || peer[file_n].file[f].split_status_fd == NULL || peer[file_n].file[f].split_progress == NULL || (uint32_t)section >= torx_allocation_len(peer[file_n].file[f].split_progress)/(uint32_t)sizeof(uint64_t))
+				{ // Re-check under the lock: the arrays could have been freed (cancel) or re-allocated at a different length since we derived splits_nn above
 					torx_unlock(file_n) // 🟩🟩🟩
-					error_simple(0,"Peer asked us to write to a file without calling initialize_split_info, or upon a cancelled file. Coding error. Report this. Bailing.");
-					continue; // This could occur if a peer mistakenly sent us a FILE_PIECE of a file we initially offered
+					error_simple(0,"File was cancelled or re-initialized mid-packet. Bailing.");
+					continue;
 				}
 				const uint64_t section_info_current = peer[file_n].file[f].split_progress[section];
 				const int8_t relevant_split_status_fd = peer[file_n].file[f].split_status_fd[section];
@@ -1189,7 +1197,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									if(file_n == event_strc->group_n)
 									{ // File exists and is group transfer XXX NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
 										error_simple(0,"Re-checking group file because modification time has changed. This is undesirable. Report this.");
-										const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
+										const uint8_t splits = splits_determination(file_n,f); // derived from .split_hashes, which necessarily exists on a group file we hold
 										unsigned char *split_hashes_and_size = file_split_hashes(checksum_unverified,file_path,splits,size);
 										torx_free((void*)&split_hashes_and_size); // We don't need this, we just need the hash of hashes.
 									}
@@ -1267,7 +1275,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							torx_unlock(file_n) // 🟩🟩🟩
 							if(file_path_exists)
 							{ // We have this file, so respond
-								const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits));
+								const uint8_t splits = splits_determination(file_n,f);
 								struct file_request_strc file_request_strc = {0};
 								file_request_strc.n = file_n;
 								file_request_strc.f = f;

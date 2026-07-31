@@ -292,12 +292,14 @@ void zero_o(const int n,const int f,const int o);
 void zero_r(const int n,const int f,const int r);
 void zero_f(const int n,const int f);
 void transfer_progress(const int n,const int f);
+uint8_t splits_determination_nolock(const int n,const int f)__attribute__((warn_unused_result)); // XXX Caller must already hold torx_read(n) or torx_write(n)
+uint8_t splits_determination(const int n,const int f)__attribute__((warn_unused_result));
 uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section); // No need to warn unused because we might just need end
 void process_pause_cancel(const int n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat);
 int process_file_offer_outbound(const int n,const unsigned char *checksum,const uint8_t splits,const unsigned char *split_hashes_and_size,const uint64_t size,const time_t modified,const char *file_path);
 int process_file_offer_inbound(const int n,const int p_iter,const char *message,const uint32_t message_len);
 char *split_path_from_file_path(const char *file_path)__attribute__((warn_unused_result));
-int initialize_split_info(const int n,const int f);
+int initialize_split_info(const int n,const int f,const uint8_t splits_hint); // splits_hint is only utilized where no .split file exists to read the count from
 int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)__attribute__((warn_unused_result));
 void section_update(const int n,const int f,const uint64_t packet_start,const size_t wrote,const int8_t fd_type,const int16_t section,const uint64_t section_end,const int peer_n);
 int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,const int f,const int o,const int16_t section)__attribute__((warn_unused_result));

@@ -344,18 +344,19 @@ static inline void delete_files_of_peer(const int n)
 	sodium_memzero(command,sizeof(command));
 }
 
-static inline void file_status_apply(const int file_n,const int f,const uint8_t saved_status)
+static inline void file_status_apply(const int file_n,const int f,const uint8_t saved_status,const uint8_t splits)
 { // Apply the status loaded from file-<b64_checksum> peer setting (set by sql_save_file_status). Called from sql_populate_setting's file- handler *AFTER* the setting has restored size/modified/filename/file_path.
+  // XXX splits is passed in rather than read back from the struct: nothing is allocated yet at this point, so there is nothing for splits_determination() to derive it from (p2p/PM files have no .split_hashes).
 	if(saved_status == 0 || file_n < 0 || f < 0)
 		return; // Saved status may equal zero if this file is outbound (normal, not an error)
 	if(saved_status == ENUM_FILE_INACTIVE_CANCELLED)
 		process_pause_cancel(file_n,f,file_n,ENUM_PROTOCOL_FILE_CANCEL,ENUM_MESSAGE_RECV); // tear down structs so file_status_get reports CANCELLED
 	else if(saved_status == ENUM_FILE_INACTIVE_ACCEPTED && file_status_get(file_n,f) == ENUM_FILE_INACTIVE_ACCEPTED)
 	{ // Accepted/in-progress: restore split progress from the .split file (or on-disk size for splits==0). The file_status_get check skips active, cancelled, and already complete on disk.
-		initialize_split_info(file_n,f);
+		initialize_split_info(file_n,f,splits);
 		torx_read(file_n) // 🟧🟧🟧
-		if(peer[file_n].file[f].splits == 0 && peer[file_n].file[f].split_progress && peer[file_n].file[f].split_progress[0] == 0)
-		{ // splits==0 has no .split file; derive transferred amount from partial file size on disk
+		if(peer[file_n].file[f].split_progress && torx_allocation_len(peer[file_n].file[f].split_progress) == sizeof(uint64_t) && peer[file_n].file[f].split_progress[0] == 0)
+		{ // A single section (splits==0) has no .split file; derive transferred amount from partial file size on disk
 			torx_unlock(file_n) // 🟩🟩🟩
 			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 			const uint64_t size_on_disk = get_file_size(file_path);
@@ -368,11 +369,10 @@ static inline void file_status_apply(const int file_n,const int f,const uint8_t 
 		torx_unlock(file_n) // 🟩🟩🟩
 	}
 	else if(saved_status == ENUM_FILE_INACTIVE_COMPLETE)
-	{ // Reconstruct a finished transfer's end-state: split_progress sized (splits+1) with every section full, split_status_* and split_path NULL, split_hashes+splits already restored by the file- handler.
-	// file_status_get reports COMPLETE from split_progress alone (never depends on the file still being on disk), and split_hashes+splits make a group file seedable without re-hashing.
+	{ // Reconstruct a finished transfer's end-state: split_progress sized (splits+1) with every section full, split_status_* and split_path NULL, split_hashes already restored by the file- handler.
+	// file_status_get reports COMPLETE from split_progress alone (never depends on the file still being on disk), and split_hashes makes a group file seedable without re-hashing.
 	// XXX Deliberately does NOT call initialize_split_info: leaving split_status_fd NULL is what prevents peer_online/select_peer from re-downloading a deleted file.
 		const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
-		const uint8_t splits = getter_uint8(file_n,INT_MIN,f,offsetof(struct file_list,splits)); // restored from the file- setting
 		torx_write(file_n) // 🟥🟥🟥
 		torx_free((void*)&peer[file_n].file[f].split_path); // file_is_complete requires split_path == NULL
 		if(size >= (uint64_t)splits + 1)
@@ -430,7 +430,7 @@ void sql_save_file_status(const int file_n,const int f,const uint8_t status)
 	}
 	unsigned char *split_hashes = NULL; // group files only
 	torx_read(file_n) // 🟧🟧🟧
-	const uint8_t splits = peer[file_n].file[f].splits; // read under the same lock as split_hashes so the pair stays consistent
+	const uint8_t splits = splits_determination_nolock(file_n,f); // derived under the same lock as split_hashes so the pair stays consistent
 	const size_t split_hashes_portion = (size_t)CHECKSUM_BIN_LEN*(splits+1); // hash portion only (excludes the trailing htobe64(size))
 	if(peer[file_n].file[f].split_hashes && torx_allocation_len(peer[file_n].file[f].split_hashes) >= split_hashes_portion)
 	{ // Copy just the hash portion; the trailing size is redundant with the size field and re-derived on load
@@ -1772,7 +1772,6 @@ void sql_populate_setting(const int force_plaintext)
 						torx_write(file_n) // 🟥🟥🟥
 						peer[file_n].file[f].size = size;
 						peer[file_n].file[f].modified = modified;
-						peer[file_n].file[f].splits = splits;
 						torx_free((void*)&peer[file_n].file[f].filename);
 						if(filename_len)
 						{ // Restore the filename
@@ -1796,7 +1795,7 @@ void sql_populate_setting(const int force_plaintext)
 							memcpy(&peer[file_n].file[f].split_hashes[split_hashes_portion],&size_be,sizeof(uint64_t));
 						}
 						torx_unlock(file_n) // 🟩🟩🟩
-						file_status_apply(file_n,f,saved_status); // Must call AFTER restoring path, filename, size, modified, splits, etc. INBOUND ONLY: status loaded from the file-<b64_checksum> peer setting (see sql_save_file_status).
+						file_status_apply(file_n,f,saved_status,splits); // Must call AFTER restoring path, filename, size, modified, split_hashes, etc. INBOUND ONLY: status loaded from the file-<b64_checksum> peer setting (see sql_save_file_status).
 					}
 				}
 				#endif // NO_FILE_TRANSFER

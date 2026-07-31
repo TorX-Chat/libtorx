@@ -284,7 +284,6 @@ struct offsets offsets_file[] = {
 	offsize(file_list,file_path,"file_path"),
 	offsize(file_list,size,"size"),
 	offsize(file_list,modified,"modified"),
-	offsize(file_list,splits,"splits"),
 	offsize(file_list,split_path,"split_path"),
 	offsize(file_list,split_progress,"split_progress"),
 	offsize(file_list,split_status_n,"split_status_n"),

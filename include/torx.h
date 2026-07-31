@@ -295,14 +295,14 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint64_t size;
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
-		uint8_t splits; // 0 to max , number of splits (XXX RELEVANT ONLY TO RECEIVER/incoming, and outbound group files)
+		// XXX There is no .splits member: the number of splits is derived from the allocation length of whichever of the below (or of .split_hashes) exists. See splits_determination().
 		char *split_path;
 		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
 		int8_t *split_status_fd;
 		uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
 		/* Exclusively Group related */
-		unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM)
+		unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM). XXX Allocated as CHECKSUM_BIN_LEN*(splits+1) + sizeof(uint64_t); its length is the sole record of the split count on files we offer.
 		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock
 		struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
 			int offerer_n; // Do not reset to -1

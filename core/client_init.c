@@ -210,19 +210,25 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP || protocol == ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED)
 	{ // HashOfHashes + Splits[1] + CHECKSUM_BIN_LEN *(splits + 1)) + SIZE[8] + MODIFIED[4] + FILENAME (no null termination)
 		getter_array(base_message,CHECKSUM_BIN_LEN,file_n,INT_MIN,file_f,offsetof(struct file_list,checksum)); // hash of hashes + size, not hash of file
-		const uint8_t splits = getter_uint8(file_n,INT_MIN,file_f,offsetof(struct file_list,splits));
-		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
-		const size_t split_hashes_len = (size_t)(CHECKSUM_BIN_LEN *(splits + 1));
 		torx_read(file_n) // 🟧🟧🟧
-		if(peer[file_n].file[file_f].split_hashes) // Necessary sanity check to prevent race conditions
-			memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[file_n].file[file_f].split_hashes,split_hashes_len);
-		else
+		const uint8_t splits = splits_determination_nolock(file_n,file_f); // XXX derived from split_hashes under the same lock as the copy below, so the length necessarily matches
+		const size_t split_hashes_len = (size_t)(CHECKSUM_BIN_LEN *(splits + 1));
+		if(peer[file_n].file[file_f].split_hashes == NULL) // Necessary sanity check to prevent race conditions
 		{
 			torx_unlock(file_n) // 🟩🟩🟩
 			error_simple(0,"split_hashes is NULL. This is unacceptable at this point.");
 			breakpoint();
 			goto error;
 		}
+		else if(CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t) + sizeof(uint32_t) > base_message_len)
+		{ // XXX Bound by the caller's FILE_OFFER_GROUP_LEN, which sized this allocation. Cannot occur unless the caller derived a different split count than we just did.
+			torx_unlock(file_n) // 🟩🟩🟩
+			error_printf(0,"FILE_OFFER_GROUP split_hashes of %zu would overflow a %u byte message. Coding error. Report this.",split_hashes_len,base_message_len);
+			breakpoint();
+			goto error;
+		}
+		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
+		memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],peer[file_n].file[file_f].split_hashes,split_hashes_len);
 		torx_unlock(file_n) // 🟩🟩🟩
 		const uint64_t file_size = getter_uint64(file_n,INT_MIN,file_f,offsetof(struct file_list,size));
 		const uint64_t trash64 = htobe64(file_size);
@@ -238,18 +244,27 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 	else if(protocol == ENUM_PROTOCOL_FILE_OFFER_PARTIAL)
 	{ // HashOfHashes + Splits[1] + split_progress[section] *(splits + 1)
 		getter_array(base_message,CHECKSUM_BIN_LEN,file_n,INT_MIN,file_f,offsetof(struct file_list,checksum)); // hash of hashes
-		const uint8_t splits = getter_uint8(file_n,INT_MIN,file_f,offsetof(struct file_list,splits));
+		const size_t sections_size_t = base_message_len < CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) ? 0 : (base_message_len - (CHECKSUM_BIN_LEN + sizeof(uint8_t)))/sizeof(uint64_t);
+		if(sections_size_t < 1 || sections_size_t > (size_t)UINT8_MAX + 1)
+		{ // Cannot occur: FILE_OFFER_PARTIAL_LEN always carries between 1 and 256 sections, being sized from a uint8_t splits
+			error_printf(0,"FILE_OFFER_PARTIAL of %u bytes carries an impossible section count. Coding error. Report this.",base_message_len);
+			breakpoint();
+			goto error;
+		} // XXX The section count is taken from the caller's FILE_OFFER_PARTIAL_LEN, which sized this allocation, so these writes cannot overflow it regardless of what the struct now holds
+		const uint16_t sections = (uint16_t)sections_size_t;
+		const uint8_t splits = (uint8_t)(sections - 1);
 		*(uint8_t*)(void*)&base_message[CHECKSUM_BIN_LEN] = splits;
 		torx_read(file_n) // 🟧🟧🟧
-		if(peer[file_n].file[file_f].split_progress == NULL) // Necessary sanity check
+		const uint32_t split_progress_sections = torx_allocation_len(peer[file_n].file[file_f].split_progress)/(uint32_t)sizeof(uint64_t);
+		if(split_progress_sections < sections) // Necessary sanity check. Covers split_progress == NULL, whose allocation length is 0.
 		{ // If a file path exists, we are the offerer here.
 			const uint8_t file_path_exists = peer[file_n].file[file_f].file_path ? 1 : 0;
 			torx_unlock(file_n) // 🟩🟩🟩
 			const uint64_t size = getter_uint64(file_n,INT_MIN,file_f,offsetof(struct file_list,size));
-			for(int16_t section_local = 0; section_local <= splits; section_local++)
+			for(uint16_t section_local = 0; section_local < sections; section_local++)
 			{ // Simulate that each section is fully complete, since we are assuming that we offered this file and have it fully.
 				uint64_t section_end;
-				const uint64_t section_start = calculate_section_start(&section_end,size,splits,section_local);
+				const uint64_t section_start = calculate_section_start(&section_end,size,splits,(int16_t)section_local);
 				const uint64_t our_progress = file_path_exists ? section_end - section_start + 1 : 0;
 				const uint64_t trash64 = htobe64(our_progress);
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
@@ -257,7 +272,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		}
 		else
 		{
-			for(int16_t section_local = 0; section_local <= splits; section_local++)
+			for(uint16_t section_local = 0; section_local < sections; section_local++)
 			{ // Add how much is completed on each section
 				const uint64_t trash64 = htobe64(peer[file_n].file[file_f].split_progress[section_local]);
 				memcpy(&base_message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(size_t)section_local],&trash64,sizeof(uint64_t));
