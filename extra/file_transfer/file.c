@@ -1721,9 +1721,15 @@ void file_offer_internal(const int target_n,const int file_n,const int f,const u
 	file_request_strc.n = file_n;
 	file_request_strc.f = f;
 	torx_read(file_n) // 🟧🟧🟧
-	const size_t filename_len = strlen(peer[file_n].file[f].filename);
+	const size_t filename_len = peer[file_n].file[f].filename ? strlen(peer[file_n].file[f].filename) : 0;
+	const uint8_t split_hashes_exists = peer[file_n].file[f].split_hashes ? 1 : 0;
 	const uint8_t splits = splits_determination_nolock(file_n,f); // XXX for group files this derives from .split_hashes, the only source that exists on files we offer
 	torx_unlock(file_n) // 🟩🟩🟩
+	if(!filename_len || (owner == ENUM_OWNER_GROUP_CTRL && !split_hashes_exists))
+	{ // Necessary check: an f can carry a checksum and nothing else (ex: reserved by an inbound FILE_OFFER_PARTIAL whose FILE_OFFER_GROUP never arrived, or restored from a file- peer setting that stored no filename)
+		error_printf(0,"Cannot offer file %d, whose metadata we lack. Discarding.",f);
+		return;
+	}
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{
 		const int g = set_g(file_n,NULL);
