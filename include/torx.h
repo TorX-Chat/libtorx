@@ -168,8 +168,9 @@ severable if found in contradiction with the License or applicable law.
 #define GROUP_OFFER_ACCEPT_LEN		(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES)
 #define GROUP_OFFER_ACCEPT_REPLY_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2)
 #define GROUP_OFFER_ACCEPT_FIRST_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES)
-#define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES))
-#define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + g_peercount *(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
+// XXX The (size_t) casts are load-bearing: crypto_sign_PUBLICKEYBYTES/crypto_sign_BYTES are unsigned int (32U/64U), so without them these products are computed in 32 bit and wrap. Callers passing a peer-supplied g_peercount MUST additionally bound it before expanding these.
+#define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES))
+#define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
 #define GROUP_PRIVATE_ENTRY_REQUEST_LEN	(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)
 #define GROUP_BROADCAST_DECRYPTED_LEN	(crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES)
 #define GROUP_BROADCAST_LEN		(crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN)

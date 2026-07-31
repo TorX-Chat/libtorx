@@ -998,10 +998,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								if(peer_g_peercount < g_peercount)
 								{ // Peer has less in their list than us, lets give them our list
 									error_printf(2,"Sending peerlist because %u < %u",peer_g_peercount,g_peercount);
-									if(event_strc->invite_required)
-										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PRIVATE_LEN);
-									else
-										message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PUBLIC_LEN);
+									const size_t peerlist_len = event_strc->invite_required ? GROUP_PEERLIST_PRIVATE_LEN : GROUP_PEERLIST_PUBLIC_LEN;
+									if(peerlist_len > UINT32_MAX)
+									{ // Cannot occur at any achievable peercount, but the length is carried as a uint32_t and must not be truncated into one
+										error_printf(0,"Group %d peerlist of %zu bytes is too large to send. Coding error. Report this.",event_strc->g,peerlist_len);
+										breakpoint();
+										continue;
+									}
+									message_send(group_peer_n,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),(uint32_t)peerlist_len);
 								}
 								else
 									error_printf(2,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
@@ -1014,12 +1018,22 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									continue;
 								}
 								const uint32_t g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
+								const size_t per_peer = 56 + crypto_sign_PUBLICKEYBYTES + (event_strc->invite_required ? crypto_sign_BYTES : 0);
+								if(!g_peercount || (size_t)g_peercount > (buffer_len - sizeof(uint32_t) - DATE_SIGN_LEN)/per_peer)
+								{ /* XXX g_peercount is attacker controlled, so it MUST be bounded BEFORE anything multiplies by it. The operands of
+								     GROUP_PEERLIST_*_LEN are 32 bit unsigned (libsodium defines crypto_sign_PUBLICKEYBYTES/BYTES as 32U/64U), so an
+								     unbounded g_peercount wraps that product mod 2^32 and can be chosen to make the length check below pass on a
+								     short buffer, after which the loop reads far out of bounds. The subtraction is safe: buffer_len was checked
+								     against sizeof(uint32_t) + DATE_SIGN_LEN above, and per_peer is never zero. */
+									error_printf(0,"Peer sent an ENUM_PROTOCOL_GROUP_PEERLIST claiming an impossible %u peers in %u bytes. Bailing.",g_peercount,buffer_len);
+									continue;
+								}
 								size_t expected_len;
 								if(event_strc->invite_required)
 									expected_len = GROUP_PEERLIST_PRIVATE_LEN;
 								else
 									expected_len = GROUP_PEERLIST_PUBLIC_LEN;
-								if(!g_peercount || expected_len + DATE_SIGN_LEN != buffer_len)
+								if(expected_len + DATE_SIGN_LEN != buffer_len)
 								{ // Prevent illegal reads from malicious message
 									error_printf(0,"Peer sent an invalid sized ENUM_PROTOCOL_GROUP_PEERLIST. Bailing. %u: %zu != %u",g_peercount,expected_len,buffer_len);
 									continue;

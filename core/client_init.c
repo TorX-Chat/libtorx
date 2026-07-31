@@ -94,38 +94,50 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 	}
 	if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
 	{ // Audited 2024/02/16 // Format: Peercount[4] + onions (56*peercount) + ed25519_pk(56*peercount) (if relevant: + invitation signature(56*peercount)) // NOTE: If this is first-connect, ie peerlist == NULL, trust and connect to the owner. Otherwise, ignore the owner and group_add_peer everyone else only.
-		if(peercount < 1)
+		/* XXX DO NOT size these loops from .peercount. The caller sized base_message_len from GROUP_PEERLIST_PUBLIC_LEN/PRIVATE_LEN using its own
+		   earlier read of .peercount, and group_add_peer can increment .peercount (from any peer's dispatcher thread, which a peer can provoke by
+		   sending us a peerlist) in between. Deriving the entry count from base_message_len, which is what sized this allocation, is what makes
+		   these writes structurally incapable of overflowing it. */
+		const size_t per_peer = 56 + crypto_sign_PUBLICKEYBYTES + (invite_required ? crypto_sign_BYTES : 0);
+		if(base_message_len < sizeof(uint32_t) + per_peer || (base_message_len - sizeof(uint32_t)) % per_peer)
 		{
-			error_simple(0,"Attempted to send GROUP_PEERLIST that doesn't exist. Coding error. Report this.");
+			error_printf(0,"Attempted to send a GROUP_PEERLIST of %u bytes, which is not a whole number of %zu byte entries. Coding error. Report this.",base_message_len,per_peer);
 			breakpoint();
 			goto error;
 		}
-		const uint32_t trash = htobe32(peercount);
+		const uint32_t entries = (uint32_t)((base_message_len - sizeof(uint32_t))/per_peer);
+		int *peerlist_snapshot = torx_insecure_malloc(sizeof(int)*(size_t)entries);
+		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+		if(group[g].peerlist == NULL || torx_allocation_len(group[g].peerlist)/sizeof(int) < entries)
+		{ // Cannot occur: .peercount only ever grows, and the caller read it before we were called
+			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+			torx_free((void*)&peerlist_snapshot);
+			error_printf(0,"Group %d has fewer peers than the %u a GROUP_PEERLIST was sized for. Coding error. Report this.",g,entries);
+			breakpoint();
+			goto error;
+		} // XXX One consistent snapshot: the loops below must NOT re-take this lock per element, or a concurrent group_add_peer could tear the list
+		memcpy(peerlist_snapshot,group[g].peerlist,sizeof(int)*(size_t)entries);
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // Released before the per-peer getters below, which take peer rwlocks
+		const uint32_t trash = htobe32(entries);
 		memcpy(&base_message[0],&trash,sizeof(uint32_t));
 		size_t cur = sizeof(uint32_t); // current position
-		#define obtain_specific_peer /* cannot use do while(0) because we declare a variable here */\
-			pthread_rwlock_rdlock(&mutex_expand_group);\
-			const int specific_peer = group[g].peerlist[nn];\
-			pthread_rwlock_unlock(&mutex_expand_group);
-		for(uint32_t nn = 0 ; nn < peercount ; nn++)
+		for(uint32_t nn = 0 ; nn < entries ; nn++)
 		{ // Peeronions first
-			obtain_specific_peer
-			getter_array(&base_message[cur],56,specific_peer,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+			getter_array(&base_message[cur],56,peerlist_snapshot[nn],INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			cur += 56;
 		}
-		for(uint32_t nn = 0 ; nn < peercount ; nn++)
+		for(uint32_t nn = 0 ; nn < entries ; nn++)
 		{ // Peer public keys
-			obtain_specific_peer
-			getter_array(&base_message[cur],crypto_sign_PUBLICKEYBYTES,specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
+			getter_array(&base_message[cur],crypto_sign_PUBLICKEYBYTES,peerlist_snapshot[nn],INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
 			cur += crypto_sign_PUBLICKEYBYTES;
 		}
 		if(invite_required)
-			for(uint32_t nn = 0 ; nn < peercount ; nn++)
+			for(uint32_t nn = 0 ; nn < entries ; nn++)
 			{ // Inviter signatures of peeronions ( non-applicable to public groups )
-				obtain_specific_peer
-				getter_array(&base_message[cur],crypto_sign_BYTES,specific_peer,INT_MIN,-1,offsetof(struct peer_list,invitation));
+				getter_array(&base_message[cur],crypto_sign_BYTES,peerlist_snapshot[nn],INT_MIN,-1,offsetof(struct peer_list,invitation));
 				cur += crypto_sign_BYTES;
 			}
+		torx_free((void*)&peerlist_snapshot);
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 	{ // Onion[56] + ed25519_pk[32] + signed by invitor[64]
