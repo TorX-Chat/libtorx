@@ -113,7 +113,7 @@ void message_offload(const int n)
 	const int g = (owner == ENUM_OWNER_GROUP_PEER || owner == ENUM_OWNER_GROUP_CTRL) ? set_g(n,NULL) : -1;
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Handle GROUP_PEER ; not tested fully. Must go first before GROUP_CTRL
-		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t g_peercount = group_peercount(g);
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -295,7 +295,7 @@ static inline void file_offer_delete(const int n,const int g,const unsigned char
 		char *encoded = b64_encode(checksum,CHECKSUM_BIN_LEN);
 		if(g > -1)
 		{ // GROUP_PEERs must be swept before GROUP_CTRL because their outbound group messages share the GROUP_CTRL's message allocations (see message_offload)
-			const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+			const uint32_t g_peercount = group_peercount(g);
 			for(uint32_t iter = 0; iter < g_peercount; iter++)
 			{
 				pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -487,7 +487,7 @@ void delete_log(const int n)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // PM transfers are held by GROUP_PEER, so those must be handled too
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t g_peercount = group_peercount(g);
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -575,7 +575,7 @@ int message_edit(const int n,const int i,const char *message)
 			}
 			if(owner == ENUM_OWNER_GROUP_CTRL)
 			{ // private messages will NOT come here
-				const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+				const uint32_t g_peercount = group_peercount(g);
 				for(uint32_t p = 0; p < g_peercount; p++)
 				{
 					pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -1408,7 +1408,7 @@ int sql_populate_peer(void)
 				if(owner == ENUM_OWNER_GROUP_CTRL)
 				{
 					const int g = set_g(n,NULL);
-					const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+					const uint32_t g_peercount = group_peercount(g);
 					const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 					if(g_invite_required == 0 && g_peercount == 0 /* && expiration != 0 ???*/)
 					{ // Broadcast if the group is public and empty. Do not check if we created the group first (expiration) because even so it could be operating independantly even if empty (we could have created it then two users could have joined each other without joining us). Public groups must be wholely ownerless.
@@ -1914,13 +1914,13 @@ void sql_populate_setting(const int force_plaintext)
 						const int stripped_peer_index = (int)strtoull(&setting_name[10], NULL, 10);
 						const int peer_n = set_n(stripped_peer_index,NULL); // XXX do use setting_value, its trash XXX
 						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-						if(group[g].peerlist)
-							group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)group[g].peercount+1)*sizeof(int));
+						const uint32_t count = group_peercount_nolock(g); // so, this grows as we load more. XXX Growing .peerlist IS how the peercount is incremented.
+						if(group[g].peerlist) // XXX Do NOT collapse this into a bare torx_realloc: it warns + breakpoints on a NULL arg and would assume a secure allocation, whereas .peerlist is insecure
+							group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)count+1)*sizeof(int));
 						else
-							group[g].peerlist = torx_insecure_malloc(((size_t)group[g].peercount+1)*sizeof(int));
-						group[g].peerlist[group[g].peercount] = peer_n;
-						group[g].peercount++; // so, this grows as we load more
-					//	error_printf(0,"Checkpoint sql_populate_setting g==%d peercount==%u",g,group[g].peercount);
+							group[g].peerlist = torx_insecure_malloc(((size_t)count+1)*sizeof(int));
+						group[g].peerlist[count] = peer_n;
+					//	error_printf(0,"Checkpoint sql_populate_setting g==%d peercount==%u",g,count+1);
 						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 					}
 				}
@@ -2084,7 +2084,7 @@ int sql_delete_message(const int peer_index,const time_t time,const time_t nstim
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER messages
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t g_peercount = group_peercount(g);
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -2115,7 +2115,7 @@ int sql_delete_history(const int peer_index)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // delete all the associated GROUP_PEER message history first
 		const int g = set_g(n,NULL);
-		const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t g_peercount = group_peercount(g);
 		for(uint32_t p = 0; p < g_peercount; p++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧

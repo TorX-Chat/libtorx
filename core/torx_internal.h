@@ -285,6 +285,8 @@ typedef enum _baseencode_errno {
 size_t base32_encode(unsigned char *encoded_data,const unsigned char *user_data,const size_t data_len);
 unsigned char *base32_decode(const char *user_data_untrimmed,size_t data_len,baseencode_error_t *err)__attribute__((warn_unused_result));
 
+uint32_t group_peercount_nolock(const int g)__attribute__((warn_unused_result)); // XXX Caller must already hold mutex_expand_group. The locking group_peercount() is declared in torx.h.
+
 #ifndef NO_FILE_TRANSFER
 extern int file_piece_p_iter;
 void initialize_f(const int n,const int f);

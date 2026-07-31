@@ -205,7 +205,7 @@ void broadcast_prep(unsigned char ciphertext[GROUP_BROADCAST_LEN],const int g)
 	sodium_memzero(message,sizeof(message));
 	sodium_memzero(recipient_pk,sizeof(recipient_pk));
 
-	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+	const uint32_t g_peercount = group_peercount(g);
 	if(!g_peercount)
 	{ // store the hash so that we can broadcast_remove the broadcast from queue after we join the group
 		const uint32_t hash = fnv1a_32_salted(ciphertext,GROUP_BROADCAST_LEN);
@@ -303,7 +303,7 @@ static inline void *broadcast_threaded(void *arg)
 					{ // chose one and send to it, then delist if applicable
 						if(owner == ENUM_OWNER_GROUP_CTRL)
 						{ // Make sure the group has peers (ie: that we're not attempting to broadcast into the group we're trying to join). TODO Could also check that >0 are online.
-							if(!getter_group_uint32(set_g(n,NULL),offsetof(struct group_list,peercount)))
+							if(!group_peercount(set_g(n,NULL)))
 								continue;
 						}
 						error_printf(0,"Broadcast chose ONLINE victim owner=%u",owner);

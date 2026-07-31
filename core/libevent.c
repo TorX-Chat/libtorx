@@ -255,7 +255,7 @@ static inline void pipe_auth_and_request_peerlist(struct event_strc *event_strc)
 	sodium_memzero(peeronion,sizeof(peeronion));
 	if(event_strc->g > -1 && event_strc->owner == ENUM_OWNER_GROUP_PEER)
 	{ // sanity check, more or less.
-		const uint32_t peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
+		const uint32_t peercount = group_peercount(event_strc->g);
 		const uint32_t trash = htobe32(peercount);
 		message_send(event_strc->n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,&trash,sizeof(trash));
 	}
@@ -994,7 +994,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									continue;
 								}
 								const uint32_t peer_g_peercount = be32toh(align_uint32((void*)event_strc->buffer));
-								const uint32_t g_peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
+								const uint32_t g_peercount = group_peercount(event_strc->g);
 								if(peer_g_peercount < g_peercount)
 								{ // Peer has less in their list than us, lets give them our list
 									error_printf(2,"Sending peerlist because %u < %u",peer_g_peercount,g_peercount);
@@ -1412,7 +1412,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								if(peer_n > -1)
 								{
 									error_simple(0,RED"Checkpoint New group peer!(read_conn 2)"RESET);
-								//	const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+								//	const uint32_t peercount = group_peercount(g);
 								//	if(peercount == 1) // This only *needs* to run on first connection.... in any other circumstance, new peers should find us.
 								//		message_send(peer_n,ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,NULL,0);
 								//	else
@@ -1452,7 +1452,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						{ // Approved a new peer
 							error_simple(0,RED"Checkpoint New group peer! (read_conn 3)"RESET);
 					//		error_simple(3,"Received ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST. Responding with peerlist.");
-					//		const uint32_t g_peercount = getter_group_uint32(event_strc->g,offsetof(struct group_list,peercount));
+					//		const uint32_t g_peercount = group_peercount(event_strc->g);
 					//		message_send(new_peer,ENUM_PROTOCOL_GROUP_PEERLIST,itovp(event_strc->g),GROUP_PEERLIST_PRIVATE_LEN); // (3) respond with peerlist
 						}
 					}

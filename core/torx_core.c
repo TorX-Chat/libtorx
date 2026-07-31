@@ -1242,7 +1242,7 @@ void message_sort(const int g)
 	const uint8_t hide_blocked_group_peer_messages_local = threadsafe_read_uint8(&mutex_global_variable,&hide_blocked_group_peer_messages);
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int group_n = group[g].n;
-	const uint32_t peercount = group[g].peercount;
+	const uint32_t peercount = group_peercount_nolock(g);
 	const int *peerlist = group[g].peerlist;
 	struct msg_list *msg_list = group[g].msg_first;
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
@@ -1518,7 +1518,7 @@ int message_load_more(const int n)
 			loaded += freshly_loaded;
 		}
 	//	error_printf(0,"Checkpoint loaded group_n=%d count=%d",group_n,freshly_loaded);
-		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t peercount = group_peercount(g);
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -2254,9 +2254,8 @@ void zero_g(const int g)
 	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
 		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
 	group[g].hash = 0; // please don't initialize as -1
-	group[g].peercount = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
-	torx_free((void*)&group[g].peerlist);
+	torx_free((void*)&group[g].peerlist); // XXX this is also what zeroes the peercount, which is derived from its length
 	group[g].invite_required = 0;
 	group[g].msg_index_iter = 0; // please don't initialize as -1
 	group[g].msg_index = NULL; // do not free, there is no space allocated
@@ -3370,9 +3369,8 @@ static void initialize_g(const int g) // XXX do not put locks in here
 	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
 		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
 	group[g].hash = 0; // please don't initialize as -1
-	group[g].peercount = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
-	group[g].peerlist = NULL;
+	group[g].peerlist = NULL; // XXX this is also what zeroes the peercount, which is derived from its length
 	group[g].invite_required = 0;
 	group[g].msg_index_iter = 0;
 	group[g].msg_index = NULL;
@@ -3726,9 +3724,10 @@ int set_g(const int n,const void *arg)
 			while(group[g].n > -1 || !is_null(group[g].id,GROUP_ID_SIZE))
 			{ // XXX EXPERIMENTAL
 				uint32_t gg = 0;
-				while(gg < group[g].peercount && group[g].peerlist[gg] != n)
+				const uint32_t gg_peercount = group_peercount_nolock(g); // XXX mutex_expand_group is held across this whole function, so the _nolock variant is mandatory
+				while(gg < gg_peercount && group[g].peerlist[gg] != n)
 					gg++;
-				if(gg == group[g].peercount)
+				if(gg == gg_peercount)
 					g++; // was not in this group
 				else
 					break; // winner! set peer[n].associated_group here so that it only need be set once
@@ -3818,7 +3817,7 @@ int group_online(const int g)
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(peerlist != NULL)
 	{
-		const uint32_t peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		const uint32_t peercount = group_peercount(g);
 		for(uint32_t nn = 0 ; nn < peercount ; nn++)
 		{
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
@@ -3838,7 +3837,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 // Any length of prefix can be passed, NULL / 0-56. If there are multiple matches (ex: short prefix), each will be tried.
 //TODO This could be a burden on file transfers and it might be worthwhile in the future to assign peers to a specific port or otherwise authenticate sockets/streams instead.
 	const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+	const uint32_t g_peercount = group_peercount(g);
 	size_t peeronion_len = 0;
 	if(peeronion_prefix)
 		peeronion_len = strlen(peeronion_prefix);
@@ -3913,12 +3912,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %u: %s"RESET,message_len,b64_encode(message, message_len));
 	//	breakpoint();
 	}
-	else if(g_peercount != 0)
-	{
-		error_simple(0,"Failure of sanity check in group_check_sig: Peerlist is null while peercount is not 0. Coding error. Report this.");
-		breakpoint();
-	}
-	else
+	else // XXX There used to be a sanity check here for "peerlist is null while peercount is not 0". That is now unrepresentable: the peercount IS the length of peerlist.
 		error_printf(0,"Group=%d has no peerlist and peercount=%u. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	torx_free((void*)&prefixed_message);
@@ -3939,7 +3933,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	memcpy(local_group_peeronion,group_peeronion,56);
 	local_group_peeronion[56] = '\0';
 	pthread_mutex_lock(&mutex_group_peer_add); // 🟥🟥
-	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+	const uint32_t g_peercount = group_peercount(g);
 	const uint8_t g_invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	const int *peerlist = group[g].peerlist;
@@ -4027,15 +4021,15 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	snprintf(setting_name,sizeof(setting_name),"group_peer%d",peer_index); // "group_peer" + peer_index, for uniqueness. might make deleting complex.
 	const int peer_index_group = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index_group,setting_name,"1",1); // the 1 is just to bypass NULL/zero len checks in sql_setting and is not used.
-	// Add it to our peerlist
+	// Add it to our peerlist. XXX Growing .peerlist IS how the peercount is incremented; there is no longer a counter to keep in sync with it.
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	if(group[g].peerlist)
-		group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)g_peercount+1)*sizeof(int));
+	const uint32_t count = group_peercount_nolock(g); // Re-derived under the wrlock. Cannot differ from g_peercount above: mutex_group_peer_add serializes all of group_add_peer.
+	if(group[g].peerlist) // XXX Do NOT collapse this into a bare torx_realloc: it warns + breakpoints on a NULL arg and would assume a secure allocation, whereas .peerlist is insecure
+		group[g].peerlist = torx_realloc(group[g].peerlist,((size_t)count+1)*sizeof(int));
 	else
-		group[g].peerlist = torx_insecure_malloc(((size_t)g_peercount+1)*sizeof(int));
-	group[g].peerlist[group[g].peercount] = n;
-	group[g].peercount++;
-//	error_printf(0,"Checkpoint group_add_peer g==%d peercount==%u",g,group[g].peercount);
+		group[g].peerlist = torx_insecure_malloc(((size_t)count+1)*sizeof(int));
+	group[g].peerlist[count] = n;
+//	error_printf(0,"Checkpoint group_add_peer g==%d peercount==%u",g,count+1);
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
 	load_onion(n); // connect to their onion with our signed onion, also in sql_populate_peer()
@@ -4055,7 +4049,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 	uint8_t g_invite_required = 0;
 	pthread_mutex_lock(&mutex_group_join); // 🟥🟥
 	int group_n = getter_group_int(g,offsetof(struct group_list,n));
-	const uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount)); // this is CONFIRMED PEERS, not unconfirmed/reported on offer
+	const uint32_t g_peercount = group_peercount(g); // this is CONFIRMED PEERS, not unconfirmed/reported on offer
 	uint8_t responding_to_first_offer = 0;
 	if(inviter_n > -1)
 	{ // Invite-Only group
@@ -5344,10 +5338,14 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 	{ // Recursively takedown all GROUP_PEER in peerlist // TODO consider sending a kill code to online peers first ( pro: wastes less peer resources. Con: takes more time to shutdown, peers will be added again when someone who didn't get the kill code shares the peerlist . Conclusion: don't bother.)
 		uint32_t count = 0;
 		g = set_g(n,NULL);
-		uint32_t g_peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
-		while(count < g_peercount)
-		{
+		while(1)
+		{ // XXX The bound is re-derived under the SAME lock that reads the element, so this loop cannot outrun a .peerlist that the recursive takedown below frees or replaces
 			pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+			if(count >= group_peercount_nolock(g))
+			{
+				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+				break;
+			}
 			const int specific_peer = group[g].peerlist[count++];
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete);

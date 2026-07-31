@@ -88,16 +88,16 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 	{ // Note: relevant group, not necessarily target group
 		group_n = getter_group_int(g,offsetof(struct group_list,n));
 		invite_required = getter_group_uint8(g,offsetof(struct group_list,invite_required));
-		peercount = getter_group_uint32(g,offsetof(struct group_list,peercount));
+		peercount = group_peercount(g);
 		getter_array(&onion_group_n,sizeof(onion_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 		getter_array(&sign_sk_group_n,sizeof(sign_sk_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	}
 	if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
 	{ // Audited 2024/02/16 // Format: Peercount[4] + onions (56*peercount) + ed25519_pk(56*peercount) (if relevant: + invitation signature(56*peercount)) // NOTE: If this is first-connect, ie peerlist == NULL, trust and connect to the owner. Otherwise, ignore the owner and group_add_peer everyone else only.
-		/* XXX DO NOT size these loops from .peercount. The caller sized base_message_len from GROUP_PEERLIST_PUBLIC_LEN/PRIVATE_LEN using its own
-		   earlier read of .peercount, and group_add_peer can increment .peercount (from any peer's dispatcher thread, which a peer can provoke by
-		   sending us a peerlist) in between. Deriving the entry count from base_message_len, which is what sized this allocation, is what makes
-		   these writes structurally incapable of overflowing it. */
+		/* XXX DO NOT size these loops from group_peercount(). The caller sized base_message_len from GROUP_PEERLIST_PUBLIC_LEN/PRIVATE_LEN using its
+		   own earlier peercount, and group_add_peer can grow .peerlist (from any peer's dispatcher thread, which a peer can provoke by sending us a
+		   peerlist) in between. Deriving the entry count from base_message_len, which is what sized this allocation, is what makes these writes
+		   structurally incapable of overflowing it. */
 		const size_t per_peer = 56 + crypto_sign_PUBLICKEYBYTES + (invite_required ? crypto_sign_BYTES : 0);
 		if(base_message_len < sizeof(uint32_t) + per_peer || (base_message_len - sizeof(uint32_t)) % per_peer)
 		{
@@ -109,7 +109,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		int *peerlist_snapshot = torx_insecure_malloc(sizeof(int)*(size_t)entries);
 		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		if(group[g].peerlist == NULL || torx_allocation_len(group[g].peerlist)/sizeof(int) < entries)
-		{ // Cannot occur: .peercount only ever grows, and the caller read it before we were called
+		{ // Cannot occur: .peerlist only ever grows, and the caller sized this message before we were called
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 			torx_free((void*)&peerlist_snapshot);
 			error_printf(0,"Group %d has fewer peers than the %u a GROUP_PEERLIST was sized for. Coding error. Report this.",g,entries);
@@ -497,7 +497,7 @@ static inline int *generate_target_list(uint32_t *target_count,const int n)
 	if(owner == ENUM_OWNER_GROUP_CTRL/* && group_msg*/)
 	{
 		const int g = set_g(n,NULL);
-		if((*target_count = getter_group_uint32(g,offsetof(struct group_list,peercount))) < 1)
+		if((*target_count = group_peercount(g)) < 1)
 		{ // this isn't necessarily an error. this would be an OK place to bail out in some circumstances like broadcast messages
 			error_simple(0,"Group has no users. Refusing to queue message. This is fine.");
 			breakpoint();

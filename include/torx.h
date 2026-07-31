@@ -369,9 +369,9 @@ struct group_list { // XXX NOTE: individual peers will be in peer struct but pee
 	int n; // n of our GROUP_CTRL
 	int invitees[MAX_INVITEES];
 	uint32_t hash; // only relevant to groups with 0 peers that we are broadcasting for
-	uint32_t peercount; // This is CONFIRMED PEERS, not reported by offers. Does NOT include us. DO NOT SET PEERCOUNT except with ++ or horrible things will happen.
+	// XXX There is no peercount member: use group_peercount(g), which derives it from the length of .peerlist. (CONFIRMED PEERS, not what peers report on offers. Does NOT include us.)
 	uint32_t msg_count;
-	int *peerlist; // does NOT include us, can be list of onions OR peer_index TODO decide
+	int *peerlist; // does NOT include us, can be list of onions OR peer_index TODO decide. XXX Its allocation length is the sole record of the peercount; growing it IS how a peer is counted.
 	uint8_t invite_required; // default 1. 0 is QR compatible. 2 is passed on network only and means that teh group is empty / we need first user to sign our onion
 	uint32_t msg_index_iter; // this is for group_get_index
 	struct msg_list *msg_index; // no space is allocated, do not free. this is for group_get_index
@@ -680,6 +680,7 @@ uint16_t getter_group_uint16(const int g,const size_t offset)__attribute__((warn
 uint32_t getter_group_uint32(const int g,const size_t offset)__attribute__((warn_unused_result));
 uint64_t getter_group_uint64(const int g,const size_t offset)__attribute__((warn_unused_result));
 int getter_group_int(const int g,const size_t offset)__attribute__((warn_unused_result));
+uint32_t group_peercount(const int g)__attribute__((warn_unused_result)); // XXX Replaces the former group[g].peercount member, which no longer exists. Confirmed peers, not including us.
 /* The following are ONLY SAFE ON packet struct or global variables because of their fixed size / location. To prevent data races, not race conditions. */
 void threadsafe_write(pthread_rwlock_t *mutex,void *destination,const void *source,const size_t len);
 int8_t threadsafe_read_int8(pthread_rwlock_t *mutex,const int8_t *arg)__attribute__((warn_unused_result));

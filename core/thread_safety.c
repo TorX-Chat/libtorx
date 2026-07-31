@@ -304,7 +304,6 @@ struct offsets offsets_group[] = {
 	offsize(group_list,id,"id"),
 	offsize(group_list,n,"n"),
 	offsize(group_list,hash,"hash"),
-	offsize(group_list,peercount,"peercount"),
 	offsize(group_list,msg_count,"msg_count"),
 	offsize(group_list,peerlist,"peerlist"),
 	offsize(group_list,invite_required,"invite_required"),
@@ -863,6 +862,29 @@ uint64_t getter_group_uint64(const int g,const size_t offset)
 int getter_group_int(const int g,const size_t offset)
 {
 	return getter_group_union(g,offset,sizeof(int)).integer;
+}
+
+uint32_t group_peercount_nolock(const int g)
+{ /* XXX Caller MUST already hold mutex_expand_group (rd or wr) XXX
+	Number of CONFIRMED peers in a group, NOT including us, and NOT what a peer reports on an offer/peerlist (see untrusted_peercount).
+	Derived from the length of .peerlist rather than stored: the two are only ever written together, under one mutex_expand_group wrlock,
+	so deriving makes them incapable of disagreeing. Returns 0 for an empty group, .peerlist being NULL there. */
+	return torx_allocation_len(group[g].peerlist)/(uint32_t)sizeof(int);
+}
+
+uint32_t group_peercount(const int g)
+{ // Locking wrapper. Use group_peercount_nolock where mutex_expand_group is already held.
+	if(g < 0)
+	{
+		error_simple(-1,"group_peercount sanity check failed. Coding error. Report this.");
+		return 0;
+	}
+	else if(!group) // can occur during shutdown
+		return 0;
+	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+	const uint32_t peercount = group_peercount_nolock(g);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	return peercount;
 }
 
 #define getter_group_array_sanity_check(offsets_struc) /* Cannot be converted to function */ \
