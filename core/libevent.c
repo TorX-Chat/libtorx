@@ -1158,7 +1158,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						const uint64_t requested_start = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN]));
 						const uint64_t requested_end = be64toh(align_uint64((void*)&event_strc->buffer[CHECKSUM_BIN_LEN+sizeof(uint64_t)]));
 						char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
-						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1)
+						if(file_path == NULL || requested_start > size - 1 || requested_end > size - 1 || requested_end < requested_start)
 						{ // Sanity check on request. File might not exist if size is 0
 							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
 							error_printf(0,"Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"",requested_start,requested_end,size);

@@ -202,10 +202,16 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			FILE *fd_active = peer[file_n].file[f].fd;
 			start = peer[file_n].file[f].request[r].start[fd_type] + peer[file_n].file[f].request[r].transferred[fd_type];
-		//	error_printf(0,"Checkpoint file_n=%d f=%d fd=%d r=%d start=%lu",file_n,f,fd_type,r,start); // TODO remove
 			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
-				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1); // hopefully this +1 means "inclusive" because we were losing a byte in the middle
+				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1);
+			const uint64_t size = peer[file_n].file[f].size;
 			torx_unlock(file_n) // 🟩🟩🟩
+			if(start + data_size > size)
+			{
+				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
+				error_printf(0,"Send_prep sanity check failure. Peer requested more data than file contains: %lu + %u > %lu. Possible coding error. Report this.",start,data_size,size);
+				goto error;
+			}
 			if(fd_active == NULL)
 			{
 				char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));

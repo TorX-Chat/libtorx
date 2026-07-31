@@ -1033,7 +1033,11 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 			f = set_f(file_n,(const unsigned char *)message,CHECKSUM_BIN_LEN);
 		}
 		if(f > -1) // NOT else if
-			sql_save_file_status(file_n,f,ENUM_FILE_INACTIVE_COMPLETE); // XXX "For idle outbound, must be ENUM_FILE_INACTIVE_COMPLETE"
+		{ // Claim COMPLETE if we actually hold the whole file. An inbound FILE_INFO_REQUEST triggers an offer for a file we may still be receiving, so file_status is a required check
+			const int file_status = file_status_get(file_n,f);
+			if(file_status == ENUM_FILE_INACTIVE_COMPLETE || file_status == ENUM_FILE_ACTIVE_OUT)
+				sql_save_file_status(file_n,f,ENUM_FILE_INACTIVE_COMPLETE);
+		}
 	}
 	#else
 	(void)n;
