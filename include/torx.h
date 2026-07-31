@@ -799,7 +799,6 @@ uint8_t utf8_valid(const void *const src,const size_t len)__attribute__((warn_un
 		size_t height;
 		size_t width;
 		size_t multiplier;
-		size_t size_allocated;
 	};
 	struct qr_data *qr_bool(const char *text,const size_t multiplier)__attribute__((warn_unused_result));
 	char *qr_utf8(const struct qr_data *arg)__attribute__((warn_unused_result));

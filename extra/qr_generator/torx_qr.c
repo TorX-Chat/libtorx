@@ -86,15 +86,13 @@ struct qr_data *qr_bool(const char *text,const size_t multiplier)
 		int border = 1;
 		height = width = multiplier *(size_t)(border*2 + size);
 		struct qr_data *qr_data = torx_secure_malloc(sizeof(struct qr_data));
-		qr_data->size_allocated = height*width+1; // +1 might not be necessary here
-		bool *pixels = torx_secure_malloc(qr_data->size_allocated); // verified correct allocation though not sure we need the +1 for nullptr
+		bool *pixels = torx_secure_malloc(height*width);
 		int pixelIndex = 0;
 		for (int y = -border; y < size + border; y++)
 			for (size_t j = 0; j < multiplier; j++)
 				for (int x = -border; x < size + border; x++)
 					for (size_t i = 0; i < multiplier; i++) // expands width
 						pixels[pixelIndex++] = (qrcodegen_getModule(qrcode, x, y) ? 0 : 1); // 1 is black, 0 is white
-	//	error_printf(0,"Checkpoint qr_bool pixels=%d allocated=%lu",pixelIndex,qr_data->size_allocated);
 		qr_data->data = pixels;
 		qr_data->height = height;
 		qr_data->width = width;
