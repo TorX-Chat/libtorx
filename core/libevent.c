@@ -1012,7 +1012,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									error_printf(2,"NOT sending peerlist because %u !< %u\n",peer_g_peercount,g_peercount);
 							}
 							else if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
-							{ // Audited 2024/02/16 // Format: g_peercount + onions + ed25519 keys + invitation sigs
+							{ // Format: g_peercount + onions + ed25519 keys + invitation sigs
 								if(buffer_len < sizeof(uint32_t) + DATE_SIGN_LEN)
 								{
 									error_simple(0,"Peer sent totally empty PEERLIST. Buggy peer.");

@@ -1846,7 +1846,7 @@ char *affix_protocol_len(const uint16_t protocol,const char *total_unsigned,cons
 }
 
 char *message_sign(const unsigned char *sign_sk,const time_t time,const time_t nstime,const int p_iter,const char *message_unsigned,const uint32_t base_message_len)
-{ // Audited 2024/02/18 // Message + '\0' + [Time] + [NSTime] + Protocol + Signature Note: should theoretically work with unsigned too (but no value in using it as such)
+{ // Message + '\0' + [Time] + [NSTime] + Protocol + Signature Note: should theoretically work with unsigned too (but no value in using it as such)
 	pthread_rwlock_rdlock(&mutex_protocols); // 🟧
 	const uint16_t protocol = protocols[p_iter].protocol;
 	const uint32_t null_terminated_len = protocols[p_iter].null_terminated_len;
@@ -4048,7 +4048,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 }
 
 int group_join(const int inviter_n,const unsigned char *group_id,const char *group_name,const char *creator_onion,const unsigned char *creator_ed25519_pk)
-{ // Audited 2024/02/17 // NOTE: if group is public (not invite-only), pass -1 as inviter_n // Note: Cannot assume null terminated creator_onion // TODO Note: might be better to pass n,i of the offer instead of creator_onion and creator_ed25519_pk, to prevent rare potential read race
+{ // NOTE: if group is public (not invite-only), pass -1 as inviter_n // Note: Cannot assume null terminated creator_onion // TODO Note: might be better to pass n,i of the offer instead of creator_onion and creator_ed25519_pk, to prevent rare potential read race
 	if(group_id == NULL || (inviter_n > -1 && ((creator_onion && !creator_ed25519_pk) || (!creator_onion && creator_ed25519_pk) || (creator_onion && creator_ed25519_pk && !utf8_valid(creator_onion,56)))))
 	{
 		error_simple(0,"Group join sanity check failed. Coding error or invalid creator onion passed from peer. Report this.");
@@ -4150,7 +4150,7 @@ int group_join_from_i(const int n,const int i)
 }
 
 int group_generate(const uint8_t invite_required,const char *name)
-{ // Audited 2024/02/15 // NOTE: if group is public (not invite-only) then the .id can be shared as a QR/otherwise which new users will use to sign their onion and pass around the network until they get in
+{ // NOTE: if group is public (not invite-only) then the .id can be shared as a QR/otherwise which new users will use to sign their onion and pass around the network until they get in
 	if(name == NULL || strlen(name) == 0)
 	{
 		error_simple(0,"Cannot generate a group with 0 length name.");

@@ -168,10 +168,6 @@ severable if found in contradiction with the License or applicable law.
 #define GROUP_OFFER_ACCEPT_LEN		(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES)
 #define GROUP_OFFER_ACCEPT_REPLY_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2)
 #define GROUP_OFFER_ACCEPT_FIRST_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES)
-/* XXX The (size_t) casts widen these products to 64 bit ONLY where size_t is 64 bit: crypto_sign_PUBLICKEYBYTES/crypto_sign_BYTES are unsigned int (32U/64U),
-   so without them the products are computed in 32 bit and wrap. On a 32 bit target (armeabi-v7a, x86) the casts widen nothing and the products still wrap.
-   The casts are therefore NOT sufficient on their own: EVERY caller MUST bound g_peercount BEFORE expanding these, and must do so on the peercount itself,
-   never on the resulting length (which, having already wrapped, cannot be checked after the fact). */
 #define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES))
 #define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
 #define GROUP_PRIVATE_ENTRY_REQUEST_LEN	(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)

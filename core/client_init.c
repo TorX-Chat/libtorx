@@ -93,11 +93,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		getter_array(&sign_sk_group_n,sizeof(sign_sk_group_n),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
 	}
 	if(protocol == ENUM_PROTOCOL_GROUP_PEERLIST)
-	{ // Audited 2024/02/16 // Format: Peercount[4] + onions (56*peercount) + ed25519_pk(56*peercount) (if relevant: + invitation signature(56*peercount)) // NOTE: If this is first-connect, ie peerlist == NULL, trust and connect to the owner. Otherwise, ignore the owner and group_add_peer everyone else only.
-		/* XXX DO NOT size these loops from group_peercount(). The caller sized base_message_len from GROUP_PEERLIST_PUBLIC_LEN/PRIVATE_LEN using its
-		   own earlier peercount, and group_add_peer can grow .peerlist (from any peer's dispatcher thread, which a peer can provoke by sending us a
-		   peerlist) in between. Deriving the entry count from base_message_len, which is what sized this allocation, is what makes these writes
-		   structurally incapable of overflowing it. */
+	{ // Format: Peercount[4] + onions (56*peercount) + ed25519_pk(56*peercount) (if relevant: + invitation signature(56*peercount)) // NOTE: If this is first-connect, ie peerlist == NULL, trust and connect to the owner. Otherwise, ignore the owner and group_add_peer everyone else only.
 		const size_t per_peer = 56 + crypto_sign_PUBLICKEYBYTES + (invite_required ? crypto_sign_BYTES : 0);
 		if(base_message_len < sizeof(uint32_t) + per_peer || (base_message_len - sizeof(uint32_t)) % per_peer)
 		{
@@ -146,7 +142,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		getter_array(&base_message[56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES,group_n,INT_MIN,-1,offsetof(struct peer_list,invitation));
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST)
-	{ // Audited 2024/02/15 // GROUP_ID[32] + Peercount[4] + invite_required[1] { + GROUP_CTRL's onion + ed25519_pk[32] }
+	{ // GROUP_ID[32] + Peercount[4] + invite_required[1] { + GROUP_CTRL's onion + ed25519_pk[32] }
 		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		memcpy(base_message,group[g].id,GROUP_ID_SIZE); // affix group_id
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
@@ -161,7 +157,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		invitee_add(g,target_n);
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
-	{ // Audited 2024/02/15 // TODO should probably have some checks here because ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY is automatically sent from libevent and we don't verify that the group and onions exist. should cancel if no.
+	{ // TODO should probably have some checks here because ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY is automatically sent from libevent and we don't verify that the group and onions exist. should cancel if no.
 		pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 		memcpy(base_message,group[g].id,GROUP_ID_SIZE);
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
