@@ -923,15 +923,22 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		const int o = set_o(group_n,f,n);
 		if(o > -1)
 		{
-			torx_read(group_n) // 🟧🟧🟧
+			torx_write(group_n) // 🟥🟥🟥 write for the whole check+write to ensure no races
 			const uint8_t offer_exists = peer[group_n].file[f].offer ? 1 : 0;
 			const uint8_t split_hashes_exists = peer[group_n].file[f].split_hashes ? 1 : 0;
 			const uint8_t filename_exists = peer[group_n].file[f].filename ? 1 : 0;
-			const uint8_t offer_progress_exists = peer[group_n].file[f].offer[o].offer_progress ? 1 : 0; // only exists if we have received a partial before
-			torx_unlock(group_n) // 🟩🟩🟩
-			if(offer_exists)
+			const uint8_t offer_progress_exists = offer_exists && peer[group_n].file[f].offer[o].offer_progress ? 1 : 0; // only exists if we have received a partial before
+			const uint8_t file_splits = peer[group_n].file[f].splits;
+			if(split_hashes_exists && splits != file_splits)
+			{ // .splits is authenticated by the hash of hashes in FILE_OFFER_GROUP. An unauthenticated _PARTIAL must never contradict it.
+				torx_unlock(group_n) // 🟩🟩🟩
+				error_printf(0,"Peer sent a FILE_OFFER_PARTIAL claiming %u splits on a file with %u. Discarding.",splits,file_splits);
+				return -1;
+			}
+			else if(offer_exists)
 			{ // Sanity check
-				torx_write(group_n) // 🟥🟥🟥
+				if(offer_progress_exists && torx_allocation_len(peer[group_n].file[f].offer[o].offer_progress) != sizeof(uint64_t)*(splits+1))
+					torx_free((void*)&peer[group_n].file[f].offer[o].offer_progress); // Offerer changed its claimed splits (only reachable before .split_hashes exists). This should never occur, but shouldn't be harmful.
 				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
 				{
 					peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
@@ -940,10 +947,10 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 				}
 				for(int16_t section = 0; section <= splits; section++)
 					peer[group_n].file[f].offer[o].offer_progress[section] = be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + (size_t)section*sizeof(uint64_t)]));
-				torx_unlock(group_n) // 🟩🟩🟩
 			}
-			else
-				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.1");
+			torx_unlock(group_n) // 🟩🟩🟩
+			if(!offer_exists)
+				error_simple(0,"Critical failure in process_file_offer_inbound caused by !offer. Coding error. Report this.");
 			if(!split_hashes_exists && !filename_exists) // Whether this is the first time seeing the file or not, we need additional info
 			{ // Do not modify logic here.
 				if(offer_progress_exists) // Only requesting if this is the second time or greater that we got a _PARTIAL, because otherwise we could be requesting an offer that is already on its way (due to _PARTIAL being sent on a different socket and arriving first)
@@ -1306,7 +1313,7 @@ int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,c
 	const uint64_t file_size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 	const uint8_t splits = getter_uint8(n,INT_MIN,f,offsetof(struct file_list,splits));
 	torx_read(n) // 🟧🟧🟧
-	if(peer[n].file[f].split_progress == NULL)
+	if(peer[n].file[f].split_progress == NULL || (size_t)section >= torx_allocation_len(peer[n].file[f].split_progress)/sizeof(uint64_t))
 	{
 		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"Sanity check failed in calculate_file_request_start_end2. Coding error. Report this.");
@@ -1320,7 +1327,7 @@ int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,c
 	{ // Group transfer
 		uint64_t peer_progress;
 		torx_read(n) // 🟧🟧🟧
-		if(peer[n].file[f].offer && peer[n].file[f].offer[o].offer_progress)
+		if(peer[n].file[f].offer && peer[n].file[f].offer[o].offer_progress && (size_t)section < torx_allocation_len(peer[n].file[f].offer[o].offer_progress)/sizeof(uint64_t))
 			peer_progress = peer[n].file[f].offer[o].offer_progress[section];
 		else
 			peer_progress = 0;
@@ -1446,6 +1453,9 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 					const uint8_t blacklisted = peer[peer[n].file[f].offer[o].offerer_n].blacklisted;
 					if(!online || blacklisted) // check blacklist and online status
 						continue;
+					if(peer[n].file[f].offer[o].offer_progress == NULL)
+						continue; // Offerer is registered but sent no valid _PARTIAL, or it was cleared by file_remove_offer
+					const uint32_t offer_sections = torx_allocation_len(peer[n].file[f].offer[o].offer_progress)/sizeof(uint64_t); // XXX authoritative bound: sized by the offerer's claimed splits, which can differ from .splits
 					uint8_t utilized = 0;
 					int8_t utilized_fd_type = -1;
 					for(int16_t section = 0; section <= splits; section++)
@@ -1460,7 +1470,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 					}
 					if(utilized >= online)
 						continue; // We already have 2+ requests of this file from this peer. Go to the next peer.
-					for(int16_t section = 0; section <= splits; section++)
+					for(int16_t section = 0; section <= splits && (uint32_t)section < offer_sections; section++)
 					{ // Loop through all peers looking for the largest (most complete) section... literally any section. Continue if we have completed this section or if it is already being requested from someone else.
 						const uint64_t offerer_progress = peer[n].file[f].offer[o].offer_progress[section];
 						const int relevant_split_status_n = peer[n].file[f].split_status_n[section];
