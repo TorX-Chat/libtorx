@@ -1752,7 +1752,7 @@ void sql_populate_setting(const int force_plaintext)
 						pos += sizeof(uint16_t);
 						if(pos + filename_len + sizeof(uint16_t) > setting_value_len)
 						{
-							error_simple(0,"Invalid file- setting (filename length) loaded from sql. Report this.");
+							error_simple(2,"Invalid file- setting (filename length) loaded from sql. Report this.");
 							continue;
 						}
 						const char *filename_ptr = &setting_value[pos];
