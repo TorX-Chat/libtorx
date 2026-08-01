@@ -295,7 +295,6 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 		uint64_t size;
 		time_t modified; // modification time (UTC, epoch time)
 		/* Exclusively Inbound transfer related */
-		// XXX There is no .splits member: the number of splits is derived from the allocation length of whichever of the below (or of .split_hashes) exists. See splits_determination().
 		char *split_path;
 		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
 		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
@@ -368,9 +367,8 @@ struct group_list { // XXX NOTE: individual peers will be in peer struct but pee
 	int n; // n of our GROUP_CTRL
 	int invitees[MAX_INVITEES];
 	uint32_t hash; // only relevant to groups with 0 peers that we are broadcasting for
-	// XXX There is no peercount member: use group_peercount(g), which derives it from the length of .peerlist. (CONFIRMED PEERS, not what peers report on offers. Does NOT include us.)
 	uint32_t msg_count;
-	int *peerlist; // does NOT include us, can be list of onions OR peer_index TODO decide. XXX Its allocation length is the sole record of the peercount; growing it IS how a peer is counted.
+	int *peerlist; // does NOT include us. Its allocation length is the sole record of the peercount; growing it IS how a peer is counted.
 	uint8_t invite_required; // default 1. 0 is QR compatible. 2 is passed on network only and means that teh group is empty / we need first user to sign our onion
 	uint32_t msg_index_iter; // this is for group_get_index
 	struct msg_list *msg_index; // no space is allocated, do not free. this is for group_get_index
