@@ -161,10 +161,14 @@ static inline void peer_online(struct event_strc *event_strc)
 			torx_read(file_n) // 🟧🟧🟧
 			for(int f = 0; !is_null(peer[file_n].file[f].checksum,CHECKSUM_BIN_LEN); f++)
 			{
+				const uint8_t split_progress_exists = peer[file_n].file[f].split_progress ? 1 : 0;
 				torx_unlock(file_n) // 🟩🟩🟩
-				const int file_status = file_status_get(file_n,f);
-				if(file_status == ENUM_FILE_INACTIVE_ACCEPTED || file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT)
-					file_request_internal(file_n,f,-1); // re-send request for previously accepted file
+				if(split_progress_exists)
+				{
+					const int file_status = file_status_get(file_n,f);
+					if(file_status == ENUM_FILE_INACTIVE_ACCEPTED || file_status == ENUM_FILE_ACTIVE_IN || file_status == ENUM_FILE_ACTIVE_IN_OUT)
+						file_request_internal(file_n,f,-1); // re-send request for previously accepted file
+				}
 				torx_read(file_n) // 🟧🟧🟧
 			}
 			torx_unlock(file_n) // 🟩🟩🟩

@@ -837,8 +837,9 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		error_printf(0,"Sanity check failed in process_pause_cancel: %u",protocol);
 		return;
 	}
-	section_unclaim(file_n,f,peer_n,-1); // Calling this regardless of file_is_active to avoid potential race conditons. Only relevant to ENUM_FILE_ACTIVE_IN / ENUM_FILE_ACTIVE_IN_OUT
-	const int is_active = file_is_active(file_n,f); // Should be before we do anything. This is "was_active"
+	const int is_active = file_is_active(file_n,f); // MUST be before section_unclaim.
+	// if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
+		section_unclaim(file_n,f,file_n == peer_n ? -1 : peer_n,-1);
 	if(file_n == peer_n && protocol == ENUM_PROTOCOL_FILE_CANCEL)
 	{ // Cancel. Free everything *EXCEPT* checksum, filename, file_path, split_hashes, split_path. XXX DO NOT CALL zero_f.
 		torx_write(file_n) // 🟥🟥🟥
@@ -1396,10 +1397,10 @@ int calculate_file_request_start_end(uint64_t *start,uint64_t *end,const int n,c
 }
 
 static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const int f,const int peer_n,const int8_t fd_type)
-{ // This is used on ALL TYPES of file transfer (group, PM, p2p).
-	const uint8_t peer_owner = getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	if(n < 0 || f < 0 || peer_n < 0 || peer_owner == ENUM_OWNER_GROUP_CTRL || active_transfers_ongoing == NULL)
-	{
+{ // This is used on ALL TYPES of file transfer (group, PM, p2p). To unclaim sections regardless of which peer claimed them, pass peer_n == -1
+	const uint8_t peer_owner = peer_n > -1 ? getter_uint8(peer_n,INT_MIN,-1,offsetof(struct peer_list,owner)) : 0;
+	if(n < 0 || f < 0 || (peer_n > -1 && peer_owner == ENUM_OWNER_GROUP_CTRL) || active_transfers_ongoing == NULL)
+	{ // GROUP_CTRL can never claim a section (only GROUP_PEER can, see select_peer), so it is never a valid peer_n. Pass -1 instead.
 		error_printf(0,"Unclaim sanity check fail: n=%d f=%d peer_n=%d peer_owner=%u",n,f,peer_n,peer_owner);
 		return 0;
 	}
@@ -1413,7 +1414,7 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 	const uint32_t sections = torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int);
 	for(uint32_t section = 0; section < sections; section++)
 	{
-		if(peer[n].file[f].split_status_n[section] == peer_n && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
+		if(peer[n].file[f].split_status_n[section] > -1 && (peer[n].file[f].split_status_n[section] == peer_n || peer_n < 0) && (peer[n].file[f].split_status_fd[section] == fd_type || fd_type < 0))
 		{
 			peer[n].file[f].split_status_n[section] = -1; // unclaim section
 			peer[n].file[f].split_status_fd[section] = -1;
@@ -1429,8 +1430,8 @@ static inline int unclaim(uint16_t *active_transfers_ongoing,const int n,const i
 }
 
 int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_type)
-{ // This is used on ALL TYPES of file transfer (group, PM, p2p) // To unclaim all sections, pass fd_type == -1
-	if(n < 0 || peer_n < 0)
+{ // This is used on ALL TYPES of file transfer (group, PM, p2p). To unclaim all sections, pass fd_type == -1. To unclaim regardless of which peer claimed them, pass peer_n == -1
+	if(n < 0)
 	{ // All other things can be -1
 		error_simple(0,"Section unclaim failed sanity check.");
 		return 0;
