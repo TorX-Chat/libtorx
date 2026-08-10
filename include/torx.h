@@ -105,6 +105,15 @@ severable if found in contradiction with the License or applicable law.
 	#include <netdb.h>		// dns lookup gethostbyname,
 	#include <netinet/tcp.h>	// for DisableNagle
 	#include <poll.h>		// required by remote_connect.c
+	#ifdef __APPLE__	// XXX Darwin lacks <endian.h>. Big endian only, matching the WIN32 shim above.
+		#include <libkern/OSByteOrder.h>
+		#define htobe16(x) OSSwapHostToBigInt16(x)
+		#define htobe32(x) OSSwapHostToBigInt32(x)
+		#define htobe64(x) OSSwapHostToBigInt64(x)
+		#define be16toh(x) OSSwapBigToHostInt16(x)
+		#define be32toh(x) OSSwapBigToHostInt32(x)
+		#define be64toh(x) OSSwapBigToHostInt64(x)
+	#endif
 	#define SOCKET_CAST_IN
 	#define SOCKET_CAST_OUT
 	#define SOCKET_WRITE_SIZE
