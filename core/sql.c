@@ -413,7 +413,7 @@ static inline void file_status_apply(const int file_n,const int f,const uint8_t 
 }
 
 void sql_save_file_status(const int file_n,const int f,const uint8_t status)
-{ // Persist a file's status + metadata as a peer setting named file-<b64_checksum> on file_n's peer_index. Layout: [status:uint8_t][splits:uint8_t][size:uint64_t BE][modified:uint64_t BE][filename_len:uint16_t BE][filename][file_path_len:uint16_t BE][file_path][split_hashes]. split_hashes (group files only) has no length prefix: it occupies the remaining bytes and holds only the CHECKSUM_BIN_LEN*(splits+1) hash portion (the trailing htobe64(size) that the file's hash-of-hashes covers is redundant with size and re-appended on load). Storing all of this (not just status+path) lets the offer's metadata be reconstructed at load time, including seeding completed group files without re-hashing. Works for p2p / PM / group transfers (for group transfers, file_n's owner is GROUP_CTRL).
+{ // Persist a file's status + metadata as a peer setting named file-<b64_checksum> on file_n's peer_index. Layout: [status:uint8_t][splits:uint8_t][size:uint64_t BE][modified:uint64_t BE][filename_len:uint16_t BE][filename][file_path_len:uint16_t BE][file_path][split_hashes]. split_hashes (group files only) has no length prefix: it occupies the remaining bytes and holds only the CHECKSUM_BIN_LEN*(splits+1) hash portion, the trailing htobe64(size) being re-appended on load.
 	if(file_n < 0 || f < 0)
 	{
 		error_simple(0,"Negative file_n or f in sql_save_file_status. Coding error. Report this.");
@@ -1732,7 +1732,7 @@ void sql_populate_setting(const int force_plaintext)
 				else if(!strncmp(setting_name,"file-",5))
 				{
 					if(!library_settings_loaded_encrypted)
-					{ // Restore a file's status + metadata saved by sql_save_file_status. Layout: [status:uint8_t][splits:uint8_t][size:uint64_t BE][modified:uint64_t BE][filename_len:uint16_t BE][filename][file_path_len:uint16_t BE][file_path][split_hashes]. split_hashes (group files only) has no length prefix: it is the remaining bytes (hash portion CHECKSUM_BIN_LEN*(splits+1); the trailing htobe64(size) is re-appended below). XXX Do NOT call sql_* functions in here (mutex is held); file_status_apply calls none.
+					{ // Restore a file's status + metadata saved by sql_save_file_status (see it for layout). XXX Do NOT call sql_* functions in here (mutex is held); file_status_apply calls none.
 						sanity_check
 						if(setting_value_len < sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint64_t) + sizeof(uint64_t) + sizeof(uint16_t) + sizeof(uint16_t)) // minimum is the fixed header + both (possibly empty) filename/file_path length prefixes
 						{

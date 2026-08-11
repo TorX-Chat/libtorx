@@ -3283,7 +3283,7 @@ void initial_keyed(void)
 	//	sql_exec(&db_encrypted,"DELETE FROM setting_peer WHERE setting_index NOT IN (SELECT MAX(setting_index) FROM setting_peer GROUP BY peer_index, setting_name);",NULL); // Doesn't appear to function, but the next call could in theory fail without it functioning?
 		sql_exec(&db_encrypted,"CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_peer_unique ON setting_peer(peer_index, setting_name);",NULL); // important
 		#ifndef NO_FILE_TRANSFER
-		{ // Migration (2.1.0.0): file status/path moved from message.extraneous to file-<b64_checksum> peer settings (extraneous is now exclusively message_extra), and FILE_REQUEST/FILE_PAUSE/FILE_CANCEL are no longer logged, so their legacy rows cannot be loaded. Legacy transfer statuses/paths are lost. TODO delete at version *.2.* or 3.*.*
+		{ // Migration: file status/path moved from message.extraneous to file-<b64_checksum> peer settings, and FILE_REQUEST/FILE_PAUSE/FILE_CANCEL are no longer logged. Legacy transfer statuses/paths are lost.
 			char command[256];
 			snprintf(command,sizeof(command),"UPDATE message SET extraneous = NULL WHERE extraneous IS NOT NULL AND protocol IN (%u,%u,%u,%u);",(unsigned int)ENUM_PROTOCOL_FILE_OFFER,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_PRIVATE,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED);
 			sql_exec(&db_messages,command,NULL);
@@ -3926,7 +3926,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		error_printf(3,MAGENTA"Checkpoint failed message(b64) of len %u: %s"RESET,message_len,b64_encode(message, message_len));
 	//	breakpoint();
 	}
-	else // XXX There used to be a sanity check here for "peerlist is null while peercount is not 0". That is now unrepresentable: the peercount IS the length of peerlist.
+	else
 		error_printf(0,"Group=%d has no peerlist and peercount=%u. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	torx_free((void*)&prefixed_message);
@@ -4031,7 +4031,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	snprintf(setting_name,sizeof(setting_name),"group_peer%d",peer_index); // "group_peer" + peer_index, for uniqueness. might make deleting complex.
 	const int peer_index_group = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	sql_setting(0,peer_index_group,setting_name,"1",1); // the 1 is just to bypass NULL/zero len checks in sql_setting and is not used.
-	// Add it to our peerlist. XXX Growing .peerlist IS how the peercount is incremented; there is no longer a counter to keep in sync with it.
+	// Add it to our peerlist.
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	const uint32_t count = group_peercount_nolock(g);
 	if(group[g].peerlist)

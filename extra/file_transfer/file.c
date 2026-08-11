@@ -838,8 +838,7 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		return;
 	}
 	const int is_active = file_is_active(file_n,f); // MUST be before section_unclaim.
-	// if(is_active == ENUM_FILE_ACTIVE_IN || is_active == ENUM_FILE_ACTIVE_IN_OUT)
-		section_unclaim(file_n,f,file_n == peer_n ? -1 : peer_n,-1);
+	section_unclaim(file_n,f,file_n == peer_n ? -1 : peer_n,-1);
 	if(file_n == peer_n && protocol == ENUM_PROTOCOL_FILE_CANCEL)
 	{ // Cancel. Free everything *EXCEPT* checksum, filename, file_path, split_hashes, split_path. XXX DO NOT CALL zero_f.
 		torx_write(file_n) // 🟥🟥🟥
