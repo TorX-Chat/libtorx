@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 0 , 46 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 1 , 46 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -3269,6 +3269,34 @@ static inline void sqlcipher_determine_version(void)
 	}
 }
 
+static inline void database_migrations(void)
+{ // This may be used more ex
+	char db_version_string[21] = {0}; // must be null initialized
+	unsigned char *setting_value = sql_retrieve_setting(0,"db_version");
+	if(setting_value)
+	{ // sql_retrieve_setting's return is NOT null terminated, so it cannot be handed to strtoull as-is
+		const uint32_t setting_value_len = torx_allocation_len(setting_value);
+		memcpy(db_version_string,setting_value,setting_value_len < sizeof(db_version_string) ? setting_value_len : sizeof(db_version_string) - 1);
+		torx_free((void*)&setting_value);
+	}
+	const uint16_t db_version = (uint16_t)strtoull(db_version_string,NULL,10);
+	if(db_version < 1)
+	{ // Migrations from database version 0 to 1.
+	//	sql_exec(&db_encrypted,"DELETE FROM setting_peer WHERE setting_index NOT IN (SELECT MAX(setting_index) FROM setting_peer GROUP BY peer_index, setting_name);",NULL); // Doesn't appear to function, but the next call could in theory fail without it functioning?
+		sql_exec(&db_encrypted,"CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_peer_unique ON setting_peer(peer_index, setting_name);",NULL); // deduplicate setting_peer and add UNIQUE(peer_index, setting_name) constraint for old (pre ~2.0.40) databases
+		// Migration: file status/path moved from message.extraneous to file-<b64_checksum> peer settings, and FILE_REQUEST/FILE_PAUSE/FILE_CANCEL are no longer logged. Legacy transfer statuses/paths are lost.
+		// Must run in NO_FILE_TRANSFER builds too, or such a build would stamp the version without having cleaned. Hence numeric protocols: the ENUM_PROTOCOL_FILE_* names do not exist in those builds.
+		sql_exec(&db_messages,"UPDATE message SET extraneous = NULL WHERE extraneous IS NOT NULL AND protocol IN (44443,62747,32918,2125);",NULL); // FILE_OFFER, FILE_OFFER_PRIVATE, FILE_OFFER_GROUP, FILE_OFFER_GROUP_DATE_SIGNED
+		sql_exec(&db_messages,"DELETE FROM message WHERE protocol IN (27493,38490,22461);",NULL); // FILE_REQUEST, FILE_PAUSE, FILE_CANCEL
+		sql_setting(0,-1,"db_version","1",1); // Upgrade one version at a time
+	}
+/*	if(db_version < 2) // NOT else if
+	{
+		*** do migrations here ***
+		sql_setting(0,-1,"db_version","2",1); // Upgrade one version at a time
+	}	*/
+}
+
 void initial_keyed(void)
 { // Read in settings from file. Can also be used by clients for their settings. XXX Do not *need* locks. Unnecessary. Runs before most threads (except UI) start.
 //	mlockall(MCL_FUTURE); // TODO TODO TODO this causes pthread_create to fail on some systems
@@ -3278,26 +3306,19 @@ void initial_keyed(void)
 	sqlcipher_db_configuration(&db_messages);
 	sqlcipher_db_configuration(&db_encrypted);
 
-	if(!first_run)
-	{ // Migration: deduplicate setting_peer and add UNIQUE(peer_index, setting_name) constraint for existing databases TODO delete at version *.2.* or 3.*.*
-	//	sql_exec(&db_encrypted,"DELETE FROM setting_peer WHERE setting_index NOT IN (SELECT MAX(setting_index) FROM setting_peer GROUP BY peer_index, setting_name);",NULL); // Doesn't appear to function, but the next call could in theory fail without it functioning?
-		sql_exec(&db_encrypted,"CREATE UNIQUE INDEX IF NOT EXISTS idx_setting_peer_unique ON setting_peer(peer_index, setting_name);",NULL); // important
-		#ifndef NO_FILE_TRANSFER
-		{ // Migration: file status/path moved from message.extraneous to file-<b64_checksum> peer settings, and FILE_REQUEST/FILE_PAUSE/FILE_CANCEL are no longer logged. Legacy transfer statuses/paths are lost.
-			char command[256];
-			snprintf(command,sizeof(command),"UPDATE message SET extraneous = NULL WHERE extraneous IS NOT NULL AND protocol IN (%u,%u,%u,%u);",(unsigned int)ENUM_PROTOCOL_FILE_OFFER,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_PRIVATE,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP,(unsigned int)ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED);
-			sql_exec(&db_messages,command,NULL);
-			snprintf(command,sizeof(command),"DELETE FROM message WHERE protocol IN (%u,%u,%u);",(unsigned int)ENUM_PROTOCOL_FILE_REQUEST,(unsigned int)ENUM_PROTOCOL_FILE_PAUSE,(unsigned int)ENUM_PROTOCOL_FILE_CANCEL);
-			sql_exec(&db_messages,command,NULL);
-		}
-		#endif // NO_FILE_TRANSFER
-		sql_populate_setting(0); // encrypted settings
-	}
-	else // if(first_run)
+	if(first_run)
 	{
 		sql_exec(&db_encrypted,table_setting_global,NULL);
 		sql_exec(&db_encrypted,table_peer,NULL);
 		sql_exec(&db_encrypted,table_setting_peer,NULL);
+		char p1[21];
+		snprintf(p1,sizeof(p1),"%u",torx_library_version[1]); // New databases are born current and never run migrations.
+		sql_setting(0,-1,"db_version",p1,1); // must be after table_setting_global is created.
+	}
+	else
+	{
+		database_migrations();
+		sql_populate_setting(0); // encrypted settings
 	}
 	if(get_file_size(file_db_messages) == 0) // permit recovery after deletion of messages database
 		sql_exec(&db_messages,table_message,NULL);

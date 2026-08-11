@@ -1713,6 +1713,9 @@ void sql_populate_setting(const int force_plaintext)
 						torrc_content[setting_value_len] = '\0';
 					}
 				}
+				else if(!strncmp(setting_name,"db_version",10))
+				{ // No-op. initial_keyed reads this directly via sql_retrieve_setting, before we run. Consumed here only to keep it out of custom_setting_cb.
+				}
 				#ifndef NO_FILE_TRANSFER
 				else if(!strncmp(setting_name,"download_dir",12))
 				{
