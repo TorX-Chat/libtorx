@@ -3270,7 +3270,7 @@ static inline void sqlcipher_determine_version(void)
 }
 
 static inline void database_migrations(void)
-{ // This may be used more ex
+{ // This may be used more extensively
 	char db_version_string[21] = {0}; // must be null initialized
 	unsigned char *setting_value = sql_retrieve_setting(0,"db_version");
 	if(setting_value)
