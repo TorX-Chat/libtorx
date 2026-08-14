@@ -4255,7 +4255,7 @@ void initial(void)
 		evthread_use_pthreads();
 		signal(SIGBUS, cleanup_cb);
 		signal(SIGSYS, cleanup_cb);
-		signal(SIGPIPE, cleanup_cb);
+		signal(SIGPIPE, SIG_IGN); // XXX MUST be ignored, never handled: libevent writes peer sockets with writev(), which has no MSG_NOSIGNAL, so a write racing a peer's close raises SIGPIPE on a peer_dispatcher_thread. Routed to cleanup_cb, that shuts the client down on an ordinary disconnect. Ignored, the write returns EPIPE and libevent reports BEV_EVENT_ERROR to close_conn, which is the intended path.
 		signal(SIGALRM, cleanup_cb);
 		signal(SIGHUP, cleanup_cb);
 		signal(SIGUSR1, cleanup_cb);
