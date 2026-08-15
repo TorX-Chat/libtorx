@@ -151,6 +151,7 @@ struct pass_strc { // XXX Do not torx_secure_malloc structs unless they contain 
 #define SOCKS_STATE_AWAIT_BIND		4 // got header, waiting for 6-byte bind addr+port
 #define SOCKS_STATE_DONE		5 // handshake complete; bev rewired for peer traffic
 #define SOCKS_STATE_PEERINIT_SENT	6 // owner==PEER only: SOCKS done, friend-request bytes sent, awaiting 2+56+32 reply
+#define SOCKS_STATE_TORNDOWN		7 // owner==PEER only: peerinit_teardown has run. Terminal; do not act on this event_strc again.
 struct event_strc { // peer_init flow stores sensitive keys here, so its event_strc must be torx_secure_malloc'd; other flows may stay torx_insecure_malloc'd.
 	evutil_socket_t sockfd;
 	int8_t authenticated; // ONLY relevant to CTRL. For GROUP_PEER, streams are always authenticated. For GROUP_CTRL, streams are shifted to GROUP_PEER immediatly after authentication.
@@ -161,6 +162,7 @@ struct event_strc { // peer_init flow stores sensitive keys here, so its event_s
 	int group_n;
 	int n;
 	int fresh_n; // for SING/MULT to pass internally; for owner==PEER (peer_init), holds the fresh CTRL n awaiting friend-request reply.
+	uint8_t is_accept_copy; // XXX 1 == accept_conn made this per-connection copy and its bufferevent's callbacks own it. The primaries are owned by peer_base_strc and must never be free'd by a callback.
 	char *buffer; // for use with incomplete messages in read_conn.
 	uint32_t untrusted_message_len; // peer reported length of message currently in .buffer
 	struct event_base *base; // peer's shared event base (owned by peer[n].base)
@@ -245,6 +247,7 @@ void load_onion(const int n);
 /* libevent.c */
 struct peer_base_strc { // passed to peer_dispatcher_thread, freed when it returns
 	int n;
+	struct event_base *base; // XXX The base this thread owns. Must not be re-read from peer[n].base, which zero_n can null and a recycled slot can repopulate.
 	struct event_strc *event_strc_recv; // may be NULL (e.g., GROUP_PEER has no listener)
 	struct event_strc *event_strc_send; // may be NULL (e.g., SING/MULT/GROUP_CTRL have no outbound connect)
 };

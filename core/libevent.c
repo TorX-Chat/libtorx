@@ -109,6 +109,8 @@ static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 		peer[event_strc->n].bev_send = NULL;
 	}
 	torx_unlock(event_strc->n) // 🟩🟩🟩
+	torx_free((void*)&event_strc->buffer); // XXX A partial message must never survive into the next connection on this event_strc: read_conn keys its handling of the 4 byte length prefix off the buffer being empty, so leftover bytes make the next connection's first packet mis-frame.
+	event_strc->untrusted_message_len = 0;
 	if(bev) // Just in case we got here after zero_n for some reason
 		bufferevent_free(bev); // Note: Don't call this by itself because it can be subject to double-free issues.
 	return bev;
@@ -124,8 +126,8 @@ static inline void disconnect_forever(struct event_strc *event_strc,const int ta
 		takedown_onion(peer_index,takedown_delete);
 	}
 	// error_printf(0,"Checkpoint disconnect_forever n=%d delete=%d",event_strc->n,takedown_delete);
-	if(event_strc->fd_type == 0 && (event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_GROUP_CTRL))
-	{ // Necessary because accept_conn creates a copy for each connection
+	if(event_strc->is_accept_copy)
+	{ // XXX Must test the flag, not owner+fd_type: error_conn passes the listener's ctx, which is the primary held by peer_base_strc. Inferring "copy" from owner would free it here and again in peer_dispatcher_thread.
 		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&event_strc); // event_strc_unique
 		return; // do not loopexit; these per-accept copies live independently of the peer thread
@@ -665,7 +667,7 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		torx_unlock(event_strc->n) // 🟩🟩🟩
 		error_printf(0,WHITE"close_conn peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 	}
-	if(event_strc->fd_type == 0 && (event_strc->owner == ENUM_OWNER_GROUP_PEER || event_strc->owner == ENUM_OWNER_GROUP_CTRL))
+	if(event_strc->is_accept_copy)
 	{ // Necessary because accept_conn creates a copy for each connection
 		torx_free((void*)&event_strc->buffer);
 		torx_free((void*)&ctx); // event_strc_unique
@@ -1875,6 +1877,8 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		error_simple(0,"Coding error 32402. Report this.");
 		breakpoint();
 	//	disconnect_forever(event_strc,-1); // XXX Run last and return immediately after, will exit event base
+		if(evutil_closesocket(sockfd) < 0) // XXX Nothing else holds this socket yet, so bailing without closing it leaks the descriptor for the life of the process
+			error_simple(0,"Unlikely socket failed to close error.7");
 		return;
 	}
 	torx_read(event_strc->n) // 🟧🟧🟧
@@ -1883,7 +1887,11 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	if(bev_recv_exists)
 	{
 		if(event_strc->owner == ENUM_OWNER_SING)
-			return; // We don't want more than one person trying to spoil our onion at a time. It could cause issues when freeing ctx in close_conn.
+		{ // We don't want more than one person trying to spoil our onion at a time. It could cause issues when freeing ctx in close_conn.
+			if(evutil_closesocket(sockfd) < 0) // XXX See above: must close before bailing
+				error_simple(0,"Unlikely socket failed to close error.8");
+			return;
+		}
 		error_printf(2,"Disconnecting due to existing bev_recv in accept_conn n=%d",event_strc->n);
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	}
@@ -1894,6 +1902,8 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	{ // event_strc_unique for use with bufferevent_setcb(), being a total copy of event_strc.
 		struct event_strc *event_strc_unique = torx_insecure_malloc(sizeof(struct event_strc));
 		memcpy(event_strc_unique,event_strc,sizeof(struct event_strc));
+		event_strc_unique->is_accept_copy = 1; // this copy is owned by bev_recv's callbacks
+		event_strc_unique->sockfd = sockfd; // XXX The accepted socket, not the listener the primary carries. PIPE_AUTH records this as the GROUP_PEER's recvfd, so leaving it as the listener makes every GROUP_PEER close the listener on teardown.
 		bufferevent_setcb(bev_recv, read_conn, write_finished, close_conn, event_strc_unique);
 	}
 	else
@@ -2032,6 +2042,9 @@ static inline void socks_finalize(struct event_strc *event_strc)
 
 static inline void peerinit_teardown(struct event_strc *event_strc)
 { // Friend-request finished or failed: delete the temporary PEER and exit the base. No retry — matches legacy peer_init, which made a single reply attempt then tore down the PEER. The dispatcher thread frees socks_bev (CLOSE_ON_FREE closes the TCP socket), event_strc, and base.
+	if(event_strc->socks_state == SOCKS_STATE_TORNDOWN)
+		return; // XXX event_base_loopexit does not stop the current iteration, so a late EOF can re-enter this before the base exits. Running twice would take down whichever peer has since been given this slot.
+	event_strc->socks_state = SOCKS_STATE_TORNDOWN;
 	const int peer_index_peer = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	takedown_onion(peer_index_peer,1); // do this AFTER load_onion (in the success path) so the new onion's peernick is preserved.
 	if(event_strc->base)
@@ -2078,8 +2091,8 @@ static inline void peerinit_finalize(struct event_strc *event_strc,const unsigne
 static void socks_event_cb(struct bufferevent *bev, short events, void *ctx)
 {
 	struct event_strc *event_strc = (struct event_strc *)ctx;
-	if(event_strc->socks_bev != bev)
-		return;
+	if(event_strc->socks_bev != bev || event_strc->socks_state == SOCKS_STATE_TORNDOWN)
+		return; // socks_bev is not nulled by peerinit_teardown (the dispatcher thread frees it), so the state is what tells us we are finished
 	if(events & BEV_EVENT_CONNECTED)
 	{ // TCP connect to Tor SOCKS port succeeded. Send greeting.
 		unsigned char greeting[3];
@@ -2110,7 +2123,7 @@ static void socks_event_cb(struct bufferevent *bev, short events, void *ctx)
 static void socks_read_cb(struct bufferevent *bev, void *ctx)
 {
 	struct event_strc *event_strc = (struct event_strc *)ctx;
-	if(event_strc->socks_bev != bev)
+	if(event_strc->socks_bev != bev || event_strc->socks_state == SOCKS_STATE_TORNDOWN)
 		return;
 	struct evbuffer *input = bufferevent_get_input(bev);
 	while(1)
@@ -2299,18 +2312,15 @@ void *peer_dispatcher_thread(void *arg)
 { // Single thread per peer: dispatches the shared event_base. Cleans up after exit.
 	struct peer_base_strc *wrap = (struct peer_base_strc *)arg;
 	const int n = wrap->n;
+	struct event_base *base = wrap->base; // XXX Do NOT re-read peer[n].base: zero_n nulls it, and a recycled slot may hold another peer's base by now. Either would make the teardown below act on the wrong peer.
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL);
-	torx_write(n) // 🟥🟥🟥
-	pusher(zero_pthread,(void*)&peer[n].thrd)
-	struct event_base *base = peer[n].base;
-	torx_unlock(n) // 🟩🟩🟩
 	if(base)
 		event_base_dispatch(base); // blocks until event_base_loopexit
 	// Cleanup. The per-accept copies (event_strc_unique) are separate allocations freed by their own callbacks; the *primary* recv/send strcs held by wrap are never freed by callbacks, so we free them here.
 	struct bufferevent *bev_recv = NULL,*bev_send = NULL;
 	torx_write(n) // 🟥🟥🟥
-	if(peer[n].base == base)
-	{ // Guard: if the peer was deleted (zero_n nulled .base and the slot may have been reused by a new peer), these fields no longer belong to this thread's base and must not be touched.
+	if(base && peer[n].base == base)
+	{ // Guard: if the peer was deleted (zero_n nulled .base and the slot may have been reused by a new peer), these fields no longer belong to this thread's base and must not be touched. XXX The base check is required: without it a NULL base matches a deleted peer's NULL .base and clears the slot's new owner.
 		bev_recv = peer[n].bev_recv;
 		peer[n].bev_recv = NULL;
 		bev_send = peer[n].bev_send;
@@ -2318,6 +2328,8 @@ void *peer_dispatcher_thread(void *arg)
 		peer[n].recvfd_connected = 0;
 		peer[n].sendfd_connected = 0;
 		peer[n].base = NULL;
+		if(pthread_equal(peer[n].thrd,pthread_self()))
+			peer[n].thrd = 0; // only ours to clear; a recycled slot's thread handle belongs to another thread
 	}
 	torx_unlock(n) // 🟩🟩🟩
 	if(bev_recv)

@@ -203,6 +203,7 @@ pthread_mutex_t mutex_sql_messages = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_group_peer_add = PTHREAD_MUTEX_INITIALIZER; // is necessary to avoid race condition, do not eliminate
 pthread_mutex_t mutex_group_join = PTHREAD_MUTEX_INITIALIZER; // is necessary to avoid race condition, do not eliminate
 pthread_mutex_t mutex_onion = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_set_n = PTHREAD_MUTEX_INITIALIZER; // XXX serializes set_n's scan-then-claim. Without it, concurrent peer creation (ex: an inbound friend request on a libevent thread while the UI calls peer_save) hands the same n to both.
 pthread_mutex_t mutex_closing = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER; // prevents rapid restarts of Tor from causing issues with reading Tor's STDOUT
 pthread_mutex_t mutex_message_loading = PTHREAD_MUTEX_INITIALIZER; // may be necessary in rare cases where Tor for some reason restarts on startup; related to messages_loaded
@@ -441,8 +442,8 @@ static inline void error_allocated_already(const int debug_level,char *do_not_fr
 
 void error_simple(const int debug_level,const char *error_message)
 { // Adds newline if one does not exist
-	if(!error_message || debug_level > torx_debug_level(-1))
-		return;
+	if(!error_message || (debug_level > -1 && debug_level > torx_debug_level(-1)))
+		return; // XXX Negative levels are fatal and must never be suppressed by the verbosity setting. Callers treat error_*(-1,...) as terminal, so silently dropping one lets execution continue into code written on the assumption that it did not.
 	const size_t length = strlen(error_message);
 	uint8_t has_newline = 0;
 	if(error_message[length-1] == '\n')
@@ -457,8 +458,8 @@ void error_simple(const int debug_level,const char *error_message)
 
 void error_printf(const int debug_level,const char *format,...)
 { // Adds newline if one does not exist (either in format or final string)
-	if(!format || debug_level > torx_debug_level(-1))
-		return;
+	if(!format || (debug_level > -1 && debug_level > torx_debug_level(-1)))
+		return; // XXX See error_simple: negative levels are fatal and must not be suppressed.
 	va_list args, copy;
 	va_start(args, format);
 	va_copy(copy, args);
@@ -867,7 +868,13 @@ static inline void thread_kill(pthread_t pthread)
 }
 
 void setcanceltype(int type,int *arg)
-{
+{ // XXX Blocks SIGPIPE per-thread instead of signal(SIGPIPE,SIG_IGN), which would alter the host process's disposition. A thread that writes a socket or pipe without calling this will take the signal.
+	#ifndef WIN32 // MinGW defines SIGPIPE only under _POSIX, and Winsock raises no signals
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set,SIGPIPE);
+	pthread_sigmask(SIG_BLOCK,&set,NULL);
+	#endif
 	#ifndef __ANDROID__
 	{
 		pthread_setcanceltype(type,arg);
@@ -3513,12 +3520,12 @@ void expand_message_struc(const int n,const int i) // XXX do not put locks in he
 		error_simple(-1,"Sanity check failure in expand_message_struc");
 }
 
-static inline void expand_peer_struc(const int n)
-{ /* Expand peer struct if our current n is unused && divisible by 10 */
+static inline int expand_peer_struc(const int n)
+{ /* Expand peer struct if our current n is unused && divisible by 10 */ // Returns 1 if it expanded, in which case the caller MUST call expand_peer_struc_followup after releasing mutex_set_n. Same split as expand_message_struc / expand_message_struc_followup, and for the same reason: the callbacks reach the UI and must not run under our locks.
 	if(n < 0)
 	{
 		error_simple(0,"expand_peer_struc failed sanity check. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	char onion = '\0';
 	getter_array(&onion,1,n,INT_MIN,-1,offsetof(struct peer_list,onion));
@@ -3530,17 +3537,23 @@ static inline void expand_peer_struc(const int n)
 		for(int j = n + 10; j > n; j--)
 			initialize_n(j);
 		pthread_rwlock_unlock(&mutex_expand); // 🟩
-		expand_peer_struc_cb(n);
-		for(int j = n + 10; j > n; j--)
-		{
-			initialize_n_cb(j);
-			for(int jj = -10; jj < 11; jj++)
-				initialize_i_cb(j,jj);
-			#ifndef NO_FILE_TRANSFER
-			for(int jj = 0; jj < 11; jj++)
-				initialize_f_cb(j,jj);
-			#endif // NO_FILE_TRANSFER
-		}
+		return 1;
+	}
+	return 0;
+}
+
+static inline void expand_peer_struc_followup(const int n)
+{ // must be called after expand_peer_struc, after unlock
+	expand_peer_struc_cb(n);
+	for(int j = n + 10; j > n; j--)
+	{
+		initialize_n_cb(j);
+		for(int jj = -10; jj < 11; jj++)
+			initialize_i_cb(j,jj);
+		#ifndef NO_FILE_TRANSFER
+		for(int jj = 0; jj < 11; jj++)
+			initialize_f_cb(j,jj);
+		#endif // NO_FILE_TRANSFER
 	}
 }
 
@@ -3683,6 +3696,7 @@ int set_n(const int peer_index,const char *onion)
   // Onion MUST be null terminated, and may be partial length
 	int n = 0;
 	uint8_t onion_check = 0;
+	pthread_mutex_lock(&mutex_set_n); // 🟥🟥 XXX Held across scan + expand + claim. Without it two threads scanning concurrently both land on the same blank slot, because nothing marks the slot as taken until the setter at the bottom. Peer creation is rare, so serializing it costs nothing. NOTE: must not be held across the expand callbacks; see expand_peer_struc_followup.
 	while(1)
 	{ // not real while loop, just to avoid goto
 		if(onion_check || peer_index == -1)
@@ -3727,16 +3741,19 @@ int set_n(const int peer_index,const char *onion)
 		{ // -2 means uninitialized (confirm in initialize_n)
 			error_printf(0,"Invalid peer_index passed to set_n: %d. Coding error. Report this.",peer_index);
 			breakpoint();
+			pthread_mutex_unlock(&mutex_set_n); // 🟩🟩
 			return -1;
 		}
 		break;
 	}
-	expand_peer_struc(n); // Expand struct if necessary
-	// TODO if desired, reserve here. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
+	const int expanded = expand_peer_struc(n); // Expand struct if necessary. DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 	if(peer_index > -1)
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 	if(onion) // do NOT put 'else if'
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,onion),onion,strlen(onion)); // source is pointer. NOTE: strlen looks odd but it is in case we are looking up with only a partial
+	pthread_mutex_unlock(&mutex_set_n); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
+	if(expanded)
+		expand_peer_struc_followup(n); // callbacks reach the UI, so they run unlocked
 	return n;
 }
 
@@ -4255,7 +4272,6 @@ void initial(void)
 		evthread_use_pthreads();
 		signal(SIGBUS, cleanup_cb);
 		signal(SIGSYS, cleanup_cb);
-		signal(SIGPIPE, SIG_IGN); // XXX MUST be ignored, never handled: libevent writes peer sockets with writev(), which has no MSG_NOSIGNAL, so a write racing a peer's close raises SIGPIPE on a peer_dispatcher_thread. Routed to cleanup_cb, that shuts the client down on an ordinary disconnect. Ignored, the write returns EPIPE and libevent reports BEV_EVENT_ERROR to close_conn, which is the intended path.
 		signal(SIGALRM, cleanup_cb);
 		signal(SIGHUP, cleanup_cb);
 		signal(SIGUSR1, cleanup_cb);

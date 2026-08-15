@@ -314,8 +314,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			bev = peer[n].bev_recv;
 		else if(fd_type == 1)
 			bev = peer[n].bev_send;
+		if(bev)
+			bufferevent_incref(bev); // XXX Taken under the lock deliberately. disconnect() nulls this pointer under the write lock and only calls bufferevent_free AFTER releasing it, so without a reference held from here the bev can be destroyed before we reach bufferevent_get_output below. The lock cannot simply be held across the block instead: packet_removal takes mutex_packet then a page lock, so page lock -> mutex_packet would invert that order and deadlock.
 		torx_unlock(n) // 🟩🟩🟩
-		if(bev && (output = bufferevent_get_output(bev))) // TODO perhaps the locks should wrap this line? Should be of minor consequence.
+		if(bev && (output = bufferevent_get_output(bev)))
 		{
 			int o = 0;
 			evbuffer_lock(output); // XXX seems to have no beneficial effect. purpose is to prevent mutex_packet lockup
@@ -334,6 +336,8 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				evbuffer_unlock(output); // XXX
 				sodium_memzero(send_buffer,(size_t)packet_len);
 				error_simple(-1,"Fatal error. Exceeded size of SIZE_PACKET_STRC. Report this.");
+				bufferevent_decref(bev);
+				goto error; // XXX Do not remove: error_simple only terminates if the UI registered a cleanup callback that exits. Falling through writes packet[SIZE_PACKET_STRC], out of bounds, with mutex_packet already released.
 			}
 			packet[o].n = n; // claim it. set first.
 			#ifndef NO_FILE_TRANSFER
@@ -353,10 +357,15 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 		//	bufferevent_flush(bev,EV_WRITE,BEV_FLUSH); // TODO 2024/12/30 TESTING
 			evbuffer_unlock(output); // XXX
 			sodium_memzero(send_buffer,(size_t)packet_len);
+			bufferevent_decref(bev);
 			return 0;
 		}
 		else
+		{
+			if(bev)
+				bufferevent_decref(bev);
 			error_simple(0,WHITE"Checkpoint send_prep2 NO AVAILABLE OUTPUT, should -1 next"RESET);
+		}
 	}
 	else
 		error_simple(0,"Send prep failed for reasons.");
@@ -460,6 +469,7 @@ static inline void initialize_event_strc(struct event_strc *event_strc,const int
 	event_strc->owner = owner;
 	event_strc->n = n;
 	event_strc->fresh_n = -1;
+	event_strc->is_accept_copy = 0; // primaries only; accept_conn sets this on its copies
 	event_strc->buffer = NULL;
 	event_strc->untrusted_message_len = 0;
 	event_strc->base = NULL;
@@ -700,13 +710,18 @@ void load_onion(const int n)
 		goto fail_base; // Nothing got registered; tear down the base.
 	struct peer_base_strc *wrap = torx_insecure_malloc(sizeof(struct peer_base_strc));
 	wrap->n = n;
+	wrap->base = base;
 	wrap->event_strc_recv = event_strc_recv;
 	wrap->event_strc_send = event_strc_send;
-	torx_read(n) // 🟧🟧🟧
-	pthread_t *thrd = &peer[n].thrd;
-	torx_unlock(n) // 🟩🟩🟩
-	if(pthread_create(thrd,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
+	pthread_t thread; // XXX Must NOT create directly into peer[n].thrd: its address is only valid while mutex_expand is held, and expand_peer_struc reallocs peer[] out from under it.
+	if(pthread_create(&thread,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
 		error_simple(-1,"Failed to create dispatcher thread from load_onion");
+	else
+	{
+		torx_write(n) // 🟥🟥🟥
+		peer[n].thrd = thread;
+		torx_unlock(n) // 🟩🟩🟩
+	}
 	return;
 	fail_base: // null peer[n].base (so a later load_onion sees no stale base) and free the base, then return
 	torx_write(n) // 🟥🟥🟥

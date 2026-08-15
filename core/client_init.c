@@ -699,6 +699,7 @@ void start_outgoing_friend_request(const int n)
 	event_strc->group_n = -1;
 	event_strc->n = n;
 	event_strc->fresh_n = fresh_n;
+	event_strc->is_accept_copy = 0;
 	event_strc->buffer = NULL;
 	event_strc->untrusted_message_len = 0;
 	event_strc->base = base;
@@ -723,11 +724,16 @@ void start_outgoing_friend_request(const int n)
 	torx_events(event_strc); // arms initial try_connect_cb on base; does not dispatch
 	struct peer_base_strc *wrap = torx_insecure_malloc(sizeof(struct peer_base_strc));
 	wrap->n = n;
+	wrap->base = base;
 	wrap->event_strc_recv = NULL;
 	wrap->event_strc_send = event_strc;
-	torx_read(n) // 🟧🟧🟧
-	pthread_t *thrd = &peer[n].thrd;
-	torx_unlock(n) // 🟩🟩🟩
-	if(pthread_create(thrd,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
+	pthread_t thread; // XXX See load_onion: &peer[n].thrd must not escape mutex_expand.
+	if(pthread_create(&thread,&ATTR_DETACHED,&peer_dispatcher_thread,(void*)wrap))
 		error_simple(-1,"Failed to create dispatcher thread from start_outgoing_friend_request");
+	else
+	{
+		torx_write(n) // 🟥🟥🟥
+		peer[n].thrd = thread;
+		torx_unlock(n) // 🟩🟩🟩
+	}
 }
