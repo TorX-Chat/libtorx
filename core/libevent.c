@@ -451,6 +451,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				const uint32_t pos = peer[event_strc->n].message[i].pos;
 				// error_printf(0,"Checkpoint MESSAGE STAT: n=%d i=%d stat=%u",event_strc->n,i,peer[event_strc->n].message[i].stat); // FSojoasfoSO
 				torx_unlock(event_strc->n) // 🟩🟩🟩
+				uint8_t socket_released_early = 0;
 				if(pos == message_len)
 				{ // complete message, complete send
 					carry_on_regardless: {}
@@ -465,6 +466,11 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						else
 						{ // discard/delete message and attempt rollback
 							torx_write(event_strc->n) // 🟥🟥🟥
+							if(peer[event_strc->n].socket_utilized[event_strc->fd_type] == i) // XXX MUST release the socket before the index is freed. increment_i hands out max_i+1, so a slot freed here is immediately reusable, and a message_send on another thread can take this same i while socket_utilized still names it. send_prep then reads utilized == i, mistakes a different message for this one, and returns -2. A non-discardable stream message deferred that way is never retried.
+							{
+								peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+								socket_released_early = 1;
+							}
 							const int shrinkage = zero_i(event_strc->n,i);
 							torx_unlock(event_strc->n) // 🟩🟩🟩
 							if(shrinkage)
@@ -515,11 +521,14 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							return drained; // must return immediately after event_base_loopexit
 						}
 					}
-					error_printf(4,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
 					error_printf(2,CYAN"OUT%d-> %s %u"RESET,event_strc->fd_type,name,message_len);
-					torx_write(event_strc->n) // 🟥🟥🟥
-					peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
-					torx_unlock(event_strc->n) // 🟩🟩🟩
+					if(!socket_released_early)
+					{ // XXX Skipped where the socket was already released above, alongside freeing the index. This clear names no message, so repeating it there could wipe a claim another thread has taken since.
+						error_printf(4,WHITE"packet_removal  peer[%d].socket_utilized[%d] = INT_MIN"RESET,event_strc->n,event_strc->fd_type);
+						torx_write(event_strc->n) // 🟥🟥🟥
+						peer[event_strc->n].socket_utilized[event_strc->fd_type] = INT_MIN;
+						torx_unlock(event_strc->n) // 🟩🟩🟩
+					}
 					if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 						pipe_auth_and_request_peerlist(event_strc); // this will trigger cascade // send ENUM_PROTOCOL_PIPE_AUTH
 					else // Send next message. Necessary.
@@ -821,7 +830,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				}
 				else if(packet_start != section_start + section_info_current)
 				{
-					error_printf(0,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
+					error_printf(5,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
 					continue;
 				}
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
