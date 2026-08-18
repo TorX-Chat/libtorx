@@ -124,7 +124,7 @@ static inline int8_t call_invalid(const int call_n,const int call_c)
 		torx_unlock(call_n) // 🟩🟩🟩
 	}
 	if(ret)
-		error_printf(-1,"Call sanity check failed. call_n=%d call_c=%d",call_n,call_c);
+		error_printf(0,"Call sanity check failed. call_n=%d call_c=%d",call_n,call_c);
 	return ret;
 }
 
@@ -144,7 +144,7 @@ static inline union types getter_call_union(const int call_n,const int call_c,co
 	union types types = {0}; // Initialize as 0
 	if(call_invalid(call_n,call_c) || (participant_n > -1 && (offset != offsetof(struct call_list,participant_mic) && offset != offsetof(struct call_list,participant_speaker))))
 	{
-		error_printf(-1,"getter_call_union sanity check failed: call_n=%d call_c=%d participant_n=%d offset=%lu",call_n,call_c,participant_n,offset);
+		error_printf(0,"getter_call_union sanity check failed: call_n=%d call_c=%d participant_n=%d offset=%lu",call_n,call_c,participant_n,offset);
 		return types;
 	}
 	torx_read(call_n) // 🟧🟧🟧
@@ -154,7 +154,7 @@ static inline union types getter_call_union(const int call_n,const int call_c,co
 		if(iter < 0)
 		{ // Necessary sanity check
 			torx_unlock(call_n) // 🟩🟩🟩
-			error_simple(-1,"getter_call_union sanity check due to negative iter. Coding error. Report this.");
+			error_simple(0,"getter_call_union sanity check due to negative iter. Coding error. Report this.");
 			return types;
 		}
 		if(offset == offsetof(struct call_list,participant_mic) && sizeof(uint8_t) == anticipated_size)

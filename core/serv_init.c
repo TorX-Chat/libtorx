@@ -201,9 +201,19 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				goto error;
 			}
 			FILE *fd_active = peer[file_n].file[f].fd;
+			const uint64_t request_end = peer[file_n].file[f].request[r].end[fd_type];
 			start = peer[file_n].file[f].request[r].start[fd_type] + peer[file_n].file[f].request[r].transferred[fd_type];
-			if(start + data_size > peer[file_n].file[f].request[r].end[fd_type]) // avoid sending beyond requested amount
-				data_size = (uint16_t)(peer[file_n].file[f].request[r].end[fd_type] - start + 1);
+			if(start > request_end)
+			{ // XXX MUST bail rather than clamp: request_end - start + 1 is unsigned, so it wraps and then truncates into data_size, carrying fread past send_buffer
+				torx_unlock(file_n) // 🟩🟩🟩
+				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
+				error_printf(0,"Send_prep has nothing left to send: %lu > %lu. n=%d file_n=%d f=%d fd_type=%d. Report this.",start,request_end,n,file_n,f,fd_type);
+				close_sockets(file_n,f)
+				transfer_progress(file_n,f);
+				goto error;
+			}
+			if(start + data_size > request_end) // avoid sending beyond requested amount
+				data_size = (uint16_t)(request_end - start + 1);
 			const uint64_t size = peer[file_n].file[f].size;
 			torx_unlock(file_n) // 🟩🟩🟩
 			if(start + data_size > size)
@@ -223,6 +233,11 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 					goto error;
 				}
 				torx_free((void*)&file_path);
+			}
+			if(data_size > PACKET_SIZE_MAX-16)
+			{ // XXX Belt and braces. data_size is read into send_buffer[16] and nothing else bounds it against the buffer.
+				error_printf(0,"Send_prep data_size %u exceeds the packet buffer. Coding error. Report this.",data_size);
+				data_size = PACKET_SIZE_MAX-16;
 			}
 			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type] != start)
 			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);
@@ -299,7 +314,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(n) // 🟩🟩🟩
 			const size_t reading = start + (size_t)packet_len - prefix_len;
 			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
-				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %u < (%lu + %lu - %u)",message_len,allocated,start,packet_len,prefix_len);
+				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %u < (%lu + %u - %u)",message_len,allocated,start,packet_len,prefix_len);
 			/* sanity check end XXX */
 			torx_read(n) // 🟧🟧🟧
 			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);

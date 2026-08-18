@@ -408,13 +408,20 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 					if(peer[packet_file_n].file[f].request)
 					{ // Necessary sanity check to prevent race conditions
 						peer[packet_file_n].file[f].request[r].transferred[packet_fd_type] += packet_len-16; // const uint64_t this_r =
-						const uint64_t current_pos = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type] + peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
+						const uint64_t current_start = peer[packet_file_n].file[f].request[r].start[event_strc->fd_type];
+						const uint64_t current_transferred = peer[packet_file_n].file[f].request[r].transferred[event_strc->fd_type];
+						const uint64_t current_pos = current_start + current_transferred;
 						const uint64_t current_end = peer[packet_file_n].file[f].request[r].end[event_strc->fd_type]+1;
 						torx_unlock(packet_file_n) // 🟩🟩🟩
 					//	error_printf(0,"Checkpoint packet ++=%lu --=%lu highest_ever_o=%d drained=%lu file_n=%d f=%d fd=%d r=%d transferred this_r=%lu total=%lu",total_packets_added,total_packets_removed,highest_ever_o,drained,packet_file_n,f,packet_fd_type,r,this_r,transferred); // TODO remove
 						const int file_status = file_status_get(packet_file_n,f);
-						if(current_pos == current_end)
-						{ // Completed section
+						if(current_pos >= current_end)
+						{ // Completed section. Must be >=, not ==, or an overshoot would stream past the end of the request forever.
+							if(current_pos > current_end)
+							{ // XXX Bytes were counted against this request that do not belong to it. MUST NOT pass silently: the excess is exactly how far send_prep would then read past the end of the request, which overflows its stack buffer.
+								error_printf(0,"Outbound packet accounting overshot by %lu: file_n=%d f=%d n=%d fd_type=%d start=%lu transferred=%lu end=%lu. Coding error. Report this.",current_pos - current_end,packet_file_n,f,event_strc->n,event_strc->fd_type,current_start,current_transferred,current_end-1);
+								breakpoint();
+							}
 							error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
 							close_sockets(packet_file_n,f)
 							transfer_progress(packet_file_n,f);
@@ -645,8 +652,8 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 		disconnect_forever(event_strc,3); // XXX Run last and return immediately after, will exit event base
 		return;
 	}
-	if(event_strc->fd_type == 1)
-	{ // Fix issues caused by unwanted resumption of inbound PM transfers
+	if(event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER)
+	{ // Fix issues caused by unwanted resumption of inbound PM transfers. XXX Runs on both fd_types: packets are keyed only by n + fd_type, so anything left here would be drained by the NEXT connection and counted against whichever request occupies the slot by then. Entries are only ever released in packet_removal, so leaving them also leaks packet struct slots toward its fatal. XXX Owner is checked because send_prep serves only these two, so any other owner has bytes in the buffer with no packet struct entries behind them.
 		struct evbuffer *output = bufferevent_get_output(bev);
 		const size_t to_drain = evbuffer_get_length(output);
 		if(to_drain)
@@ -809,7 +816,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_unlock(file_n) // 🟩🟩🟩
 				if(packet_start + packet_len - cur > section_end + 1)
 				{
-					error_printf(0,"Peer asked us to write beyond section end: %lu + %lu - %lu > %lu + 1. Buggy peer. Bailing.",packet_start,packet_len,cur,section_end);
+					error_printf(0,"Peer asked us to write beyond section end: %lu + %u - %u > %lu + 1. Buggy peer. Bailing.",packet_start,packet_len,cur,section_end);
 					continue;
 				}
 				else if(packet_start != section_start + section_info_current)
@@ -1245,6 +1252,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
 						const int r = set_r(file_n,f,event_strc->n);
+						uint8_t request_recorded = 0;
 						if(r > -1)
 						{
 							torx_write(file_n) // 🟥🟥🟥
@@ -1254,11 +1262,17 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								peer[file_n].file[f].request[r].end[event_strc->fd_type] = requested_end;
 								peer[file_n].file[f].request[r].previously_sent += peer[file_n].file[f].request[r].transferred[event_strc->fd_type]; // Need to store the progress before clearing it
 								peer[file_n].file[f].request[r].transferred[event_strc->fd_type] = 0;
+								request_recorded = 1;
 							}
 							torx_unlock(file_n) // 🟩🟩🟩
 						}
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
 						torx_free((void*)&file_path);
+						if(!request_recorded)
+						{ // XXX MUST NOT send: the request was never recorded (.request is NULL, ie: cancelled), so send_prep would stream against whatever start/end the slot still holds
+							error_printf(0,"Discarding a file request we cannot record: n=%d file_n=%d f=%d fd_type=%d",event_strc->n,file_n,f,event_strc->fd_type);
+							continue;
+						}
 						error_printf(0,"Checkpoint read_conn sending: from %"PRIu64" to %"PRIu64" on owner=%u peer=%d fd_type=%d",requested_start,requested_end,event_strc->owner,event_strc->n,event_strc->fd_type);
 						send_prep(event_strc->n,file_n,f,file_piece_p_iter,event_strc->fd_type); // formerly used protocol_lookup(ENUM_PROTOCOL_FILE_PIECE)
 						// file pipe END (useful for resume) Section 6RMA8obfs296tlea
@@ -1896,7 +1910,8 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 		disconnect(event_strc); // Disconnect our existing before handling a new connection.
 	}
 	struct event_base *base = evconnlistener_get_base(listener);
-	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
+	struct bufferevent *bev_recv = bufferevent_socket_new(base, sockfd, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS|BEV_OPT_UNLOCK_CALLBACKS); // XXX 2023/09 we should probably not just be overwriting bev_recv every time we get a connection?? or we should make it local?? seems we only use it in this function and in send_prep
+	// XXX BEV_OPT_UNLOCK_CALLBACKS is load bearing: without it libevent holds this bufferevent's lock across read_conn, which takes peer rwlocks, while send_prep takes those rwlocks and then this lock. That is a deadlock, not a theoretical one. libevent still holds a reference across the callback, so dropping the lock does not expose it to being freed underneath. Requires BEV_OPT_DEFER_CALLBACKS, above.
 	evbuffer_enable_locking(bufferevent_get_output(bev_recv),NULL); // 2023/08/11 Necessary for full-duplex. Will lock and unlock automatically, no need to manually evbuffer_lock/evbuffer_unlock.
 	if(event_strc->owner == ENUM_OWNER_GROUP_CTRL) // Should never be GROUP_PEER here
 	{ // event_strc_unique for use with bufferevent_setcb(), being a total copy of event_strc.
@@ -2249,7 +2264,7 @@ static void try_connect_cb(evutil_socket_t fd,short event,void *arg)
 		schedule_reconnect(event_strc);
 		return;
 	}
-	struct bufferevent *bev = bufferevent_socket_new(event_strc->base, -1, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS);
+	struct bufferevent *bev = bufferevent_socket_new(event_strc->base, -1, BEV_OPT_THREADSAFE|BEV_OPT_CLOSE_ON_FREE|BEV_OPT_DEFER_CALLBACKS|BEV_OPT_UNLOCK_CALLBACKS); // XXX BEV_OPT_UNLOCK_CALLBACKS: see the note in accept_conn. This bufferevent is swapped to the peer callbacks once SOCKS completes, so it carries the same deadlock exposure.
 	if(!bev)
 	{
 		error_simple(0,"try_connect_cb: bufferevent_socket_new failed. Retrying.");

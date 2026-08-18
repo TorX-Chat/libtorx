@@ -126,7 +126,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 						torx_read(n) // 🟧🟧🟧
 						if(peer[n].peer_index > -1 && n != origin_or_group_n && peer[n].status == ENUM_STATUS_FRIEND && (peer[n].owner == ENUM_OWNER_CTRL || peer[n].owner == ENUM_OWNER_GROUP_CTRL))
 							broadcasts_queued[iter_queue].peers[iter_peer++] = n;
-						torx_unlock(n++) // 🟩🟩🟩
+						torx_unlock(n) // 🟩🟩🟩
 					}
 					error_printf(0,"Broadcast added and slotted %d times",iter_peer);
 					torx_write(origin_n) // 🟥🟥🟥

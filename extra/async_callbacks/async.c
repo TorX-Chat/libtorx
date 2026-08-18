@@ -233,7 +233,7 @@ void initialize_f_cb_async(const int n,const int f)
 {
 	struct callback_args *struct_p = torx_insecure_malloc(sizeof(struct callback_args));
 	struct_p->mem_int_a = n;
-	struct_p->mem_int_a = f;
+	struct_p->mem_int_b = f;
 	queue_callback(ENUM_INITIALIZE_F,struct_p);
 }
 
