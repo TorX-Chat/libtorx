@@ -1149,6 +1149,9 @@ static inline int split_read(const int n,const int f,const uint8_t splits_hint)
 	}
 //	else
 //		error_simple(0,"Checkpoint no split file found");
+	const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
+	if(size && (uint64_t)splits + 1 > size)
+		splits = (uint8_t)(size - 1); // XXX A section cannot be shorter than one byte, and calculate_section_start treats size < splits+1 as fatal. Reachable from a stale saved count or a corrupt .split file.
 	const size_t read_size = sizeof(uint64_t)*(size_t)(splits+1);
 //	error_printf(0,"Checkpoint split_read allocating n=%d f=%d splits=%u",n,f,splits);
 	uint64_t *split_progress = torx_insecure_malloc(read_size);
@@ -1822,11 +1825,11 @@ void file_accept(const int n,const int f)
 		const uint8_t split_progress_exists = peer[n].file[f].split_progress ? 1 : 0;
 		uint8_t splits = splits_determination_nolock(n,f);
 		torx_unlock(n) // 🟩🟩🟩
-		if(splits == 0 && !split_hashes_exists && !split_progress_exists)
-			splits = 1; // Default to 1 split on p2p/PM files, but not on group files (which will have split_hashes). This is only a hint; a valid .split file overrides it.
+		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
+		if(splits == 0 && !split_hashes_exists && !split_progress_exists && size > 1)
+			splits = 1; // Default to 1 split on p2p/PM files large enough to hold two sections, but not on group files (which will have split_hashes). This is only a hint; a valid .split file overrides it.
 		initialize_split_info(n,f,splits); // calls split_read(n,f,splits);
 		sql_save_file_status(n,f,ENUM_FILE_INACTIVE_ACCEPTED);
-		const uint64_t size = getter_uint64(n,INT_MIN,f,offsetof(struct file_list,size));
 		if(calculate_transferred_inbound(n,f) < size)
 			file_request_internal(n,f,-1);
 		else // Complete. Not checking if oversized or wrong hash.
@@ -1898,6 +1901,11 @@ static inline void *file_init(void *arg)
 	{ // Determine split count, allocate and populate split_hashes, generate hash of hashes
 		splits = UINT8_MAX;
 		size = file_strc->size;
+		if(size < 1)
+		{ // XXX Must precede file_split_hashes, whose section math is fatal on a zero length file
+			error_printf(0,"File is empty: %s",file_strc->path);
+			goto error;
+		}
 		while(splits && size / splits < MINIMUM_SECTION_SIZE)
 			splits--;
 		split_hashes_and_size = file_split_hashes(checksum,file_strc->path,splits,size);
