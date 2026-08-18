@@ -694,7 +694,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND)
 	{ // ENUM_STATUS_FRIEND seems to include active SING/MULT
-		error_simple(0,"Pending user or blocked user received unexpected message. Disconnecting. Report this."); // TODO 2024/09/28 happens after blocks or deletion, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
+		error_printf(1,"Received a message on a peer of status %u. Disconnecting.",status); // TODO 2024/09/28 happens after blocks or deletion, of which the RECV connection stays up because we can't find a threadsafe way to call disconnect_forever from takedown_onion
 		disconnect_forever(event_strc,-1); // XXX Run last and return immediately after, will exit event base
 		return; // 2024/03/11 hit this after deleting a group. probably didn't takedown the event properly after group delete
 	}
@@ -1888,8 +1888,13 @@ static void accept_conn(struct evconnlistener *listener, evutil_socket_t sockfd,
 	const uint8_t status = getter_uint8(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,status));
 	if(status != ENUM_STATUS_FRIEND || event_strc->owner == ENUM_OWNER_PEER || event_strc->owner == ENUM_OWNER_GROUP_PEER) // Disconnect if anything other than status 1
 	{
-		error_simple(0,"Coding error 32402. Report this.");
-		breakpoint();
+		if(event_strc->owner == ENUM_OWNER_PEER || event_strc->owner == ENUM_OWNER_GROUP_PEER)
+		{ // These owner types have no listener, so reaching accept_conn with one is structural
+			error_printf(0,"Inbound connection accepted on owner %u, which has no listener. Coding error. Report this.",event_strc->owner);
+			breakpoint();
+		}
+		else // The remote end cannot withdraw a connection it already initiated, so this is an ordinary race with block/unblock or teardown
+			error_printf(1,"Refusing an inbound connection on a peer of status %u",status);
 	//	disconnect_forever(event_strc,-1); // XXX Run last and return immediately after, will exit event base
 		if(evutil_closesocket(sockfd) < 0) // XXX Nothing else holds this socket yet, so bailing without closing it leaks the descriptor for the life of the process
 			error_simple(0,"Unlikely socket failed to close error.7");

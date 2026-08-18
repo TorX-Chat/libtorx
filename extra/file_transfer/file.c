@@ -1586,6 +1586,25 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 		}
 		target_n = n;
 		file_request_strc.fd_type = fd_type; // must be set by caller
+		torx_read(n) // 🟧🟧🟧
+		if(peer[n].file[f].split_status_n == NULL || peer[n].file[f].split_status_fd == NULL)
+		{
+			torx_unlock(n) // 🟩🟩🟩
+			return -1;
+		}
+		uint32_t sections_claimed = torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int);
+		if(torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t) < sections_claimed)
+			sections_claimed = torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t);
+		uint8_t fd_occupied = 0;
+		for(uint32_t section_claimed = 0; section_claimed < sections_claimed && !fd_occupied ; section_claimed++)
+			if(peer[n].file[f].split_status_n[section_claimed] > -1 && peer[n].file[f].split_status_fd[section_claimed] == fd_type)
+				fd_occupied = 1;
+		torx_unlock(n) // 🟩🟩🟩
+		if(fd_occupied)
+		{ // XXX MUST be decided across every section before any is claimed. Checking it inside the loop below let a free section that came first be claimed on an fd that already carried one, which is the non-consecutive-write case this prevents.
+			error_printf(5,"select_peer: fd_type %d already carries a section of n=%d f=%d",fd_type,n,f);
+			return -1;
+		}
 		for(file_request_strc.section = 0; file_request_strc.section <= splits ; file_request_strc.section++)
 		{ // There should only be 1 or 2 sections, 0 or 1 splits.
 			torx_read(n) // 🟧🟧🟧
@@ -1598,13 +1617,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				return -1;
 			}
 			const int relevant_split_status_n = peer[n].file[f].split_status_n[file_request_strc.section];
-			const int8_t tmp_fd_type = peer[n].file[f].split_status_fd[file_request_strc.section];
 			torx_unlock(n) // 🟩🟩🟩
-			if(relevant_split_status_n != -1 && tmp_fd_type == fd_type)
-			{ // Cannot concurrently request more than one section of the same file on the same file descriptor or we'll have errors about non-consecutive writes.
-				error_simple(0,"Request already exists for a section of this file on this fd_type. Coding error. Report this.");
-				return -1;
-			}
 			if(relevant_split_status_n == -1 && calculate_file_request_start_end(&file_request_strc.start,&file_request_strc.end,n,f,-1,file_request_strc.section) == 0)
 				break; // Target section aquired
 		}
