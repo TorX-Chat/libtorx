@@ -1460,6 +1460,14 @@ int section_unclaim(const int n,const int f,const int peer_n,const int8_t fd_typ
 	return was_transferring;
 }
 
+static inline void request_partial_from_group(const int n,const int f)
+{ // Ask the group who holds this file, so that offer[] can be repopulated. XXX Callers MUST NOT hold peer[n]'s lock: getter_array and message_send both take it.
+	unsigned char checksum[CHECKSUM_BIN_LEN];
+	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
+	message_send(n,ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,checksum,CHECKSUM_BIN_LEN);
+	sodium_memzero(checksum,sizeof(checksum));
+}
+
 static inline int select_peer(const int n,const int f,const int8_t fd_type)
 { // Check: blacklist, online status, how much data they have. Determine which group peer to request file from. Claim section. Used to be called section_claim().
 	if(n < 0 || f < 0)
@@ -1486,16 +1494,14 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	if(owner == ENUM_OWNER_GROUP_CTRL)
 	{ // Group transfers, non-PM
 		int target_o = -1;
+		uint8_t usable_candidate_seen = 0; // XXX An offerer that is offline, blacklisted, or has sent us no _PARTIAL cannot serve us at all, which is a different thing from one that is merely saturated or holds nothing we still need. Only the former warrants asking the group again.
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].offer && peer[n].file[f].split_status_n && peer[n].file[f].split_progress && peer[n].file[f].split_status_fd)
 		{
 			if(peer[n].file[f].offer[0].offerer_n == -1)
 			{ // Request _PARTIAl from everyone because we don't have any offers (we probably just retarted our client)
 				torx_unlock(n) // 🟩🟩🟩
-				unsigned char checksum[CHECKSUM_BIN_LEN];
-				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
-				message_send(n,ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,checksum,CHECKSUM_BIN_LEN);
-				sodium_memzero(checksum,sizeof(checksum));
+				request_partial_from_group(n,f);
 			}
 			else
 			{
@@ -1509,6 +1515,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 						continue;
 					if(peer[n].file[f].offer[o].offer_progress == NULL)
 						continue; // Offerer is registered but sent no valid _PARTIAL, or it was cleared by file_remove_offer
+					usable_candidate_seen = 1; // XXX Must be set here, after the two checks above and before those below: everything past this point skips an offerer that CAN serve us but has nothing to give right now, and counting that as "no source" would rebroadcast on every ordinary pass of the claim loop.
 					const uint32_t offer_sections = torx_allocation_len(peer[n].file[f].offer[o].offer_progress)/sizeof(uint64_t); // XXX sized by the offerer's claimed splits, which can but should not differ from our own derived count
 					uint32_t local_sections = torx_allocation_len(peer[n].file[f].split_status_n)/(uint32_t)sizeof(int);
 					if(torx_allocation_len(peer[n].file[f].split_status_fd)/(uint32_t)sizeof(int8_t) < local_sections)
@@ -1559,7 +1566,16 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 					}
 				}
 				torx_unlock(n) // 🟩🟩🟩
+				if(!usable_candidate_seen)
+				{ // Every offerer we hold is unusable, which is the same situation as holding none and takes the same remedy: ask the group, so their _PARTIAL replies repopulate offer[]. Without this, a file whose only offerer went offline could never be requested again.
+					error_printf(2,"No usable offer for n=%d f=%d. Asking the group who holds it.",n,f);
+					request_partial_from_group(n,f);
+				}
 			}
+		}
+		else
+		{ // XXX Required: these pointers are freed together on cancel (process_pause_cancel), and the lock was dropped and retaken since they were last checked, so this branch is reachable and previously returned still holding the read lock.
+			torx_unlock(n) // 🟩🟩🟩
 		}
 		if(target_n > -1)
 		{
