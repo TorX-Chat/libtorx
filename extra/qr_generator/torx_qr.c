@@ -165,8 +165,8 @@ void *return_png(const struct qr_data *qr_data)
 	uint8_t *compressed = torx_secure_malloc(zl);
 	if(compress2(compressed, &zl, raw, raw_len, Z_BEST_COMPRESSION) != Z_OK)
 	{
-		torx_free((void*)&compressed);
-		torx_free((void*)&raw);
+		torx_free((void**)&compressed);
+		torx_free((void**)&raw);
 		return NULL;
 	}
 	// Append signature, IHDR, IDAT, IEND into one big output buffer. 8-byte signature + (12-byte chunk overhead each) + payloads, with plenty of slack so we never have to grow it.
@@ -187,8 +187,8 @@ void *return_png(const struct qr_data *qr_data)
 	put_chunk(out, &pos, "IDAT", compressed, zl);
 	put_chunk(out, &pos, "IEND", NULL, 0);
 
-	torx_free((void*)&raw);
-	torx_free((void*)&compressed);
+	torx_free((void**)&raw);
+	torx_free((void**)&compressed);
 	return out; // holds `pos` bytes of finished PNG.
 }
 

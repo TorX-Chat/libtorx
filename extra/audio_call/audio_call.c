@@ -445,7 +445,7 @@ void call_join(const int call_n,const int call_c)
 	if(participant_list)
 	{ // Join an existing call
 		message_send_select(participant_count,participant_list,protocol,message,sizeof(message));
-		torx_free((void*)&participant_list);
+		torx_free((void**)&participant_list);
 	}
 	else // Start new call
 		message_send(call_n,protocol,message,(uint32_t)sizeof(message));
@@ -485,7 +485,7 @@ void call_leave(const int call_n,const int call_c)
 		int *participant_list = call_participant_list(&participant_count,call_n,call_c); // All participants, including those with mic off
 		if(participant_list)
 			message_send_select(participant_count,participant_list,ENUM_PROTOCOL_AUDIO_STREAM_LEAVE,message,sizeof(message));
-		torx_free((void*)&participant_list);
+		torx_free((void**)&participant_list);
 		send_count += participant_count;
 	}
 	if(send_count == 0 && (owner == ENUM_OWNER_CTRL || owner == ENUM_OWNER_GROUP_PEER))
@@ -632,27 +632,27 @@ void audio_cache_add(const int participant_n,const time_t time,const time_t nsti
 		time_t *audio_time = torx_insecure_malloc((prior_count + 1) * sizeof(time_t));
 		time_t *audio_nstime = torx_insecure_malloc((prior_count + 1) * sizeof(time_t));
 		uint8_t already_placed_new_data = 0; // must avoid placing more than once
-		for(int old = (int)prior_count-1,new = (int)prior_count; old > -1; new--)
+		for(int old = (int)prior_count-1,idx = (int)prior_count; old > -1; idx--)
 		{
 			if(already_placed_new_data || peer[participant_n].audio_time[old] > time || (peer[participant_n].audio_time[old] == time && peer[participant_n].audio_nstime[old] > nstime))
 			{ // Existing is newer, place it (may occur many times)
-				audio_cache[new] = peer[participant_n].audio_cache[old];
-				audio_time[new] = peer[participant_n].audio_time[old];
-				audio_nstime[new] = peer[participant_n].audio_nstime[old];
+				audio_cache[idx] = peer[participant_n].audio_cache[old];
+				audio_time[idx] = peer[participant_n].audio_time[old];
+				audio_nstime[idx] = peer[participant_n].audio_nstime[old];
 				old--; // only -- when utilizing old data
 			}
 			else
 			{ // Ours is newer, place it (must only occur once)
-				audio_cache[new] = torx_secure_malloc(data_len);
-				memcpy(audio_cache[new],data,data_len);
-				audio_time[new] = time;
-				audio_nstime[new] = nstime;
+				audio_cache[idx] = torx_secure_malloc(data_len);
+				memcpy(audio_cache[idx],data,data_len);
+				audio_time[idx] = time;
+				audio_nstime[idx] = nstime;
 				already_placed_new_data = 1;
 			}
 		}
-		torx_free((void*)&peer[participant_n].audio_cache);
-		torx_free((void*)&peer[participant_n].audio_time);
-		torx_free((void*)&peer[participant_n].audio_nstime);
+		torx_free((void**)&peer[participant_n].audio_cache);
+		torx_free((void**)&peer[participant_n].audio_time);
+		torx_free((void**)&peer[participant_n].audio_nstime);
 
 		peer[participant_n].audio_cache = audio_cache;
 		peer[participant_n].audio_time = audio_time;
@@ -715,10 +715,10 @@ void audio_cache_clear_participant(const int participant_n)
 		return; // Sanity check
 	torx_write(participant_n) // 🟥🟥🟥
 	for(uint32_t count = torx_allocation_len(peer[participant_n].audio_cache)/sizeof(unsigned char *); count ; ) // do not change logic without thinking
-		torx_free((void*)&peer[participant_n].audio_cache[--count]); // clear out all unplayed audio data
-	torx_free((void*)&peer[participant_n].audio_cache);
-	torx_free((void*)&peer[participant_n].audio_time);
-	torx_free((void*)&peer[participant_n].audio_nstime);
+		torx_free((void**)&peer[participant_n].audio_cache[--count]); // clear out all unplayed audio data
+	torx_free((void**)&peer[participant_n].audio_cache);
+	torx_free((void**)&peer[participant_n].audio_time);
+	torx_free((void**)&peer[participant_n].audio_nstime);
 	peer[participant_n].audio_last_retrieved_time = 0;
 	peer[participant_n].audio_last_retrieved_nstime = 0;
 	torx_unlock(participant_n) // 🟩🟩🟩
@@ -732,15 +732,15 @@ void audio_cache_clear_all(const int call_n,const int call_c)
 	int *participant_list = call_participant_list(&participant_count,call_n,call_c); // All participants, including those with speaker off
 	for(uint32_t iter = 0; iter < participant_count; iter++)
 		audio_cache_clear_participant(participant_list[iter]);
-	torx_free((void*)&participant_list);
+	torx_free((void**)&participant_list);
 }
 
 uint32_t record_cache_clear_nolocks(const int call_n)
 { // No locks, no sanity checks. Must lock and do sanity checks before calling. Internal function ONLY.
 	const uint32_t existing_count = torx_allocation_len(peer[call_n].cached_recording)/sizeof(unsigned char *);
 	for(uint32_t count = 0; count < existing_count; count++)
-		torx_free((void*)&peer[call_n].cached_recording[count]); // clear out all cached recordings
-	torx_free((void*)&peer[call_n].cached_recording);
+		torx_free((void**)&peer[call_n].cached_recording[count]); // clear out all cached recordings
+	torx_free((void**)&peer[call_n].cached_recording);
 	peer[call_n].cached_time = 0;
 	peer[call_n].cached_nstime = 0;
 	return existing_count;
@@ -812,6 +812,6 @@ int record_cache_add(const int call_n,const int call_c,const uint32_t cache_mini
 		record_cache_clear_nolocks(call_n);
 	}
 	torx_unlock(call_n) // 🟩🟩🟩
-	torx_free((void*)&recipient_list);
+	torx_free((void**)&recipient_list);
 	return (int)recipient_count;
 }

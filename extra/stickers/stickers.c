@@ -128,12 +128,12 @@ static inline void sticker_save_peers(const int s)
 			peer_index_list[iter] = htobe32((uint32_t)getter_int(sticker[s].peers[iter],INT_MIN,-1,offsetof(struct peer_list,peer_index)));
 		pthread_rwlock_unlock(&mutex_sticker); // 🟩
 		sql_setting(0,-1,setting_name,(const char*)peer_index_list,torx_allocation_len(peer_index_list));
-		torx_free((void*)&peer_index_list);
+		torx_free((void**)&peer_index_list);
 	}
 	else
 		sql_delete_setting(0,-1,setting_name);
 	sodium_memzero(setting_name,sizeof(setting_name));
-	torx_free((void*)&encoded);
+	torx_free((void**)&encoded);
 }
 
 void sticker_add_peer(const int s,const int n)
@@ -224,10 +224,10 @@ void sticker_save(const int s)
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	char setting_name[256];
 	snprintf(setting_name,sizeof(setting_name),"sticker-gif-%s",encoded);
-	torx_free((void*)&encoded);
+	torx_free((void**)&encoded);
 	sql_setting(0,-1,setting_name,(const char*)data_copy,torx_allocation_len(data_copy));
 	sodium_memzero(setting_name,sizeof(setting_name));
-	torx_free((void*)&data_copy);
+	torx_free((void**)&data_copy);
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
 	sticker[s].saved = 1;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
@@ -245,12 +245,12 @@ void sticker_delete(const int s)
 	snprintf(setting_name,sizeof(setting_name),"sticker-gif-%s",encoded);
 	const size_t peer_count = torx_allocation_len(sticker[s].peers)/sizeof(int); // must be before freeing .peers
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
-	torx_free((void*)&encoded);
+	torx_free((void**)&encoded);
 	sql_delete_setting(0,-1,setting_name);
 	sodium_memzero(setting_name,sizeof(setting_name));
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-	torx_free((void*)&sticker[s].data);
-	torx_free((void*)&sticker[s].peers); // must be after getting peer_count
+	torx_free((void**)&sticker[s].data);
+	torx_free((void**)&sticker[s].peers); // must be after getting peer_count
 	sticker[s].saved = 0;
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 	if(peer_count)
@@ -328,7 +328,7 @@ unsigned char *sticker_retrieve_data(const int s)
 		pthread_rwlock_unlock(&mutex_sticker); // 🟩
 		char query[256]; // somewhat arbitrary size
 		snprintf(query,sizeof(query),"sticker-gif-%s",p);
-		torx_free((void*)&p);
+		torx_free((void**)&p);
 		unsigned char *setting_value = sql_retrieve_setting(0,query);
 		sodium_memzero(query,sizeof(query));
 		pthread_rwlock_wrlock(&mutex_sticker); // 🟥
@@ -365,7 +365,7 @@ void sticker_offload(const int s)
 		return;
 	}
 	pthread_rwlock_wrlock(&mutex_sticker); // 🟥
-	torx_free((void*)&sticker[s].data);
+	torx_free((void**)&sticker[s].data);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 }
 
@@ -375,6 +375,6 @@ void sticker_offload_saved(void)
 	const size_t sticker_count = torx_allocation_len(sticker)/sizeof(struct sticker_list);
 	for(uint32_t s = 0; s < sticker_count; s++)
 		if(sticker[s].saved)
-			torx_free((void*)&sticker[s].data);
+			torx_free((void**)&sticker[s].data);
 	pthread_rwlock_unlock(&mutex_sticker); // 🟩
 }

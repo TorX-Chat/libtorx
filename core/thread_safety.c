@@ -141,7 +141,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 }
 
 char *getter_string(const int n,const int i,const int f,const size_t offset)
-{ // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void*)&string);
+{ // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void**)&string);
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
 		error_printf(-1,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);

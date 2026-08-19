@@ -71,7 +71,7 @@ severable if found in contradiction with the License or applicable law.
 
 TODO FIXME XXX Notes:
 	* Do not use: strcpy, strncpy, strcat, strncat, strcmp, scanf, itoa (strncmp is ok)
-	* %m (allocation related) must be avoided because it is normal malloc and therefore incompatible with torx_free((void*)&)
+	* %m (allocation related) must be avoided because it is normal malloc and therefore incompatible with torx_free((void**)&)
 	* sleep() should be used carefully because sleep() on android is not accurately one second. Commonly speed up by several times for unknown reasons.
 	* AUTOMATICALLY_LOAD_CTRL = 0 is not viable because adversaries can monitor disconnection times
 	* having connections break after every message (preventing online status checks) is not really viable because an adversary can still do a HSDir lookup to find you status, without ever making a TCP connection to you
@@ -571,21 +571,21 @@ void tor_log_cb(char *message)
 	if(tor_log_registered)
 		tor_log_registered(message);
 	else
-		torx_free((void*)&message);
+		torx_free((void**)&message);
 }
 void error_cb(char *error_message)
 {
 	if(error_registered)
 		error_registered(error_message);
 	else
-		torx_free((void*)&error_message);
+		torx_free((void**)&error_message);
 }
 void fatal_cb(char *error_message)
 {
 	if(fatal_registered)
 		fatal_registered(error_message);
 	else
-		torx_free((void*)&error_message);
+		torx_free((void**)&error_message);
 }
 void custom_setting_cb(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext)
 {
@@ -593,8 +593,8 @@ void custom_setting_cb(const int n,char *setting_name,char *setting_value,const 
 		custom_setting_registered(n,setting_name,setting_value,setting_value_len,plaintext);
 	else
 	{
-		torx_free((void*)&setting_name);
-		torx_free((void*)&setting_value);
+		torx_free((void**)&setting_name);
+		torx_free((void**)&setting_value);
 	}
 }
 void message_new_cb(const int n,const int i)
@@ -617,7 +617,7 @@ void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t
 	if(message_extra_registered)
 		message_extra_registered(n,i,data,data_len);
 	else
-		torx_free((void*)&data);
+		torx_free((void**)&data);
 }
 void message_more_cb(const int loaded,int *loaded_array_n,int *loaded_array_i)
 {
@@ -625,8 +625,8 @@ void message_more_cb(const int loaded,int *loaded_array_n,int *loaded_array_i)
 		message_more_registered(loaded,loaded_array_n,loaded_array_i);
 	else
 	{
-		torx_free((void*)&loaded_array_n);
-		torx_free((void*)&loaded_array_i);
+		torx_free((void**)&loaded_array_n);
+		torx_free((void**)&loaded_array_i);
 	}
 }
 void login_cb(const int value)
@@ -649,14 +649,14 @@ void stream_cb(const int n,const int p_iter,char *data,const uint32_t len)
 	if(stream_registered)
 		stream_registered(n,p_iter,data,len);
 	else
-		torx_free((void*)&data);
+		torx_free((void**)&data);
 }
 void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t len)
 {
 	if(unknown_registered)
 		unknown_registered(n,protocol,data,len);
 	else
-		torx_free((void*)&data);
+		torx_free((void**)&data);
 }
 
 void initialize_n_setter(void (*callback)(int))
@@ -1085,7 +1085,7 @@ void *torx_realloc(void *arg,const size_t len_new)
 }
 
 void torx_free(void **p)
-{ // XXX Usage: torx_free((void*)&pointer)
+{ // XXX Usage: torx_free((void**)&pointer)
 	if(*p == NULL)
 		return;
 	void *real_ptr = (char *)(*p) - 8;
@@ -1112,7 +1112,7 @@ void torx_free(void **p)
 
 void torx_free_simple(void *p)
 { // For stupid UI languages (like Flutter/Dart)
-	torx_free((void*)&p);
+	torx_free(&p);
 }
 
 
@@ -1179,7 +1179,7 @@ int message_insert(const int g,const int n,const int i)
 		if(current_page->time == time && current_page->nstime == nstime)
 		{ // CAUSES: Chance, someone re-sent our date-signed message (private group), or malicious (someone wants to prevent others from receiving a message)
 			error_simple(0,"Time and nstime are the same as existing message.");
-			torx_free((void*)&page);
+			torx_free((void**)&page);
 			return -1; // We could utilize this return to update the message (scroll = 3), but we'd have to update sql too. This would facilitate recalls/changes... but only group messages, its dumb. don't pursue.
 		}
 		if(current_page->message_next == NULL && (current_page->time < time || (current_page->time == time && current_page->nstime < nstime)))
@@ -1254,7 +1254,7 @@ void message_remove(const int g,const int n,const int i)
 		}
 		group[g].msg_count--;
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-		torx_free((void*)&current_page);
+		torx_free((void**)&current_page);
 	}
 	else
 	{ // TODO 2024/02/24 unable to discern why some fail and some don't. (ie why some are in struct and others aren't -- review message_insert, message_sort)
@@ -1680,7 +1680,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 	}
 	CloseHandle(g_hChildStd_IN_Rd);
 	CloseHandle(g_hChildStd_OUT_Wr);
-	torx_free((void*)&cmd);
+	torx_free((void**)&cmd);
 	char *output = {0};
 	if(fd_stdout)
 		*(HANDLE*)fd_stdout = g_hChildStd_OUT_Rd;
@@ -1781,7 +1781,7 @@ char *run_binary(pid_t *return_pid,void *fd_stdin,void *fd_stdout,char *const ar
 		{ // Pipe fail or (more likely) failed to execute the binary for some reason (such as wrong path)
 			if(bytesRead < 0)
 				error_simple(0,"Reading pipe fail in run_binary");
-			torx_free((void*)&output);
+			torx_free((void**)&output);
 			if(fd_stdin)
 				*(int*)fd_stdin = -1;
 			if(fd_stdout)
@@ -1890,12 +1890,12 @@ char *message_sign(const unsigned char *sign_sk,const time_t time,const time_t n
 		if(crypto_sign_detached((unsigned char *)&message_prepared[total_unsigned_len],&sig_len,(unsigned char *)prefixed_message,2+4+total_unsigned_len,sign_sk) != 0)
 		{
 			error_simple(0,"Failure in message_sign at crypto_sign_detached.");
-			torx_free((void*)&prefixed_message);
-			torx_free((void*)&message_prepared);
+			torx_free((void**)&prefixed_message);
+			torx_free((void**)&message_prepared);
 			breakpoint();
 			return NULL;
 		}
-		torx_free((void*)&prefixed_message);
+		torx_free((void**)&prefixed_message);
 	}
 	return message_prepared;
 }
@@ -1941,18 +1941,18 @@ void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion)
 	memcpy(onion_uppercase,onion,56);
 	onion_uppercase[56] = '\0';
 	xstrupr(onion_uppercase);
-	baseencode_error_t err = {0}; // for base32
+	baseencode_error_t err = SUCCESS; // for base32
 	unsigned char *p = base32_decode(onion_uppercase,56,&err);
 	sodium_memzero(onion_uppercase,sizeof(onion_uppercase));
 	if(p == NULL || err)
 	{
 		error_simple(0,"Uncaught error in onion_to_ed25519_pk. Report this.");
-		torx_free((void*)&p);
+		torx_free((void**)&p);
 		breakpoint();
 		return;
 	}
 	memcpy(ed25519_pk,p,crypto_sign_PUBLICKEYBYTES);
-	torx_free((void*)&p);
+	torx_free((void**)&p);
 }
 
 char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)
@@ -2071,7 +2071,7 @@ void torrc_save(const char *torrc_content_local)
 		memcpy(torrc_content_final,torrc_content_local,len+1);
 	}
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-	torx_free((void*)&torrc_content);
+	torx_free((void**)&torrc_content);
 	torrc_content = torrc_content_final;
 	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	if(threadsafe_read_uint8(&mutex_global_variable,&keyed))
@@ -2171,7 +2171,7 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	if(group_msg && peer[n].owner == ENUM_OWNER_GROUP_PEER)
 		peer[n].message[i].message = NULL; // will be freed in group CTRL
 	else
-		torx_free((void*)&peer[n].message[i].message);
+		torx_free((void**)&peer[n].message[i].message);
 	peer[n].message[i].p_iter = -1; // must be -1
 	peer[n].message[i].stat = 0;
 	peer[n].message[i].pos = 0;
@@ -2219,7 +2219,7 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 		zero_f(n,f);
 	peer[n].blacklisted = 0;
 	#endif // NO_FILE_TRANSFER
-//	torx_free((void*)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup. NOTE: 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
+//	torx_free((void**)&peer[n].message); // **cannot** be here but needs to be elsewhere, at least on cleanup. NOTE: 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
 //	peer[n].max_i = -1; // should now be handled by zero_i/shrinkage
 //	peer[n].min_i = 0; // should now be handled by zero_i/shrinkage
 	peer[n].owner = 0;
@@ -2230,7 +2230,7 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	memset(peer[n].torxid,'0',sizeof(peer[n].torxid)-1);
 	peer[n].peerversion = 0;
 	memset(peer[n].peeronion,'0',sizeof(peer[n].peeronion)-1);
-	torx_free((void*)&peer[n].peernick);
+	torx_free((void**)&peer[n].peernick);
 	peer[n].log_messages = 0;
 	peer[n].last_seen = 0;
 	peer[n].vport = 0;
@@ -2252,24 +2252,24 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	#ifndef NO_AUDIO_CALL
 	for (size_t c = 0; c < torx_allocation_len(peer[n].call)/sizeof(struct call_list); c++)
 	{
-		torx_free((void*)&peer[n].call[c].participating);
-		torx_free((void*)&peer[n].call[c].participant_mic);
-		torx_free((void*)&peer[n].call[c].participant_speaker);
+		torx_free((void**)&peer[n].call[c].participating);
+		torx_free((void**)&peer[n].call[c].participant_mic);
+		torx_free((void**)&peer[n].call[c].participant_speaker);
 	}
-	torx_free((void*)&peer[n].call);
+	torx_free((void**)&peer[n].call);
 	for(uint32_t count = torx_allocation_len(peer[n].audio_cache)/sizeof(unsigned char *); count ; ) // do not change logic without thinking
-		torx_free((void*)&peer[n].audio_cache[--count]); // clear out all unplayed audio data
-	torx_free((void*)&peer[n].audio_cache);
-	torx_free((void*)&peer[n].audio_time);
-	torx_free((void*)&peer[n].audio_nstime);
+		torx_free((void**)&peer[n].audio_cache[--count]); // clear out all unplayed audio data
+	torx_free((void**)&peer[n].audio_cache);
+	torx_free((void**)&peer[n].audio_time);
+	torx_free((void**)&peer[n].audio_nstime);
 	peer[n].audio_last_retrieved_time = 0;
 	peer[n].audio_last_retrieved_nstime = 0;
 	record_cache_clear_nolocks(n);
 	#endif // NO_AUDIO_CALL
 	#ifndef NO_STICKERS
 	for (size_t y = 0; y < torx_allocation_len(peer[n].stickers_requested)/sizeof(unsigned char *); y++)
-		torx_free((void*)&peer[n].stickers_requested[y]);
-	torx_free((void*)&peer[n].stickers_requested);
+		torx_free((void**)&peer[n].stickers_requested[y]);
+	torx_free((void**)&peer[n].stickers_requested);
 	#endif // NO_STICKERS
 // TODO probably need a callback to UI (to zero the UI struct)
 }
@@ -2283,7 +2283,7 @@ void zero_g(const int g)
 		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
 	group[g].hash = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
-	torx_free((void*)&group[g].peerlist); // XXX this is also what zeroes the peercount, which is derived from its length
+	torx_free((void**)&group[g].peerlist); // XXX this is also what zeroes the peercount, which is derived from its length
 	group[g].invite_required = 0;
 	group[g].msg_index_iter = 0; // please don't initialize as -1
 	group[g].msg_index = NULL; // do not free, there is no space allocated
@@ -2293,10 +2293,10 @@ void zero_g(const int g)
 		if(page->message_next)
 		{
 			page = page->message_next;
-			torx_free((void*)&page->message_prior); // TODO 2024/06/19 Bug on shutdown after deleting group. Unknown origin.
+			torx_free((void**)&page->message_prior); // TODO 2024/06/19 Bug on shutdown after deleting group. Unknown origin.
 		}
 		else
-			torx_free((void*)&page); // TODO 2024/06/19 Bug on shutdownafter deleting group. Unknown origin.
+			torx_free((void**)&page); // TODO 2024/06/19 Bug on shutdownafter deleting group. Unknown origin.
 	}
 	group[g].msg_first = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
 	group[g].msg_last = NULL; // this is necessary, but using torx_free would be redundant and lead to errors
@@ -2457,7 +2457,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 							array[relevant] = n;
 							relevant++;
 						}
-						torx_free((void*)&peernick);
+						torx_free((void**)&peernick);
 					}
 				}
 			}
@@ -2476,7 +2476,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 					array[relevant] = n;
 					relevant++;
 				}
-				torx_free((void*)&peernick);
+				torx_free((void**)&peernick);
 			}
 		}
 	}
@@ -2492,7 +2492,7 @@ int *refined_list(int *len,const uint8_t owner,const int peer_status,const char 
 				array[relevant] = max;
 				relevant++;
 			}
-			torx_free((void*)&peernick);
+			torx_free((void**)&peernick);
 		}
 	}
 	else
@@ -2543,7 +2543,7 @@ static inline int hash_password_internal(const char *password)
 	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	char* const args_cmd[] = {tor_location_local,arg1,arg2,arg3,arg4,arg5,NULL};
 	char *ret = run_binary(NULL,NULL,NULL,args_cmd,NULL);
-	torx_free((void*)&arg5);
+	torx_free((void**)&arg5);
 	size_t len = 0;
 	if(ret && (len = strlen(ret)) == 61)
 	{
@@ -2555,7 +2555,7 @@ static inline int hash_password_internal(const char *password)
 	}
 	else
 		error_printf(0,"Improper length hashed Tor Control Password. Possibly Tor location incorrect? Length: %zu Output: %s",len,ret ? ret : "None.");
-	torx_free((void*)&ret);
+	torx_free((void**)&ret);
 	return (int)len;
 }
 
@@ -2581,7 +2581,7 @@ static inline void hash_password(void)
 		if(hash_password_internal(control_password_clear_local) != 61)
 		{
 			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-			torx_free((void*)&tor_location);
+			torx_free((void**)&tor_location);
 			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 		sodium_memzero(control_password_clear_local,sizeof(control_password_clear_local));
@@ -2641,14 +2641,14 @@ static inline int get_tor_version(void)
 	using_system_tor = using_system_tor_local;
 	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	const int failed = extract_version(tor_version,ret);
-	torx_free((void*)&ret);
+	torx_free((void**)&ret);
 	if(failed)
 	{
 		if(!using_system_tor_local && tor_location_local[0] != '\0')
 		{
 			error_printf(0,"Tor failed to return version. Check binary location and integrity: %s",tor_location_local);
 			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
-			torx_free((void*)&tor_location);
+			torx_free((void**)&tor_location);
 			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		}
 	}
@@ -2795,7 +2795,7 @@ static inline void *tor_log_reader(void *arg)
 			{
 				if(remaining_len) // 2024/12/25 This can occur when restarting Tor
 					error_simple(0,"Disgarding a Tor log message due to failure of utf8_valid check.");
-				torx_free((void*)&msg);
+				torx_free((void**)&msg);
 			}
 		}
 		else if(read_tor_pipe_cache == NULL)
@@ -2826,14 +2826,14 @@ char *replace_substring(const char *source,const char *search,const char *replac
 	const size_t search_len = strlen(search);
 	const size_t replace_len = strlen(replace);
 	const size_t final_len = source_len - search_len + replace_len;
-	char *new = torx_secure_malloc(final_len + 1);
+	char *fresh = torx_secure_malloc(final_len + 1);
 	const size_t prefix_len = (size_t)(pos - source);
 	const size_t suffix_len = final_len - prefix_len - replace_len;
-	memcpy(new, source, prefix_len); // add prefix
-	memcpy(new + prefix_len, replace, replace_len); // add replace
-	memcpy(new + prefix_len + replace_len, pos + search_len, suffix_len); // add suffix
-	new[final_len] = '\0';
-	return new;
+	memcpy(fresh, source, prefix_len); // add prefix
+	memcpy(fresh + prefix_len, replace, replace_len); // add replace
+	memcpy(fresh + prefix_len + replace_len, pos + search_len, suffix_len); // add suffix
+	fresh[final_len] = '\0';
+	return fresh;
 }
 
 static inline uint16_t extract_port(const char *input,const char *type)
@@ -2903,7 +2903,7 @@ static inline void kill_tor(const uint8_t wait_to_reap)
 			if(!already_using_system_tor && threadsafe_read_uint8(&mutex_global_variable,&tor_running))
 			{ // Must only request shutdown on binary Tor
 				char *ret = tor_call("signal shutdown\n"); // Request a clean shutdown (cleaner than TAKEOWNERSHIP or kill() invoked)
-				torx_free((void*)&ret);
+				torx_free((void**)&ret);
 			} // Not else if
 			if(torx_close_socket(&mutex_global_variable,&tor_ctrl_socket)) // This takes advantage of TAKEOWNERSHIP. Note: cannot wait() here
 				error_simple(0,"Tor is probably already dead.");
@@ -2959,14 +2959,14 @@ static inline void *start_tor_threaded(void *arg)
 				system_tor_torrc_content = NULL;
 			pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 			tor_socks_port = tor_socks_port_local;
-			torx_free((void*)&torrc_content);
+			torx_free((void**)&torrc_content);
 			torrc_content = system_tor_torrc_content;
 			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 			sql_populate_peer();
 		}
 		else // Bad password or bad control port
 			error_simple(0,"System Tor has no functional SOCKS port.");
-		torx_free((void*)&ret);
+		torx_free((void**)&ret);
 	}
 	else
 	{ // Binary Tor is to be utilized
@@ -3072,14 +3072,14 @@ static inline void *start_tor_threaded(void *arg)
 				ret = run_binary(&pid,NULL,&fd_stdout,args_cmd,torrc_content_local);
 			}
 		}
-		torx_free((void*)&ret); // we don't use this and it should be null anyway
-		torx_free((void*)&torrc_content_local);
+		torx_free((void**)&ret); // we don't use this and it should be null anyway
+		torx_free((void**)&torrc_content_local);
 		pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 		tor_pid = pid;
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 		pthread_mutex_unlock(&mutex_tor_pipe); // 🟩🟩
 		ret = tor_call("TAKEOWNERSHIP\n"); // We place this here rather than after authenticating in tor_call because we do need to run sql_populate_peer again
-		torx_free((void*)&ret);
+		torx_free((void**)&ret);
 		pid_write(pid);
 		#ifdef WIN32
 		if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,fd_stdout))
@@ -3200,7 +3200,7 @@ static inline size_t b64_encoded_size(const size_t inlen)
 	return ret;
 }
 char *b64_encode(const void *in_arg,const size_t len)
-{ // remember to torx_free((void*)&)
+{ // remember to torx_free((void**)&)
 	const unsigned char *in = in_arg;
 	const char b64chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 	size_t elen,i,j,v;
@@ -3284,7 +3284,7 @@ static inline void database_migrations(void)
 	{ // sql_retrieve_setting's return is NOT null terminated, so it cannot be handed to strtoull as-is
 		const uint32_t setting_value_len = torx_allocation_len(setting_value);
 		memcpy(db_version_string,setting_value,setting_value_len < sizeof(db_version_string) ? setting_value_len : sizeof(db_version_string) - 1);
-		torx_free((void*)&setting_value);
+		torx_free((void**)&setting_value);
 	}
 	const uint16_t db_version = (uint16_t)strtoull(db_version_string,NULL,10);
 	if(db_version < 1)
@@ -3931,7 +3931,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 				sodium_memzero(peeronion,sizeof(peeronion));
 				sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 				error_simple(4,"Success of group_check_sig: Signed by a peer.");
-				torx_free((void*)&prefixed_message);
+				torx_free((void**)&prefixed_message);
 				return peer_n;
 			}
 			sodium_memzero(peeronion,sizeof(peeronion));
@@ -3940,7 +3940,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	if(peeronion_len)
 	{ // do not continue if prefix was passed and no more peers
 		error_simple(4,"Failure of group_check_sig. Prefix doesn't match any peeronions in group.");
-		torx_free((void*)&prefixed_message);
+		torx_free((void**)&prefixed_message);
 		return -1;
 	}
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
@@ -3953,7 +3953,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		error_simple(4,"Success of group_check_sig: Signed by group_n (us).");
 	//	error_printf(0,"Checkpoint SUCCESS of GROUP self-sign: %u",untrusted_protocol);
 		sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-		torx_free((void*)&prefixed_message);
+		torx_free((void**)&prefixed_message);
 		return group_n;
 	}
 	else if(peerlist)
@@ -3967,7 +3967,7 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 	else
 		error_printf(0,"Group=%d has no peerlist and peercount=%u. group_check_sig had nothing to check against except our own signature.",g,g_peercount);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
-	torx_free((void*)&prefixed_message);
+	torx_free((void**)&prefixed_message);
 	return -1;
 }
 
@@ -4042,7 +4042,7 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	{ // use torxid instead of // local_group_peernick = local_group_peeronion;
 		char *torxid = torxid_from_onion(local_group_peeronion);
 		snprintf(nick_array,sizeof(nick_array),"%s",torxid);
-		torx_free((void*)&torxid);
+		torx_free((void**)&torxid);
 		local_group_peernick = nick_array;
 	}
 	char fake_privkey[88+1];
@@ -4118,7 +4118,7 @@ int group_join(const int inviter_n,const unsigned char *group_id,const char *gro
 		{ // No name passed, so use encoded group ID
 			char *local_group_name = b64_encode(group_id,GROUP_ID_SIZE);
 			group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,local_group_name);
-			torx_free((void*)&local_group_name);
+			torx_free((void**)&local_group_name);
 		}
 		else
 			group_n = generate_onion(ENUM_OWNER_GROUP_CTRL,NULL,group_name); // load, save
@@ -4565,10 +4565,10 @@ static inline void *change_password_threaded(void *arg)
 	error_simple(0,"Finished changing password.");
 	change_password_cb(val);
 	liberate: {}
-	torx_free((void*)&pass_strc->password_new);
-	torx_free((void*)&pass_strc->password_verify);
-	torx_free((void*)&pass_strc->password_old);
-	torx_free((void*)&pass_strc);
+	torx_free((void**)&pass_strc->password_new);
+	torx_free((void**)&pass_strc->password_verify);
+	torx_free((void**)&pass_strc->password_old);
+	torx_free((void**)&pass_strc);
 	return 0;
 }
 
@@ -4745,7 +4745,7 @@ void cleanup_lib(const int sig_num)
 	}
 	else
 		error_simple(0,"Failed to kill Tor for some reason upon shutdown (perhaps it already died?)."); */
-	torx_free((void*)&control_password_clear);
+	torx_free((void**)&control_password_clear);
 	sodium_memzero(control_password_hash,sizeof(control_password_hash));
 	const int highest_ever_o_local = threadsafe_read_int(&mutex_global_variable,&highest_ever_o);
 	if(highest_ever_o_local > 0) // this does not mean file transfers occured, i think
@@ -4760,7 +4760,7 @@ void cleanup_lib(const int sig_num)
 	}
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
-	torx_free((void*)&group);
+	torx_free((void**)&group);
 	pthread_rwlock_wrlock(&mutex_expand); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
 	for(int n = 0 ; peer[n].onion[0] != 0 || peer[n].peer_index > -1 ;  n++)
 	{ // DO NOT USE getter_ functions
@@ -4769,7 +4769,7 @@ void cleanup_lib(const int sig_num)
 		const int pointer_location = find_message_struc_pointer(peer[n].min_i); // Note: returns negative
 		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?
 		#ifndef NO_FILE_TRANSFER
-		torx_free((void*)&peer[n].file);
+		torx_free((void**)&peer[n].file);
 		#endif // NO_FILE_TRANSFER
 	}
 	#ifndef NO_STICKERS
@@ -4777,15 +4777,15 @@ void cleanup_lib(const int sig_num)
 	for(int s = 0; (uint32_t)s < torx_allocation_len(sticker)/sizeof(struct sticker_list); s++)
 	{
 		sodium_memzero(sticker[s].checksum,CHECKSUM_BIN_LEN);
-		torx_free((void*)&sticker[s].peers);
-		torx_free((void*)&sticker[s].data);
+		torx_free((void**)&sticker[s].peers);
+		torx_free((void**)&sticker[s].data);
 	}
-	torx_free((void*)&sticker);
+	torx_free((void**)&sticker);
 	#endif // NO_STICKERS
 	pthread_rwlock_wrlock(&mutex_protocols); // 🟥
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥 // do not use for debug variable
 	pthread_rwlock_wrlock(&mutex_debug_level); // 🟥 // XXX Cannot use error_ll after this
-	torx_free((void*)&peer);
+	torx_free((void**)&peer);
 	// XXX NOTHING THAT UTILIZES LOCKS CAN COME AFTER THIS POINT (including error_ll) XXX
 	thread_kill(thrd_start_tor); // TODO this is probably already dead but not NULL, we need to NULL it
 	thread_kill(thrd_tor_log_reader);
@@ -4902,10 +4902,10 @@ static inline long int tor_call_authenticate(const uint16_t local_tor_ctrl_port)
 					error_simple(0,"Tor call authentication failed. Check control port password.");
 					if(ret)
 						error_printf(4,"Tor Control Response:\n%s",ret);
-					torx_free((void*)&ret);
+					torx_free((void**)&ret);
 					return RETRIES_MAX;
 				}
-				torx_free((void*)&ret);
+				torx_free((void**)&ret);
 				error_printf(4,"Tor call SUCCESS after %ld retries",retries);
 				tor_calls = 0; // must reset
 				break;
@@ -4933,7 +4933,7 @@ char *tor_call(const char *msg)
 		if(send(SOCKET_CAST_OUT tor_ctrl_socket,"This will fail\n",SOCKET_WRITE_SIZE 15,0) == 15)
 		{ // We just need to send a newline, or any text terminated with a newline, then recv.
 			msg_recv = tor_call_internal_recv(tor_ctrl_socket);
-			torx_free((void*)&msg_recv);
+			torx_free((void**)&msg_recv);
 		}
 	}
 	if(retries != RETRIES_MAX && send(SOCKET_CAST_OUT tor_ctrl_socket,msg,SOCKET_WRITE_SIZE msg_len,0) == (ssize_t)msg_len && (entered_final_stage_of_shutdown || (msg_recv = tor_call_internal_recv(tor_ctrl_socket))))
@@ -4973,7 +4973,7 @@ static inline void *tor_call_async_threaded(void *arg)
 	if(tor_call_strc->callback)
 		(*tor_call_strc->callback)(rbuff);
 	else
-		torx_free((void*)&rbuff);
+		torx_free((void**)&rbuff);
 	return 0;
 }
 
@@ -5019,7 +5019,7 @@ char *torxid_from_onion(const char *onion)
 		error_printf(0,"Null or improper onion passed to torxid_from_onion: %s",onion);
 		return NULL;
 	}
-	baseencode_error_t err = {0}; // for base32
+	baseencode_error_t err = SUCCESS; // for base32
 	char onion_uppercase[56+1]; // zero'd
 	snprintf(onion_uppercase,sizeof(onion_uppercase),"%s",onion);
 	xstrupr(onion_uppercase);
@@ -5032,7 +5032,7 @@ char *torxid_from_onion(const char *onion)
 	}
 	char ed25519_pk_b32[56+1];
 	size_t len = base32_encode((unsigned char*)ed25519_pk_b32,onion_decoded,32);
-	torx_free((void*)&onion_decoded);
+	torx_free((void**)&onion_decoded);
 	if(len != 56)
 	{ // check has no unnecessary overhead due to re-use of len
 		error_printf(0,"Invalid torxid generated: %s",ed25519_pk_b32);
@@ -5056,7 +5056,7 @@ char *onion_from_torxid(const char *torxid)
 		error_printf(0,"Null or improper length onion passed to onion_from_torxid: %s",torxid);
 		return NULL;
 	}
-	baseencode_error_t err = {0}; // for base32
+	baseencode_error_t err = SUCCESS; // for base32
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES] = {0}; // zero'd
 	size_t d = 52-strlen(torxid);
 	char ed25519_pk_b32[52+1]; // zero'd
@@ -5067,15 +5067,15 @@ char *onion_from_torxid(const char *torxid)
 		ed25519_pk_b32[52-d] = 'Q';
 		d--;
 	}
-	unsigned char *p = base32_decode(ed25519_pk_b32,52,&err); // torx_free((void*)&)'d
+	unsigned char *p = base32_decode(ed25519_pk_b32,52,&err); // torx_free((void**)&)'d
 	sodium_memzero(ed25519_pk_b32,sizeof(ed25519_pk_b32));
 	if(p == NULL || err)
 	{ // base32_decode returns NULL on invalid input, which reaches here from pasted TorX-IDs
-		torx_free((void*)&p);
+		torx_free((void**)&p);
 		return NULL;
 	}
 	memcpy(ed25519_pk,p,32);
-	torx_free((void*)&p);
+	torx_free((void**)&p);
 	char *onion = onion_from_ed25519_pk(ed25519_pk);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	return onion;
@@ -5158,10 +5158,10 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 			if(peeronion == NULL)
 			{ // Invalid input, maybe contained junk.
 				error_simple(0,"Save_peer Invalid input, maybe contained junk.");
-				torx_free((void*)&torxid);
+				torx_free((void**)&torxid);
 				break;
 			}
-			torx_free((void*)&torxid);
+			torx_free((void**)&torxid);
 			if(strncmp(peeronion,peeronion_or_torxid,56)) // this could be 55 if we wanted to preserve potential forward compatibility (dont do this or people will mess up the d/version byte)
 			{
 				error_simple(0,"Onion checksum does not match, or unrecognized version. Please verify that it is typed correctly.");
@@ -5179,7 +5179,7 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		}
 		else // peeronion_or_torxid == NULL, coding error?
 			break;
-	//	torx_free((void*)&peeronion_or_torxid);
+	//	torx_free((void**)&peeronion_or_torxid);
 		sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
 		int n = set_n(-1,peeronion);
 		uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -5202,12 +5202,12 @@ int peer_save(const char *unstripped_peerid,const char *peernick) // peeronion, 
 		sodium_memzero(privkey,sizeof(privkey));
 		sodium_memzero(peeronion_local,sizeof(peeronion_local));
 		setter(n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
-		torx_free((void*)&peeronion);
+		torx_free((void**)&peeronion);
 		start_outgoing_friend_request(n);
 		return 0;
 	} while(0);
 	sodium_memzero(peeronion_or_torxid,sizeof(peeronion_or_torxid));
-	torx_free((void*)&peeronion);
+	torx_free((void**)&peeronion);
 	return -1;
 }
 
@@ -5232,7 +5232,7 @@ void change_nick(const int n,const char *freshpeernick)
 	char *tmp = torx_secure_malloc(len+1);
 	snprintf(tmp,len+1,"%s",freshpeernick);
 	torx_write(n) // 🟥🟥🟥
-	torx_free((void*)&peer[n].peernick);
+	torx_free((void**)&peer[n].peernick);
 	peer[n].peernick = tmp;
 	torx_unlock(n) // 🟩🟩🟩
 	sql_update_peer(n);
@@ -5273,7 +5273,7 @@ void block_peer(const int n)
 			error_printf(0,"Tried to toggle block status of status=%u. Coding error. Report this.",status);
 			breakpoint();
 		}
-		torx_free((void*)&peernick);
+		torx_free((void**)&peernick);
 	}
 	else
 	{
@@ -5372,7 +5372,7 @@ char *custom_input_file(const char *hs_ed25519_secret_key_file) // hs_ files hav
 	return privkey;
 }
 
-void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 delete without taking down, 3 spoil SING onion (delete, take down).
+void takedown_onion(const int peer_index,const int delete_peer) // 0 no, 1 yes, 2 delete without taking down, 3 spoil SING onion (delete, take down).
 { // Takedown PEER/SING/MULT/CTRL TODO delete values and actions are confusing. 0 is possibly redundant with block_peer()
   // TODO deleting individual GROUP_PEER without deleting the GROUP_CTRL is not yet supported... its complex because they would need to be removed from the peerlist/peercount... and it would be added back the next time a peerlist is received. Just block/ignore instead.
 	if(peer_index < 0)
@@ -5389,10 +5389,10 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		int count = 0; // XXX Declared out here, not in the for(), because it is read after the loop
 		g = set_g(n,NULL);
 		for(int specific_peer; (specific_peer = group_peerlist_get(g,count)) > -1 ; count++)
-			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete);
+			takedown_onion(getter_int(specific_peer,INT_MIN,-1,offsetof(struct peer_list,peer_index)),delete_peer);
 		error_printf(0,"Took down %d GROUP_PEER associated with group.",count); // TODO increase debug level after confirming this works
 	}
-	if(delete > 0)
+	if(delete_peer > 0)
 	{
 		if(owner == ENUM_OWNER_GROUP_PEER) // This if statement saves a bit of IO/processing but only makes sense if we never delete GROUP_PEER without deleting GROUP_CTRL at he same time
 			delete_log(n); // when called with GROUP_CTRL, it should delete GROUP_PEER, so no need to call it twice.
@@ -5402,7 +5402,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 			sticker_remove_peer_from_all(n);
 		#endif // NO_STICKERS
 	}
-	if(delete != 2 && owner != ENUM_OWNER_PEER && threadsafe_read_uint8(&mutex_global_variable,&tor_running))
+	if(delete_peer != 2 && owner != ENUM_OWNER_PEER && threadsafe_read_uint8(&mutex_global_variable,&tor_running))
 	{ // 2==delete from file but don't take down // != ENUM_OWNER_PEER because OWNER_PEER doesn't use peer [n]. sendfd
 	// TODO find a way to call disconnect_forever() here in a threadsafe manner
 	//	torx_read(n) // 🟧🟧🟧
@@ -5420,7 +5420,7 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		snprintf(apibuffer,sizeof(apibuffer),"del_onion %s\n",onion); // NOTE: This will NOT close existing connections.
 		sodium_memzero(onion,sizeof(onion));
 		char *rbuff = tor_call(apibuffer);
-		torx_free((void*)&rbuff);
+		torx_free((void**)&rbuff);
 		sodium_memzero(apibuffer,sizeof(apibuffer));
 		int ret_send = 0;
 		int ret_recv = 0;
@@ -5439,18 +5439,18 @@ void takedown_onion(const int peer_index,const int delete) // 0 no, 1 yes, 2 del
 		if(ret_send == -1 || ret_recv == -1)
 			error_printf(0,"Failed to close a socket in takedown_onion. Owner=%u send=%d recv=%d",owner,ret_send,ret_recv);
 	} // From control-spec:   It is the Onion Service server application's responsibility to close existing client connections if desired after the Onion Service has been removed via "DEL_ONION".
-	if(delete == 1 || delete == 3)
+	if(delete_peer == 1 || delete_peer == 3)
 	{
 		error_simple(1,"Found matching entry in memory. Zeroing.");
 		torx_write(n) // 🟥🟥🟥
 		zero_n(n);
 		torx_unlock(n) // 🟩🟩🟩
-		if(delete == 3)
+		if(delete_peer == 3)
 			onion_deleted_cb(20,n);
 		else
 			onion_deleted_cb(owner,n);
 	}
-	else if(delete == 0) // Block only
+	else if(delete_peer == 0) // Block only
 	{ // TODO WE SHOULD NOT SET MEMORY STATUS TO 0 HERE ??? because we might be taking it down for other reaons, like in write_finished()
 		error_simple(1,"Notice: Found matching entry in memory. Changing to status 1 (block) in memory.");
 		const uint8_t status = ENUM_STATUS_BLOCKED;

@@ -107,7 +107,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		if(group[g].peerlist == NULL || torx_allocation_len(group[g].peerlist)/sizeof(int) < entries)
 		{ // Cannot occur: .peerlist only ever grows, and the caller sized this message before we were called
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-			torx_free((void*)&peerlist_snapshot);
+			torx_free((void**)&peerlist_snapshot);
 			error_printf(0,"Group %d has fewer peers than the %u a GROUP_PEERLIST was sized for. Coding error. Report this.",g,entries);
 			breakpoint();
 			goto error;
@@ -133,7 +133,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 				getter_array(&base_message[cur],crypto_sign_BYTES,peerlist_snapshot[nn],INT_MIN,-1,offsetof(struct peer_list,invitation));
 				cur += crypto_sign_BYTES;
 			}
-		torx_free((void*)&peerlist_snapshot);
+		torx_free((void**)&peerlist_snapshot);
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
 	{ // Onion[56] + ed25519_pk[32] + signed by invitor[64]
@@ -185,7 +185,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 				char *peernick = getter_string(target_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 				if(group_add_peer(g,int_char->p,peernick,int_char->up,invitation) > -1) // we are working with two invitations... this is the correct one
 					error_simple(0,RED"Checkpoint New group peer! (message_prep)"RESET);
-				torx_free((void*)&peernick);
+				torx_free((void**)&peernick);
 			}
 			sodium_memzero(invitation,sizeof(invitation));
 		}
@@ -352,7 +352,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		sodium_memzero(onion_group_n,sizeof(onion_group_n));
 	}
 	if(message_new != base_message)
-		torx_free((void*)&base_message);
+		torx_free((void**)&base_message);
 	return message_new;
 	error: {}
 	if(g > -1)
@@ -360,7 +360,7 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 		sodium_memzero(sign_sk_group_n,sizeof(sign_sk_group_n));
 		sodium_memzero(onion_group_n,sizeof(onion_group_n));
 	}
-	torx_free((void*)&base_message);
+	torx_free((void**)&base_message);
 	return NULL;
 }
 
@@ -500,7 +500,7 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 	if(protocol == ENUM_PROTOCOL_FILE_REQUEST)
 		section_unclaim(file_n,file_f,target_list[0],fd_type);
 	#endif // NO_FILE_TRANSFER
-	torx_free((void*)&message);
+	torx_free((void**)&message);
 	return INT_MIN;
 }
 
@@ -575,8 +575,8 @@ int message_resend(const int n,const int i)
 	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
 	const uint32_t message_len = torx_allocation_len(message);
 	message_distribute(1,target_count,target_list,p_iter,message,message_len,time,nstime);
-	torx_free((void*)&message);
-	torx_free((void*)&target_list);
+	torx_free((void**)&message);
+	torx_free((void**)&target_list);
 	return 0;	
 }
 
@@ -601,7 +601,7 @@ int message_send_select(const uint32_t target_count,const int *target_list,const
 		if(!new_target_list)
 			goto error;
 		const int ret = message_distribute(0,new_target_count,new_target_list,p_iter,arg,base_message_len,0,0); // i or INT_MIN upon error
-		torx_free((void*)&new_target_list);
+		torx_free((void**)&new_target_list);
 		return ret;
 	}
 	else if(target_count > 1)
@@ -667,7 +667,7 @@ void start_outgoing_friend_request(const int n)
 	char *peernick = getter_string(n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 	char fresh_privkey[88+1] = {0};
 	const int fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
-	torx_free((void*)&peernick);
+	torx_free((void**)&peernick);
 	if(fresh_n < 0)
 	{
 		sodium_memzero(fresh_privkey,sizeof(fresh_privkey));

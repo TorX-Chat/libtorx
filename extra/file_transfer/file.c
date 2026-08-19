@@ -475,7 +475,7 @@ uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8
 
 void zero_o(const int n,const int f,const int o) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].offer) before calling! XXX
 { // Note: We don't `.offer_n = -1` because it could cause issues in select_peer if this function was called from outside of zero_f
-	torx_free((void*)&peer[n].file[f].offer[o].offer_progress);
+	torx_free((void**)&peer[n].file[f].offer[o].offer_progress);
 }
 
 void zero_r(const int n,const int f,const int r) // XXX do not put locks in here. Be sure to check if(peer[n].file[f].request) before calling! XXX
@@ -495,17 +495,17 @@ void zero_f(const int n,const int f) // XXX do not put locks in here
 	if(peer[n].file[f].request)
 		for(int r = 0 ; peer[n].file[f].request[r].requester_n > -1 ; r++)
 			zero_r(n,f,r);
-	torx_free((void*)&peer[n].file[f].offer);
-	torx_free((void*)&peer[n].file[f].request);
+	torx_free((void**)&peer[n].file[f].offer);
+	torx_free((void**)&peer[n].file[f].request);
 	sodium_memzero(peer[n].file[f].checksum,sizeof(peer[n].file[f].checksum));
-	torx_free((void*)&peer[n].file[f].filename);
-	torx_free((void*)&peer[n].file[f].file_path);
-	torx_free((void*)&peer[n].file[f].split_hashes);
-	torx_free((void*)&peer[n].file[f].split_path);
-	torx_free((void*)&peer[n].file[f].split_progress);
-	torx_free((void*)&peer[n].file[f].split_status_n);
-	torx_free((void*)&peer[n].file[f].split_status_fd);
-	torx_free((void*)&peer[n].file[f].split_status_req);
+	torx_free((void**)&peer[n].file[f].filename);
+	torx_free((void**)&peer[n].file[f].file_path);
+	torx_free((void**)&peer[n].file[f].split_hashes);
+	torx_free((void**)&peer[n].file[f].split_path);
+	torx_free((void**)&peer[n].file[f].split_progress);
+	torx_free((void**)&peer[n].file[f].split_status_n);
+	torx_free((void**)&peer[n].file[f].split_status_fd);
+	torx_free((void**)&peer[n].file[f].split_status_req);
 	close_sockets_nolock(peer[n].file[f].fd) // Do not eliminate
 }
 
@@ -663,7 +663,7 @@ int file_is_complete(const int n,const int f)
 //		return 0;
 	char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 	const uint64_t size_on_disk = get_file_size(file_path);
-	torx_free((void*)&file_path);
+	torx_free((void**)&file_path);
 	if(size == size_on_disk)
 		return 1;
 	return 0;
@@ -793,13 +793,13 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 			error_printf(0,PINK"Checkpoint DELETING SPLIT PATH: %s"RESET,split_path);
 			destroy_file(split_path);
 		}
-		torx_free((void*)&split_path);
+		torx_free((void**)&split_path);
 		torx_write(n) // 🟥🟥🟥
-		torx_free((void*)&peer[n].file[f].split_path);
-	//	torx_free((void*)&peer[n].file[f].split_progress); // XXX Do NOT free this. Leave it. It is what file_is_complete reads, and (after the split_status_* below are freed) the sole record of the split count on a completed non-group file.
-		torx_free((void*)&peer[n].file[f].split_status_n);
-		torx_free((void*)&peer[n].file[f].split_status_fd);
-		torx_free((void*)&peer[n].file[f].split_status_req);
+		torx_free((void**)&peer[n].file[f].split_path);
+	//	torx_free((void**)&peer[n].file[f].split_progress); // XXX Do NOT free this. Leave it. It is what file_is_complete reads, and (after the split_status_* below are freed) the sole record of the split count on a completed non-group file.
+		torx_free((void**)&peer[n].file[f].split_status_n);
+		torx_free((void**)&peer[n].file[f].split_status_fd);
+		torx_free((void**)&peer[n].file[f].split_status_req);
 		torx_unlock(n) // 🟩🟩🟩
 		return;
 	}
@@ -810,10 +810,10 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 			if((fp=fopen(split_path,"w+")) == NULL)
 			{
 				error_printf(0,"Check permissions. Cannot open split file2: %s",split_path);
-				torx_free((void*)&split_path);
+				torx_free((void**)&split_path);
 				return;
 			}
-		torx_free((void*)&split_path);
+		torx_free((void**)&split_path);
 		torx_read(n) // 🟧🟧🟧
 		if(peer[n].file[f].split_progress && (uint32_t)section < torx_allocation_len(peer[n].file[f].split_progress)/(uint32_t)sizeof(uint64_t))
 		{ // Sanity check to prevent race condition. Bounded by the allocation because splits was derived before we dropped the lock above.
@@ -827,7 +827,7 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 		close_sockets_nolock(fp)
 	}
 	else
-		torx_free((void*)&split_path);
+		torx_free((void**)&split_path);
 }
 
 void process_pause_cancel(const int file_n,const int f,const int peer_n,const uint16_t protocol,const uint8_t message_stat)
@@ -848,12 +848,12 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		if(peer[file_n].file[f].request)
 			for(int r = 0 ; peer[file_n].file[f].request[r].requester_n > -1 ; r++)
 				zero_r(file_n,f,r);
-		torx_free((void*)&peer[file_n].file[f].offer);
-		torx_free((void*)&peer[file_n].file[f].request);
-		torx_free((void*)&peer[file_n].file[f].split_progress);
-		torx_free((void*)&peer[file_n].file[f].split_status_n);
-		torx_free((void*)&peer[file_n].file[f].split_status_fd);
-		torx_free((void*)&peer[file_n].file[f].split_status_req);
+		torx_free((void**)&peer[file_n].file[f].offer);
+		torx_free((void**)&peer[file_n].file[f].request);
+		torx_free((void**)&peer[file_n].file[f].split_progress);
+		torx_free((void**)&peer[file_n].file[f].split_status_n);
+		torx_free((void**)&peer[file_n].file[f].split_status_fd);
+		torx_free((void**)&peer[file_n].file[f].split_status_req);
 		torx_unlock(file_n) // 🟩🟩🟩
 	}
 	else
@@ -869,10 +869,10 @@ void process_pause_cancel(const int file_n,const int f,const int peer_n,const ui
 		{ // MUST only trigger on files that are actively inbound. DO NOT REMOVE THE CHECK for ACTIVE_IN/ACTIVE_IN_OUT
 			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 			torx_write(file_n) // 🟥🟥🟥
-			torx_free((void*)&peer[file_n].file[f].file_path); // Free this to be sure no one will write to it after we delete it
+			torx_free((void**)&peer[file_n].file[f].file_path); // Free this to be sure no one will write to it after we delete it
 			torx_unlock(file_n) // 🟩🟩🟩
 			destroy_file(file_path); // delete partially sent inbound files (note: may also delete fully transferred but that can never be guaranteed)
-			torx_free((void*)&file_path);
+			torx_free((void**)&file_path);
 			split_update(file_n,f,-1,0); // destroys split file and frees/nulls resources
 		}
 	}
@@ -899,7 +899,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 		}
 		const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
 		torx_write(n) // 🟥🟥🟥
-		torx_free((void*)&peer[n].file[f].split_hashes); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
+		torx_free((void**)&peer[n].file[f].split_hashes); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
 		peer[n].file[f].split_hashes = torx_secure_malloc(split_hashes_len+sizeof(uint64_t)); // XXX its allocation length is what records the number of splits
 		memcpy(peer[n].file[f].split_hashes,split_hashes_and_size,split_hashes_len+sizeof(uint64_t));
 		torx_unlock(n) // 🟩🟩🟩
@@ -910,10 +910,10 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 	const char *filename = basename(path_copy);
 	const size_t filename_len = strlen(filename);
 	torx_write(n) // 🟥🟥🟥
-	torx_free((void*)&peer[n].file[f].filename); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
+	torx_free((void**)&peer[n].file[f].filename); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
 	peer[n].file[f].filename = torx_secure_malloc(filename_len+1);
 	snprintf(peer[n].file[f].filename,filename_len+1,"%s",filename);
-	torx_free((void*)&peer[n].file[f].file_path); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
+	torx_free((void**)&peer[n].file[f].file_path); // may be set already (ex: restored from a file- peer setting, or a repeat offer)
 	peer[n].file[f].file_path = torx_secure_malloc(file_path_len+1);
 	snprintf(peer[n].file[f].file_path,file_path_len+1,"%s",file_path);
 	peer[n].file[f].size = size;
@@ -953,7 +953,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 		}
 		torx_write(n) // 🟥🟥🟥
 		if(peer[n].file[f].filename) // wipe if existing // this might be undesirable? especially if already accepted. should be fine. the old .split file/partial transfer will be abandoned?
-			torx_free((void*)&peer[n].file[f].filename); // TODO could cause issue if someone renamed a file then offered it again, in the same instance, after a partial transfer already occured? idk
+			torx_free((void**)&peer[n].file[f].filename); // TODO could cause issue if someone renamed a file then offered it again, in the same instance, after a partial transfer already occured? idk
 		peer[n].file[f].filename = torx_secure_malloc(filename_len+1);
 		memcpy(peer[n].file[f].filename,&message[CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t)],filename_len); // source is not null terminated
 		peer[n].file[f].filename[filename_len] = '\0';
@@ -993,7 +993,7 @@ int process_file_offer_inbound(const int n,const int p_iter,const char *message,
 			else if(offer_exists)
 			{ // Sanity check
 				if(offer_progress_exists && torx_allocation_len(peer[group_n].file[f].offer[o].offer_progress) != sizeof(uint64_t)*(splits+1))
-					torx_free((void*)&peer[group_n].file[f].offer[o].offer_progress); // Offerer changed its claimed splits (only reachable before .split_hashes exists). This should never occur, but shouldn't be harmful.
+					torx_free((void**)&peer[group_n].file[f].offer[o].offer_progress); // Offerer changed its claimed splits (only reachable before .split_hashes exists). This should never occur, but shouldn't be harmful.
 				if(peer[group_n].file[f].offer[o].offer_progress == NULL)
 					peer[group_n].file[f].offer[o].offer_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1));
 				for(int16_t section = 0; section <= splits; section++)
@@ -1115,7 +1115,7 @@ static void set_split_path(const int n,const int f)
 	torx_unlock(n) // 🟩🟩🟩
 	torx_write(n) // 🟥🟥🟥
 	if(peer[n].file[f].split_path)
-		torx_free((void*)&peer[n].file[f].split_path);
+		torx_free((void**)&peer[n].file[f].split_path);
 	peer[n].file[f].split_path = split_path_from_file_path(peer[n].file[f].file_path);
 	torx_unlock(n) // 🟩🟩🟩
 }
@@ -1129,7 +1129,7 @@ static inline int split_read(const int n,const int f,const uint8_t splits_hint)
 		split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	}
 	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
-	torx_free((void*)&split_path);
+	torx_free((void**)&split_path);
 	uint8_t splits = splits_hint;
 	if(fp)
 	{
@@ -1208,7 +1208,7 @@ int initialize_split_info(const int n,const int f,const uint8_t splits_hint)
 		struct stat file_stat = {0};
 		char *file_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 		const int stat_file = stat(file_path, &file_stat); // Note: file_path cannot be null, but we checked it earlier.
-		torx_free((void*)&file_path);
+		torx_free((void**)&file_path);
 		const uint8_t splits = splits_determination(n,f); // XXX derived AFTER split_read, whose allocations record the authoritative count
 		char *split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 		if(stat_file && split_path && stat(split_path, &file_stat) && splits > 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
@@ -1217,7 +1217,7 @@ int initialize_split_info(const int n,const int f,const uint8_t splits_hint)
 			if((fp = fopen(split_path,"w+")) == NULL)
 			{ // BAD, permissions issue, cannot create file
 				error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
-				torx_free((void*)&split_path);
+				torx_free((void**)&split_path);
 				return -1;
 			}
 			unsigned char split_data[CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t)*(splits+1)];
@@ -1230,7 +1230,7 @@ int initialize_split_info(const int n,const int f,const uint8_t splits_hint)
 			close_sockets_nolock(fp)
 			sodium_memzero(split_data,sizeof(split_data));
 		}
-		torx_free((void*)&split_path);
+		torx_free((void**)&split_path);
 	}
 	return 0;
 }
@@ -1349,7 +1349,7 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 			file_request_internal(n,f,-1); // 2024/12/17 Experimental, requesting from a different peer on any fd_type
 		else
 			file_request_internal(n,f,fd_type);
-		torx_free((void*)&file_path);
+		torx_free((void**)&file_path);
 		split_update(n,f,section,transferred);
 	}
 	else if(splits && section_info_current && (section_info_current - wrote) / (120*SPLIT_DELAY*1024) != section_info_current / (120*SPLIT_DELAY*1024)) // Checking whether to call split_update
@@ -1685,7 +1685,7 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 	{
 		char *file_path_local = getter_string(n,INT_MIN,f,offsetof(struct file_list,file_path));
 		fp = fopen(file_path_local, "a");
-		torx_free((void*)&file_path_local);
+		torx_free((void**)&file_path_local);
 	}
 	if(fp)
 	{
@@ -1695,8 +1695,8 @@ static inline int file_unwritable(const int n,const int f,const char *file_path)
 	else if(file_path == NULL)
 	{ // n,f was necessarily passed
 		torx_write(n) // 🟥🟥🟥
-		torx_free((void*)&peer[n].file[f].file_path);
-		torx_free((void*)&peer[n].file[f].split_path);
+		torx_free((void**)&peer[n].file[f].file_path);
+		torx_free((void**)&peer[n].file[f].split_path);
 		torx_unlock(n) // 🟩🟩🟩
 	}
 	error_simple(0,"File location permissions issue. Refusing to request file. Cleaing the file_path if n,f was passed so that it can be reset.");
@@ -1905,7 +1905,7 @@ unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_
 	if(size != size_total)
 	{
 		error_printf(0,"Coding or IO error. File size %zu != %zu sum of sections. Splits=%u",size,size_total,splits);
-		torx_free((void*)&split_hashes_and_size);
+		torx_free((void**)&split_hashes_and_size);
 		return NULL;
 	}
 	const uint64_t trash = htobe64(size);
@@ -1953,9 +1953,9 @@ static inline void *file_init(void *arg)
 	sodium_memzero(checksum,sizeof(checksum));
 	file_offer_internal(n,n,f,1);
 	error: {}
-	torx_free((void*)&split_hashes_and_size);
-	torx_free((void*)&file_strc->path);
-	torx_free((void*)&file_strc);
+	torx_free((void**)&split_hashes_and_size);
+	torx_free((void**)&file_strc->path);
+	torx_free((void**)&file_strc);
 	return 0;
 }
 

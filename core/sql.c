@@ -224,7 +224,7 @@ static inline void sql_delete_file_messages_by_checksum(const int n,const unsign
 		const size_t count = torx_allocation_len(times)/sizeof(time_t);
 		for(size_t iter = 0; iter + 1 < count; iter += 2)
 			sql_delete_message(peer_index,times[iter],times[iter+1]);
-		torx_free((void*)&times);
+		torx_free((void**)&times);
 	}
 }
 
@@ -300,7 +300,7 @@ static inline void file_offer_delete(const int n,const int g,const unsigned char
 		}
 		else
 			delete_by_checksum(n,g,checksum,encoded);
-		torx_free((void*)&encoded);
+		torx_free((void**)&encoded);
 	}
 	else
 		error_simple(0,"File checksum not found. Cannot delete.");
@@ -327,8 +327,8 @@ static inline void delete_files_of_peer(const int n)
 				split_path = split_path_from_file_path(file_path);
 			destroy_file(file_path);
 			destroy_file(split_path);
-			torx_free((void*)&file_path);
-			torx_free((void*)&split_path);
+			torx_free((void**)&file_path);
+			torx_free((void**)&split_path);
 		}
 		if(file_is_active(n,f))
 			file_cancel(n,f);
@@ -364,7 +364,7 @@ static inline void file_status_apply(const int file_n,const int f,const uint8_t 
 		{ // Either splits==0 (which never has a .split file) or the .split is missing/invalid.
 			char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
 			const uint64_t size_on_disk = get_file_size(file_path);
-			torx_free((void*)&file_path);
+			torx_free((void**)&file_path);
 			torx_write(file_n) // 🟥🟥🟥
 			const uint32_t sections = peer[file_n].file[f].split_progress ? torx_allocation_len(peer[file_n].file[f].split_progress)/(uint32_t)sizeof(uint64_t) : 0;
 			if(sections == 1)
@@ -387,7 +387,7 @@ static inline void file_status_apply(const int file_n,const int f,const uint8_t 
 		if(transferred == size)
 		{ // Completed before its COMPLETE status could be persisted. file_is_complete requires split_path == NULL
 			torx_write(file_n) // 🟥🟥🟥
-			torx_free((void*)&peer[file_n].file[f].split_path);
+			torx_free((void**)&peer[file_n].file[f].split_path);
 			torx_unlock(file_n) // 🟩🟩🟩
 		}
 	}
@@ -397,7 +397,7 @@ static inline void file_status_apply(const int file_n,const int f,const uint8_t 
 	// XXX Deliberately does NOT call initialize_split_info: leaving split_status_fd NULL is what prevents peer_online/select_peer from re-downloading a deleted file.
 		const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 		torx_write(file_n) // 🟥🟥🟥
-		torx_free((void*)&peer[file_n].file[f].split_path); // file_is_complete requires split_path == NULL
+		torx_free((void**)&peer[file_n].file[f].split_path); // file_is_complete requires split_path == NULL
 		if(size >= (uint64_t)splits + 1)
 		{ // calculate_section_start's precondition (a valid split file always satisfies it); avoids its fatal sanity check on empty/degenerate files
 			peer[file_n].file[f].split_progress = torx_insecure_malloc(sizeof(uint64_t)*(splits+1)); // always NULL prior: f was freshly reserved by the file- handler
@@ -436,7 +436,7 @@ void sql_save_file_status(const int file_n,const int f,const uint8_t status)
 	sodium_memzero(checksum,sizeof(checksum));
 	char setting_name[256]; // zero'd
 	snprintf(setting_name,sizeof(setting_name),"file-%s",encoded);
-	torx_free((void*)&encoded);
+	torx_free((void**)&encoded);
 	const uint64_t size = getter_uint64(file_n,INT_MIN,f,offsetof(struct file_list,size));
 	const time_t modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified));
 	char *filename = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,filename)); // May be NULL
@@ -447,8 +447,8 @@ void sql_save_file_status(const int file_n,const int f,const uint8_t status)
 	{ // Cannot occur under PATH_MAX, but the length prefixes are uint16_t
 		error_simple(0,"Filename or file_path too long in sql_save_file_status. Report this.");
 		sodium_memzero(setting_name,sizeof(setting_name));
-		torx_free((void*)&filename);
-		torx_free((void*)&file_path);
+		torx_free((void**)&filename);
+		torx_free((void**)&file_path);
 		return;
 	}
 	unsigned char *split_hashes = NULL; // group files only
@@ -496,10 +496,10 @@ void sql_save_file_status(const int file_n,const int f,const uint8_t status)
 	// Not (pos+=split_hashes_len) because we no longer need it, but it should equal value_len if we update it
 	sql_setting(0,peer_index,setting_name,setting_value,value_len);
 	sodium_memzero(setting_name,sizeof(setting_name));
-	torx_free((void*)&setting_value);
-	torx_free((void*)&filename);
-	torx_free((void*)&file_path);
-	torx_free((void*)&split_hashes);
+	torx_free((void**)&setting_value);
+	torx_free((void**)&filename);
+	torx_free((void**)&file_path);
+	torx_free((void**)&split_hashes);
 }
 #endif // NO_FILE_TRANSFER
 
@@ -621,7 +621,7 @@ int message_edit(const int n,const int i,const char *message)
 			if(message_new)
 			{
 				torx_write(n) // 🟥🟥🟥
-				torx_free((void*)&message_old);
+				torx_free((void**)&message_old);
 				torx_unlock(n) // 🟩🟩🟩
 				sql_update_message(n,i);
 				message_modified_cb(n,i);
@@ -852,7 +852,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 					if(file_path)
 					{
 						process_file_offer_outbound(group_n,(const unsigned char*)message,splits,(const unsigned char*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t)],be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN + sizeof(uint8_t) + split_hashes_len + sizeof(uint64_t)])),file_path);
-						torx_free((void*)&file_path);
+						torx_free((void**)&file_path);
 					}
 					else // file- setting is missing (logging disabled when offered, or deleted); file cannot be served unless re-offered
 						error_printf(2,"Outbound group file offer loaded without a saved file path: %u",protocol);
@@ -864,7 +864,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 					if(file_path)
 					{
 						process_file_offer_outbound(n,(const unsigned char*)message,0,NULL,be64toh(align_uint64((const void*)&message[CHECKSUM_BIN_LEN])),be32toh(align_uint32((const void*)&message[CHECKSUM_BIN_LEN+sizeof(uint64_t)])),file_path);
-						torx_free((void*)&file_path);
+						torx_free((void**)&file_path);
 					}
 					else // file- setting is missing (logging disabled when offered, or deleted); file cannot be served unless re-offered
 						error_printf(2,"Outbound file offer loaded without a saved file path: %u",protocol);
@@ -910,7 +910,7 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 			breakpoint();
 			return -1; // hit this on 2023/05/15
 		}
-		torx_free((void*)&onion);
+		torx_free((void**)&onion);
 	}
 	torx_write(n) // 🟥🟥🟥
 	peer[n].owner = owner;
@@ -939,7 +939,7 @@ int load_peer_struc(const int peer_index,const uint8_t owner,const uint8_t statu
 	{
 		snprintf(peer[n].torxid,sizeof(peer[n].torxid),"%s",torxid); // note: using peer[n].onion instead of onion because onion might be empty for ENUM_OWNER_PEER, whereas .onion is not
 		torx_unlock(n) // 🟩🟩🟩
-		torx_free((void*)&torxid);
+		torx_free((void**)&torxid);
 	}
 	else
 	{
@@ -1023,7 +1023,7 @@ static int sql_exec_msg(const int n,const int i,const char *passed_command)
 		val = sql_exec(&db_messages,passed_command,message,message_len - (null_terminated_len + date_len + signature_len),NULL);
 	else
 		error_printf(0,"Bailing out from sql_exec_msg because we don't know how to handle this message: protocol=%u is_null=%d",protocol,message ? 1 : 0);
-	torx_free((void*)&message);
+	torx_free((void**)&message);
 	return val;
 }
 
@@ -1109,7 +1109,7 @@ int sql_insert_message(const int n,const int i)
 		sodium_memzero(command,sizeof(command));
 		sql_message_tail_section(peer_index,n,time,nstime,stat,file_offer,message,message_len,signature_len);
 	}
-	torx_free((void*)&message);
+	torx_free((void**)&message);
 	return val;
 }
 
@@ -1143,7 +1143,7 @@ int sql_update_message(const int n,const int i)
 	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
 	const uint32_t message_len = torx_allocation_len(message);
 	sql_message_tail_section(peer_index,n,time,nstime,stat,file_offer,message,message_len,signature_len);
-	torx_free((void*)&message);
+	torx_free((void**)&message);
 	return val;
 }
 
@@ -1174,7 +1174,7 @@ int sql_update_peer(const int n)
 	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
 	snprintf(command,sizeof(command),"UPDATE OR ABORT peer SET (owner,status,peerversion,privkey,peeronion,peernick,sign_sk,peer_sign_pk,invitation) = (%u,%u,%u,?,?,?,?,?,?) WHERE peer_index = %d;",owner,status,peerversion,peer_index);
 	const int val = sql_exec(&db_encrypted,command,privkey,88,peeronion,56,peernick,peernick_len-1,sign_sk,crypto_sign_SECRETKEYBYTES,peer_sign_pk,crypto_sign_PUBLICKEYBYTES,invitation,crypto_sign_BYTES,NULL);
-	torx_free((void*)&peernick);
+	torx_free((void**)&peernick);
 	sodium_memzero(privkey,sizeof(privkey));
 	sodium_memzero(peeronion,sizeof(peeronion));
 	sodium_memzero(command,sizeof(command));
@@ -1643,7 +1643,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_plaintext)
 					{
-						torx_free((void*)&tor_location);
+						torx_free((void**)&tor_location);
 						tor_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 						memcpy(tor_location,setting_value,setting_value_len);
 						tor_location[setting_value_len] = '\0';
@@ -1653,7 +1653,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_plaintext)
 					{
-						torx_free((void*)&lyrebird_location);
+						torx_free((void**)&lyrebird_location);
 						lyrebird_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 						memcpy(lyrebird_location,setting_value,setting_value_len);
 						lyrebird_location[setting_value_len] = '\0';
@@ -1663,7 +1663,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_plaintext)
 					{
-						torx_free((void*)&conjure_location);
+						torx_free((void**)&conjure_location);
 						conjure_location = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 						memcpy(conjure_location,setting_value,setting_value_len);
 						conjure_location[setting_value_len] = '\0';
@@ -1707,7 +1707,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_encrypted)
 					{
-						torx_free((void*)&torrc_content);
+						torx_free((void**)&torrc_content);
 						torrc_content = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 						memcpy(torrc_content,setting_value,setting_value_len);
 						torrc_content[setting_value_len] = '\0';
@@ -1721,7 +1721,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_encrypted)
 					{
-						torx_free((void*)&download_dir);
+						torx_free((void**)&download_dir);
 						download_dir = torx_secure_malloc(setting_value_len+1); // could free on shutdown
 						memcpy(download_dir,setting_value,setting_value_len);
 						download_dir[setting_value_len] = '\0';
@@ -1790,21 +1790,21 @@ void sql_populate_setting(const int force_plaintext)
 						torx_write(file_n) // 🟥🟥🟥
 						peer[file_n].file[f].size = size;
 						peer[file_n].file[f].modified = modified;
-						torx_free((void*)&peer[file_n].file[f].filename);
+						torx_free((void**)&peer[file_n].file[f].filename);
 						if(filename_len)
 						{ // Restore the filename
 							peer[file_n].file[f].filename = torx_secure_malloc(filename_len+1);
 							memcpy(peer[file_n].file[f].filename,filename_ptr,filename_len);
 							peer[file_n].file[f].filename[filename_len] = '\0';
 						}
-						torx_free((void*)&peer[file_n].file[f].file_path);
+						torx_free((void**)&peer[file_n].file[f].file_path);
 						if(file_path_len)
 						{ // Restore the file path
 							peer[file_n].file[f].file_path = torx_secure_malloc(file_path_len+1);
 							memcpy(peer[file_n].file[f].file_path,file_path_ptr,file_path_len);
 							peer[file_n].file[f].file_path[file_path_len] = '\0';
 						}
-						torx_free((void*)&peer[file_n].file[f].split_hashes);
+						torx_free((void**)&peer[file_n].file[f].split_hashes);
 						if(split_hashes_portion)
 						{ // Restore split_hashes (group files): stored is the hash portion only; re-append the trailing htobe64(size) that the file's hash-of-hashes covers
 							peer[file_n].file[f].split_hashes = torx_secure_malloc(split_hashes_portion + sizeof(uint64_t));
@@ -1956,7 +1956,7 @@ void sql_populate_setting(const int force_plaintext)
 				{
 					if(!library_settings_loaded_encrypted)
 					{
-						torx_free((void*)&control_password_clear);
+						torx_free((void**)&control_password_clear);
 						control_password_clear = torx_secure_malloc(setting_value_len+1);
 						memcpy(control_password_clear,setting_value,setting_value_len);
 						control_password_clear[setting_value_len] = '\0';

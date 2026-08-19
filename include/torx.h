@@ -768,7 +768,7 @@ void change_nick(const int n,const char *freshpeernick);
 uint64_t get_file_size(const char *file_path)__attribute__((warn_unused_result));
 void destroy_file(const char *file_path); // do not use directly for deleting history
 char *custom_input_file(const char *hs_ed25519_secret_key_file)__attribute__((warn_unused_result));
-void takedown_onion(const int peer_index,const int delete);
+void takedown_onion(const int peer_index,const int delete_peer);
 void block_peer(const int n);
 
 /* sql.c */

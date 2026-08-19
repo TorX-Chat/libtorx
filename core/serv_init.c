@@ -229,10 +229,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				{
 					torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 					error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
-					torx_free((void*)&file_path);
+					torx_free((void**)&file_path);
 					goto error;
 				}
-				torx_free((void*)&file_path);
+				torx_free((void**)&file_path);
 			}
 			if(data_size > PACKET_SIZE_MAX-16)
 			{ // XXX Belt and braces. data_size is read into send_buffer[16] and nothing else bounds it against the buffer.
@@ -416,7 +416,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 
 static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey) // XXX HUGE THANKS TO ms7821 for helping get this working, and need to submit a bug / pull to libsodium regarding https://github.com/jedisct1/libsodium/blob/6d56607/src/libsodium/crypto_sign/ed25519/ref10/keypair.c be sure to see oct 10th 2021 #crypto chat history for reference.
 {// Client Auth for outgoing connections to V3Auth'd peer onion using v3key https://community.torproject.org/onion-services/advanced/client-auth/ ONION_CLIENT_AUTH_REMOVE can be used to delete these things, when deleting a peer. CLOSESTREAM also relevant.
-//	baseencode_error_t err = {0}; // for base32_decode/encode functions
+//	baseencode_error_t err = SUCCESS; // for base32
 	unsigned char v3_priv_decoded[64] = {0}; // zero'd
 	unsigned char ed25519_sk[32]; // zero'd NOTE: XXX remember, this is NOT a real ed25519_sk. see notes elsewhere.
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES] = {0}; // zero'd
@@ -444,14 +444,14 @@ static inline int outgoing_auth_x25519(const char *peeronion,const char *privkey
 	char apibuffer[512]; // zero'd
 	char *p = b64_encode(ed25519_sk,sizeof(ed25519_sk));
 	snprintf(apibuffer,sizeof(apibuffer),"ONION_CLIENT_AUTH_ADD %s x25519:%s\n",peeronion,p);
-	torx_free((void*)&p);
+	torx_free((void**)&p);
 	char *rbuff = tor_call(apibuffer);
-	torx_free((void*)&rbuff);
+	torx_free((void**)&rbuff);
 	sodium_memzero(apibuffer,sizeof(apibuffer));
 	if(local_debug > 4)
 	{
 		error_printf(5,"Outgoing Auth: %s",p=b64_encode(ed25519_sk,32));
-		torx_free((void*)&p);
+		torx_free((void**)&p);
 	}
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
@@ -543,7 +543,7 @@ int add_onion_call(const int n)
 			unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES]; // zero'd // crypto_sign_ed25519_PUBLICKEYBYTES;
 			unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
 			char peeronion_uppercase[56+1] = {0};
-			baseencode_error_t err = {0}; // for base32
+			baseencode_error_t err = SUCCESS; // for base32
 			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			xstrupr(peeronion_uppercase);
 			unsigned char *p1 = base32_decode(peeronion_uppercase,56,&err);
@@ -551,11 +551,11 @@ int add_onion_call(const int n)
 			if(p1 == NULL || err)
 			{
 				error_simple(0,"Failed to decode peeronion in load_onion. Report this.");
-				torx_free((void*)&p1);
+				torx_free((void**)&p1);
 				return -1;
 			}
 			memcpy(ed25519_pk,p1,sizeof(ed25519_pk));
-			torx_free((void*)&p1);
+			torx_free((void**)&p1);
 			if(crypto_sign_ed25519_pk_to_curve25519(x25519_pk, ed25519_pk) < 0)
 			{
 				error_simple(0,"Critical public key conversion issue.");
@@ -583,7 +583,7 @@ int add_onion_call(const int n)
 	sodium_memzero(privkey,sizeof(privkey));
 	sodium_memzero(incomingauthkey,sizeof(incomingauthkey));
 	char *rbuff = tor_call(apibuffer);
-	torx_free((void*)&apibuffer);
+	torx_free((void**)&apibuffer);
 	int failed_tor_call;
 	if(rbuff && !strncmp(rbuff,"250",3))
 		failed_tor_call = 0;
@@ -592,7 +592,7 @@ int add_onion_call(const int n)
 		error_simple(0,"Received FAILURE code from Tor when calling ADD_ONION. Coding error. Report this.");
 		failed_tor_call = 1;
 	}
-	torx_free((void*)&rbuff);
+	torx_free((void**)&rbuff);
 	return failed_tor_call;
 }
 

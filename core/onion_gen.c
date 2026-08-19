@@ -99,7 +99,7 @@ void generate_onion_simple(char onion[56+1],char privkey[88+1])
 		if((p = onion_from_ed25519_pk(ed25519_pk)))
 		{
 			memcpy(onion,p,56+1);
-			torx_free((void*)&p);
+			torx_free((void**)&p);
 		}
 	}
 	if(privkey)
@@ -111,7 +111,7 @@ void generate_onion_simple(char onion[56+1],char privkey[88+1])
 		if((p = b64_encode(expanded_sk,crypto_hash_sha512_BYTES)))
 		{
 			memcpy(privkey,p,88+1);
-			torx_free((void*)&p);
+			torx_free((void**)&p);
 		}
 	}
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
@@ -151,7 +151,7 @@ static void *generate_suffix_ed25519(void *arg)
 		len = base32_encode((unsigned char*)ed25519_pk_b32,ed25519_pk,sizeof(ed25519_pk));
 		if(*thread_data->winner) // Keep this last // 2022/11/22 getting an invalid read here in some threads. perhaps some threads hit this after this value is free'd?
 		{
-			torx_free((void*)&arg);
+			torx_free((void**)&arg);
 			pthread_exit(NULL);
 		}
 	}
@@ -174,7 +174,7 @@ static void *generate_suffix_ed25519(void *arg)
 	sodium_memzero(ed25519_sk,sizeof(ed25519_sk));
 	sodium_memzero(expanded_sk,sizeof(expanded_sk));
 	sodium_memzero(ed25519_pk_b32,sizeof(ed25519_pk_b32));
-	torx_free((void*)&arg);
+	torx_free((void**)&arg);
 	return 0;
 }
 
@@ -200,7 +200,7 @@ static void *onion_gen(void *arg)
 		setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // TODO not utilized, except for SIGPIPE block. Need to track then pthread_cleanup_push + pop + thread_kill
 	if((serv_strc->owner == ENUM_OWNER_SING || serv_strc->owner == ENUM_OWNER_MULT) && (serv_strc->peernick == NULL || strlen(serv_strc->peernick) < 1))
 	{
-		torx_free((void*)&serv_strc->peernick);
+		torx_free((void**)&serv_strc->peernick);
 		if(default_peernick == NULL)
 			error_simple(-1,"Default peernick is null. Coding error. Report this.");
 		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
@@ -269,7 +269,7 @@ static void *onion_gen(void *arg)
 			}
 			char *p = b64_encode(expanded_sk,crypto_hash_sha512_BYTES);
 			snprintf(serv_strc->privkey,88+1,"%s",p);
-			torx_free((void*)&p);
+			torx_free((void**)&p);
 		}
 		else // This is if privkey is provided to function. (ex: by custom_input )
 		{
@@ -277,7 +277,7 @@ static void *onion_gen(void *arg)
 			if(b64_decode(expanded_sk,sizeof(expanded_sk),serv_strc->privkey) != 64)
 			{
 				error_simple(0,"Invalid base64 privkey passed to onion_gen(). Bailing out.");
-				torx_free((void*)&serv_strc->peernick);
+				torx_free((void**)&serv_strc->peernick);
 				return 0;
 			}
 			memcpy(ed25519_sk,expanded_sk,32);
@@ -287,7 +287,7 @@ static void *onion_gen(void *arg)
 		sodium_memzero(expanded_sk,sizeof(expanded_sk));
 		char *p = onion_from_ed25519_pk(ed25519_pk);
 		snprintf(serv_strc->onion,56+1,"%s",p);
-		torx_free((void*)&p);
+		torx_free((void**)&p);
 		serv_strc->onion[56] = '\0'; // should be unnecessary
 		xstrlwr(serv_strc->onion);
 		unsigned char x25519_pk[32] = {0}; // zero'd // crypto_scalarmult_curve25519_BYTES
@@ -304,8 +304,8 @@ static void *onion_gen(void *arg)
 				error_simple(0,"Probably invalid privkey provided to us (could only be caused by not enough bytes/un-decodable base64)."); // goto retry;
 				if(serv_strc->in_pthread == 1)
 				{
-					torx_free((void*)&serv_strc->peernick);
-					torx_free((void*)&serv_strc);
+					torx_free((void**)&serv_strc->peernick);
+					torx_free((void**)&serv_strc);
 				}
 				return 0; 
 			}
@@ -375,8 +375,8 @@ static void *onion_gen(void *arg)
 	} // XXX NOTE: the 000... is just to beat our sanity check. This may not be an ideal long term solution.
 	if(serv_strc->in_pthread == 1)
 	{
-		torx_free((void*)&serv_strc->peernick);
-		torx_free((void*)&serv_strc);
+		torx_free((void**)&serv_strc->peernick);
+		torx_free((void**)&serv_strc);
 	}
 	return 0; // could return n to generate_onion to avoid having to set_n() but thats lower priority
 }
@@ -384,7 +384,7 @@ static void *onion_gen(void *arg)
 int generate_onion(const uint8_t owner,char *privkey,const char *peernick)
 {// Privkey doesn't need to be passed unless generating from priv key custom_input(). Generates and saves (only saves if SING/MULT)
 /* NOTE: To determine the validity of a privkey, can use b64_decoded_size() rather than this function */
-	struct serv_strc *serv_strc = torx_secure_malloc(sizeof(struct serv_strc)); // torx_free((void*)&)'d
+	struct serv_strc *serv_strc = torx_secure_malloc(sizeof(struct serv_strc)); // torx_free((void**)&)'d
 	serv_strc->owner = owner;  // just making sure these are null terminated.
 	int8_t return_privkey = 0;
 	if(privkey != NULL)
@@ -416,14 +416,14 @@ int generate_onion(const uint8_t owner,char *privkey,const char *peernick)
 		onion_gen(serv_strc);
 		if(return_privkey == 1)
 			snprintf(privkey,88+1,"%s",serv_strc->privkey);
-		torx_free((void*)&serv_strc->peernick);
+		torx_free((void**)&serv_strc->peernick);
 		if(serv_strc->onion[0] == '\0')
 		{ // BAD PRIVKEY, cannot be decoded. Probably passed from custom_input()
-			torx_free((void*)&serv_strc); // otherwise free'd in pthread
+			torx_free((void**)&serv_strc); // otherwise free'd in pthread
 			return -1;
 		}
 		const int n = set_n(-1,serv_strc->onion);
-		torx_free((void*)&serv_strc); // otherwise free'd in pthread
+		torx_free((void**)&serv_strc); // otherwise free'd in pthread
 		return n;
 	}
 }

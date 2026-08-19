@@ -109,7 +109,7 @@ static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 		peer[event_strc->n].bev_send = NULL;
 	}
 	torx_unlock(event_strc->n) // 🟩🟩🟩
-	torx_free((void*)&event_strc->buffer); // XXX A partial message must never survive into the next connection on this event_strc: read_conn keys its handling of the 4 byte length prefix off the buffer being empty, so leftover bytes make the next connection's first packet mis-frame.
+	torx_free((void**)&event_strc->buffer); // XXX A partial message must never survive into the next connection on this event_strc: read_conn keys its handling of the 4 byte length prefix off the buffer being empty, so leftover bytes make the next connection's first packet mis-frame.
 	event_strc->untrusted_message_len = 0;
 	if(bev) // Just in case we got here after zero_n for some reason
 		bufferevent_free(bev); // Note: Don't call this by itself because it can be subject to double-free issues.
@@ -128,8 +128,8 @@ static inline void disconnect_forever(struct event_strc *event_strc,const int ta
 	// error_printf(0,"Checkpoint disconnect_forever n=%d delete=%d",event_strc->n,takedown_delete);
 	if(event_strc->is_accept_copy)
 	{ // XXX Must test the flag, not owner+fd_type: error_conn passes the listener's ctx, which is the primary held by peer_base_strc. Inferring "copy" from owner would free it here and again in peer_dispatcher_thread.
-		torx_free((void*)&event_strc->buffer);
-		torx_free((void*)&event_strc); // event_strc_unique
+		torx_free((void**)&event_strc->buffer);
+		torx_free((void**)&event_strc); // event_strc_unique
 		return; // do not loopexit; these per-accept copies live independently of the peer thread
 	}
 	// XXX Do NOT read peer[n].base here: takedown_onion (delete 1 or 3) runs zero_n, which nulls it, and the loopexit would be skipped, leaking the dispatcher thread + base + event_strcs forever.
@@ -612,7 +612,7 @@ static void write_finished(struct bufferevent *bev, void *ctx)
 			getter_array(&privkey,sizeof(privkey),event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,privkey));
 			char *peernick = getter_string(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			const int peer_index_fresh = sql_insert_peer(ENUM_OWNER_CTRL,status_fresh,peerversion,privkey,peeronion,peernick,0);
-			torx_free((void*)&peernick);
+			torx_free((void**)&peernick);
 			sodium_memzero(peeronion,sizeof(peeronion));
 			sodium_memzero(privkey,sizeof(privkey));
 			setter(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index_fresh,sizeof(peer_index_fresh));
@@ -685,8 +685,8 @@ static void close_conn(struct bufferevent *bev, short events, void *ctx)
 	}
 	if(event_strc->is_accept_copy)
 	{ // Necessary because accept_conn creates a copy for each connection
-		torx_free((void*)&event_strc->buffer);
-		torx_free((void*)&ctx); // event_strc_unique
+		torx_free((void**)&event_strc->buffer);
+		torx_free((void**)&ctx); // event_strc_unique
 		return;
 	}
 	if(event_strc->fd_type == 1 && status == ENUM_STATUS_FRIEND && (event_strc->owner == ENUM_OWNER_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER))
@@ -725,7 +725,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				#ifndef NO_FILE_TRANSFER
 				if(protocol != ENUM_PROTOCOL_FILE_PIECE) // Must not 0 on ENUM_PROTOCOL_FILE_PIECE because it doesn't use buffer. Zeroing will interfere with other protocols which do.
 				#endif // NO_FILE_TRANSFER
-					torx_free((void*)&event_strc->buffer); // freeing here so we don't have to free before every continue
+					torx_free((void**)&event_strc->buffer); // freeing here so we don't have to free before every continue
 			}
 			else
 				continued = 1;
@@ -866,7 +866,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 						error_printf(0,"Failed to open for writing1: %s",file_path);
-						torx_free((void*)&file_path);
+						torx_free((void**)&file_path);
 						continue;
 					}
 					close_sockets_nolock(fd_active)
@@ -875,10 +875,10 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 						error_printf(0,"Failed to open for writing2: %s",file_path);
-						torx_free((void*)&file_path);
+						torx_free((void**)&file_path);
 						continue;
 					}
-					torx_free((void*)&file_path);
+					torx_free((void**)&file_path);
 				}
 				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
 				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
@@ -1112,12 +1112,12 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								error_printf(0,"Invalid signed (%u) message of len (%u) received from peer.",protocol,buffer_len);
 								char *signature_b64 = b64_encode(event_strc->buffer,crypto_sign_BYTES);
 								error_printf(3,"Inbound Signature: %s",signature_b64);
-								torx_free((void*)&signature_b64);
-								torx_free((void*)&prefixed_message);
+								torx_free((void**)&signature_b64);
+								torx_free((void**)&prefixed_message);
 								continue;
 							}
 							sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-							torx_free((void*)&prefixed_message);
+							torx_free((void**)&prefixed_message);
 							if(protocol == ENUM_PROTOCOL_PIPE_AUTH)
 							{ // Authenticating a _CTRL, not _GROUP_CTRL
 								if(pipe_auth_inbound(event_strc) < 0)
@@ -1208,7 +1208,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							error_simple(0,"Unknown file or peer requested more data than exists. Bailing. Report this.");
 							error_printf(0,"Checkpoint start=%"PRIu64" end=%"PRIu64" size=%"PRIu64"",requested_start,requested_end,size);
 							error_printf(0,"Checkpoint path: %s",file_path);
-							torx_free((void*)&file_path);
+							torx_free((void**)&file_path);
 							continue;
 						}
 						if(file_status == ENUM_FILE_INACTIVE_COMPLETE)
@@ -1220,7 +1220,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							{ // File does not exist
 								error_simple(0,"Requested file cannot be accessed. Try re-offering it.");
 								error_printf(0,"Checkpoint path: %s %ld ?= %ld",file_path,(long)file_stat.st_mtime,(long)modified);
-								torx_free((void*)&file_path);
+								torx_free((void**)&file_path);
 								continue;
 							}
 							else if(file_stat.st_mtime != modified)
@@ -1236,7 +1236,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										error_simple(0,"Re-checking group file because modification time has changed. This is undesirable. Report this.");
 										const uint8_t splits = splits_determination(file_n,f); // derived from .split_hashes, which necessarily exists on a group file we hold
 										unsigned char *split_hashes_and_size = file_split_hashes(checksum_unverified,file_path,splits,size);
-										torx_free((void*)&split_hashes_and_size); // We don't need this, we just need the hash of hashes.
+										torx_free((void**)&split_hashes_and_size); // We don't need this, we just need the hash of hashes.
 									}
 									else
 									{ // File exists and is P2P or PM
@@ -1250,7 +1250,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 									{
 										torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 										error_simple(0,"Requested file does not match modification time or hash. It has been modified or corrupted since receiving. You may re-offer the modified file.");
-										torx_free((void*)&file_path);
+										torx_free((void**)&file_path);
 										continue;
 									}
 									modified = file_stat.st_mtime; // Updating modification time in struct after verifying checksums, and carrying on.
@@ -1276,7 +1276,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							torx_unlock(file_n) // 🟩🟩🟩
 						}
 						// file pipe START (useful for resume) Section 6RMA8obfs296tlea
-						torx_free((void*)&file_path);
+						torx_free((void**)&file_path);
 						if(!request_recorded)
 						{ // XXX MUST NOT send: the request was never recorded (.request is NULL, ie: cancelled), so send_prep would stream against whatever start/end the slot still holds
 							error_printf(0,"Discarding a file request we cannot record: n=%d file_n=%d f=%d fd_type=%d",event_strc->n,file_n,f,event_strc->fd_type);
@@ -1448,7 +1448,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								//	else
 								//		error_printf(0,"Checkpoint NOT REQUESTING peerlist2. Peercount==%u",peercount);
 								}
-								torx_free((void*)&peernick);
+								torx_free((void**)&peernick);
 								sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
 							}
 							else
@@ -1532,7 +1532,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										data = torx_realloc_shift(data,CHECKSUM_BIN_LEN + torx_allocation_len(data),1); // shift forward for checksum
 										memcpy(data,event_strc->buffer,CHECKSUM_BIN_LEN); // prefix the checksum
 										message_send(event_strc->n,ENUM_PROTOCOL_STICKER_DATA_GIF,data,torx_allocation_len(data)); // note: this is the new length after realloc, do not re-use old value
-										torx_free((void*)&data);
+										torx_free((void**)&data);
 									}
 									break;
 								}
@@ -1789,7 +1789,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 					}
 					if(discard_after_processing) // ASSUMPTION: every discard_after_processing protocol is also stream, so it never reaches increment_i; a non-stream discard protocol would double-free the buffer here
-						torx_free((void*)&event_strc->buffer); // copied or discarded internally
+						torx_free((void**)&event_strc->buffer); // copied or discarded internally
 					else
 						event_strc->buffer = NULL; // ownership transferred (stream_cb / increment_i): do not free
 				}
@@ -1800,7 +1800,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			#endif // NO_FILE_TRANSFER
 		} // We only leave while() in the event of an error (via break;)
 		breakpoint();
-		torx_free((void*)&event_strc->buffer); // Necessary because this will be re-used on fd_type = 0
+		torx_free((void**)&event_strc->buffer); // Necessary because this will be re-used on fd_type = 0
 		if(packet_len < sizeof(read_buffer)) // Necessary safety check
 			sodium_memzero(read_buffer,packet_len);
 		else
@@ -1818,7 +1818,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 			char fresh_privkey[88+1] = {0};
 			char *peernick = getter_string(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peernick));
 			event_strc->fresh_n = generate_onion(ENUM_OWNER_CTRL,fresh_privkey,peernick);
-			torx_free((void*)&peernick);
+			torx_free((void**)&peernick);
 			if(former_owner == ENUM_OWNER_SING) // XXX DO NOT USE N AFTER THIS or risk race conditon XXX
 				bufferevent_disable(bev, EV_READ); // this will cause onion to be deleted i think !!!
 			const uint16_t fresh_peerversion = be16toh(align_uint16((void*)&buffer_ln[0]));
@@ -1838,7 +1838,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				fresh_n = load_peer_struc(-1,ENUM_OWNER_CTRL,ENUM_STATUS_PENDING,fresh_privkey,fresh_peerversion,fresh_peeronion,peernick_fresh_n,ed25519_sk,peer_sign_pk,NULL);
 			else
 				error_simple(0,"Coding error 129012. Report this.");
-			torx_free((void*)&peernick_fresh_n);
+			torx_free((void**)&peernick_fresh_n);
 			if(fresh_n == -1 || event_strc->fresh_n != fresh_n)
 			{ // Coding error or buggy/malicious peer. TODO Should spoil onion.
 				error_printf(0,"Checkpoint FAIL 2323fsadf event_strc->fresh_n == %d,fresh_n==%d",event_strc->fresh_n,fresh_n );
@@ -2098,7 +2098,7 @@ static inline void peerinit_finalize(struct event_strc *event_strc,const unsigne
 			breakpoint();
 			sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
 			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-			torx_free((void*)&peernick);
+			torx_free((void**)&peernick);
 			peerinit_teardown(event_strc);
 			return;
 		}
@@ -2106,8 +2106,8 @@ static inline void peerinit_finalize(struct event_strc *event_strc,const unsigne
 		const int peer_index = sql_insert_peer(ENUM_OWNER_CTRL,ENUM_STATUS_FRIEND,fresh_peerversion,event_strc->fresh_privkey,fresh_peeronion,peernick_fresh_n,0);
 		setter(event_strc->fresh_n,INT_MIN,-1,offsetof(struct peer_list,peer_index),&peer_index,sizeof(peer_index));
 		error_printf(3,"Outbound Handshake occured with %s who has freshonion %s",peernick,fresh_peeronion);
-		torx_free((void*)&peernick_fresh_n);
-		torx_free((void*)&peernick);
+		torx_free((void**)&peernick_fresh_n);
+		torx_free((void**)&peernick);
 		sodium_memzero(fresh_peeronion,sizeof(fresh_peeronion));
 		sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 		sql_update_peer(event_strc->fresh_n);
@@ -2398,16 +2398,16 @@ void *peer_dispatcher_thread(void *arg)
 		wrap->event_strc_send->socks_bev = NULL;
 		if(socks_bev)
 			bufferevent_free(socks_bev);
-		torx_free((void*)&wrap->event_strc_send->buffer);
-		torx_free((void*)&wrap->event_strc_send);
+		torx_free((void**)&wrap->event_strc_send->buffer);
+		torx_free((void**)&wrap->event_strc_send);
 	}
 	if(wrap->event_strc_recv)
 	{
-		torx_free((void*)&wrap->event_strc_recv->buffer);
-		torx_free((void*)&wrap->event_strc_recv);
+		torx_free((void**)&wrap->event_strc_recv->buffer);
+		torx_free((void**)&wrap->event_strc_recv);
 	}
 	if(base)
 		event_base_free(base);
-	torx_free((void*)&wrap);
+	torx_free((void**)&wrap);
 	return NULL;
 }
