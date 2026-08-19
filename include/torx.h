@@ -267,6 +267,68 @@ do { \
 } while(0); // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
 #endif // NO_FILE_TRANSFER
 /* Arrays of Struct that are used globally */ // XXX XXX DO NOT FORGET TO ADD NEW MEMBERS TO torx_lookup()(NOTE: and handle *correctly), intialize_n() and sensitive members to cleanup() XXX XXX
+#ifndef NO_FILE_TRANSFER
+struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
+	int offerer_n; // Do not reset to -1
+	uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have. XXX ALWAYS DO NULL CHECK
+};
+struct request_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .request is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
+	int requester_n; // Do not reset to -1
+	uint64_t start[2];
+	uint64_t end[2];
+	uint64_t transferred[2];
+	uint64_t previously_sent; // Do not reset to 0. From exhausted requests. This ONLY updated when a request's transferred is reset to 0 (such as when a new request overtakes it on the same socket)
+};
+struct file_list { // XXX Group file transfers are held by GROUP_CTRL, whereas PM transfers are held by GROUP_PEER XXX
+	unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
+	char *filename;
+	char *file_path;
+	uint64_t size;
+	time_t modified; // modification time (UTC, epoch time)
+	/* Exclusively Inbound transfer related */
+	char *split_path;
+	uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
+	int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
+	int8_t *split_status_fd;
+	uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
+	/* Exclusively Group related */
+	unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM). XXX Allocated as CHECKSUM_BIN_LEN*(splits+1) + sizeof(uint64_t); its length is the sole record of the split count on files we offer.
+	FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock
+	struct offer_list *offer;
+	time_t last_progress_update_time; // last time we updated progress bar
+	time_t last_progress_update_nstime; // last time we updated progress bar
+	uint64_t bytes_per_second; // larger than necessary but avoids casting when doing calcs
+	uint64_t last_transferred; // This is set at the same time as last_progress_update
+	time_t time_left; // seconds TODO change integer type to ssize_t,time_t, or uint64_t
+	uint8_t speed_iter;
+	uint64_t last_speeds[256];
+	pthread_mutex_t mutex_file;
+	/* Exclusively Outbound transfer related */
+	struct request_list *request;
+};
+#endif // NO_FILE_TRANSFER
+struct message_list {
+	time_t time; // time since epoch in seconds
+	int8_t fd_type; // -1 == swappable, 0 == recvfd, 1 == sendfd
+	uint8_t stat;
+	int p_iter;
+	char *message; // should free on shutdown, in cleanup()
+	uint32_t pos; // amount sent TODO utilize for amount received also
+	time_t nstime; // nanoseconds (essentially after a decimal point of time)
+};
+#ifndef NO_AUDIO_CALL
+struct call_list {
+	uint8_t joined; // Whether we accepted/joined it
+	uint8_t waiting; // Whether it is awaiting an acceptance/join or has been declined/ignored
+	uint8_t mic_on;
+	uint8_t speaker_on;
+	time_t start_time;
+	time_t start_nstime;
+	int *participating;
+	uint8_t *participant_mic;
+	uint8_t *participant_speaker;
+};
+#endif // NO_AUDIO_CALL
 struct peer_list { // "Data type: peer_list"  // Most important is to define onion (required) and fd. We must create an "array of structures"
 	uint8_t owner; // XXX buffer overflows will occur if owner is > 9 or negative
 	uint8_t status; // 0 blocked, 1 friend, 2 pending acceptance
@@ -291,52 +353,9 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 //	int8_t oldest_message; // TODO currently unused, should be used. default: 0, this should be set to permit the cycling of messages. when there are too many to fit in the struct, it should start over at 0, overwritting the oldest and moving this start point
 	int max_i; // message index number; cap: messages_max. do not depreciate this; it saves cpu cycles and helps reduce chance of race condition when concurrently sending and receiving a message on different threads.
 	int min_i;
-	struct message_list {
-		time_t time; // time since epoch in seconds
-		int8_t fd_type; // -1 == swappable, 0 == recvfd, 1 == sendfd
-		uint8_t stat;
-		int p_iter;
-		char *message; // should free on shutdown, in cleanup()
-		uint32_t pos; // amount sent TODO utilize for amount received also
-		time_t nstime; // nanoseconds (essentially after a decimal point of time)
-	} *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
+	struct message_list *message; // WARNING: This always points to i=="0", but 0 may not be where the alloc is. Use find_message_struc_pointer to find it.
 	#ifndef NO_FILE_TRANSFER
-	struct file_list { // XXX Group file transfers are held by GROUP_CTRL, whereas PM transfers are held by GROUP_PEER XXX
-		unsigned char checksum[CHECKSUM_BIN_LEN]; // XXX do NOT ever set this BACK to '\0' or it will mess with expand_file_struc. if changing this to *, need to check if null before calling strlen()
-		char *filename;
-		char *file_path;
-		uint64_t size;
-		time_t modified; // modification time (UTC, epoch time)
-		/* Exclusively Inbound transfer related */
-		char *split_path;
-		uint64_t *split_progress; // Contains section info, which is amount transferred in that section (incoming only). NEVER RESET!
-		int *split_status_n; // GROUPS NOTE: stores N value, which could be checked upon receiving prior to writing, to ensure that a malicious peer cannot corrupt files
-		int8_t *split_status_fd;
-		uint64_t *split_status_req; // Contains end byte count of request (incoming only). NOTE: This is unnecessary/unutilized in non-group transfers.
-		/* Exclusively Group related */
-		unsigned char *split_hashes; // Only relevant to GROUP_CTRL files (group file transfers, non-PM). XXX Allocated as CHECKSUM_BIN_LEN*(splits+1) + sizeof(uint64_t); its length is the sole record of the split count on files we offer.
-		FILE *fd; // Utilized by in and outbound file transfers. Be sure to wrap all usage with torx_fd_lock
-		struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
-			int offerer_n; // Do not reset to -1
-			uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have. XXX ALWAYS DO NULL CHECK
-		} *offer;
-		time_t last_progress_update_time; // last time we updated progress bar
-		time_t last_progress_update_nstime; // last time we updated progress bar
-		uint64_t bytes_per_second; // larger than necessary but avoids casting when doing calcs
-		uint64_t last_transferred; // This is set at the same time as last_progress_update
-		time_t time_left; // seconds TODO change integer type to ssize_t,time_t, or uint64_t
-		uint8_t speed_iter;
-		uint64_t last_speeds[256];
-		pthread_mutex_t mutex_file;
-		/* Exclusively Outbound transfer related */
-		struct request_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .request is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
-			int requester_n; // Do not reset to -1
-			uint64_t start[2];
-			uint64_t end[2];
-			uint64_t transferred[2];
-			uint64_t previously_sent; // Do not reset to 0. From exhausted requests. This ONLY updated when a request's transferred is reset to 0 (such as when a new request overtakes it on the same socket)
-		} *request;
-	} *file;
+	struct file_list *file;
 	uint8_t blacklisted; // blacklisted for giving us corrupt file sections in group transfers // note: alternative names:  denylist/disallowed https://web.archive.org/web/20221219160303/https://itcommunity.stanford.edu/ehli
 	#endif // NO_FILE_TRANSFER
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // ONLY use for CTRL + GROUP_CTRL, do not use for SING/MULT/PEER (those should only be held locally during handshakes)
@@ -347,17 +366,7 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 	struct event_base *base; // single event_base per peer, shared by recv listener and send bufferevent
 	uint32_t broadcasts_inbound;
 	#ifndef NO_AUDIO_CALL
-	struct call_list {
-		uint8_t joined; // Whether we accepted/joined it
-		uint8_t waiting; // Whether it is awaiting an acceptance/join or has been declined/ignored
-		uint8_t mic_on;
-		uint8_t speaker_on;
-		time_t start_time;
-		time_t start_nstime;
-		int *participating;
-		uint8_t *participant_mic;
-		uint8_t *participant_speaker;
-	} *call;
+	struct call_list *call;
 	/* Playback related */
 	unsigned char **audio_cache; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
 	time_t *audio_time; // For current call playback cache ( audio_cache_add / audio_cache_retrieve )
