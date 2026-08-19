@@ -121,7 +121,7 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 						}
 					}
 					int iter_peer = 0;
-					for(int n = 0; iter_peer < BROADCAST_MAX_PEERS && n <= threadsafe_read_int(&mutex_global_variable,&max_peer); n++)
+					for(int n = 0; iter_peer < BROADCAST_MAX_PEERS && n < threadsafe_read_int(&mutex_global_variable,&max_peer); n++)
 					{ // Queue suitable peers
 						torx_read(n) // 🟧🟧🟧
 						if(peer[n].peer_index > -1 && n != origin_or_group_n && peer[n].status == ENUM_STATUS_FRIEND && (peer[n].owner == ENUM_OWNER_CTRL || peer[n].owner == ENUM_OWNER_GROUP_CTRL))
@@ -129,9 +129,12 @@ void broadcast_add(const int origin_n,const unsigned char broadcast[GROUP_BROADC
 						torx_unlock(n) // 🟩🟩🟩
 					}
 					error_printf(0,"Broadcast added and slotted %d times",iter_peer);
-					torx_write(origin_n) // 🟥🟥🟥
-					peer[origin_n].broadcasts_inbound++;
-					torx_unlock(origin_n) // 🟩🟩🟩
+					if(origin_n > -1)
+					{ // XXX Must be guarded: origin_n is -1 for a locally originated broadcast (see the callers in sql.c and group_join), and peer[-1] locks and increments before the start of the allocation. broadcasts_inbound is a per-peer inbound rate limit, read at the top of this function under this same condition, so a broadcast of our own has nothing to charge it to.
+						torx_write(origin_n) // 🟥🟥🟥
+						peer[origin_n].broadcasts_inbound++;
+						torx_unlock(origin_n) // 🟩🟩🟩
+					}
 					break;
 				}
 				else if(iter_queue == BROADCAST_QUEUE_SIZE - 1)

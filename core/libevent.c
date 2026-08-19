@@ -2347,6 +2347,8 @@ void *peer_dispatcher_thread(void *arg)
 		event_base_dispatch(base); // blocks until event_base_loopexit
 	// Cleanup. The per-accept copies (event_strc_unique) are separate allocations freed by their own callbacks; the *primary* recv/send strcs held by wrap are never freed by callbacks, so we free them here.
 	struct bufferevent *bev_recv = NULL,*bev_send = NULL;
+	pthread_rwlock_wrlock(&mutex_packet); // 🟥 XXX Taken BEFORE the peer lock, never after: send_prep documents mutex_packet -> peer lock as the required order, so inverting it here would deadlock against packet_removal.
+	const int highest_o = threadsafe_read_int(&mutex_global_variable,&highest_ever_o); // read before the peer lock, keeping mutex_packet -> mutex_global_variable as send_prep orders them
 	torx_write(n) // 🟥🟥🟥
 	if(base && peer[n].base == base)
 	{ // Guard: if the peer was deleted (zero_n nulled .base and the slot may have been reused by a new peer), these fields no longer belong to this thread's base and must not be touched. XXX The base check is required: without it a NULL base matches a deleted peer's NULL .base and clears the slot's new owner.
@@ -2356,11 +2358,36 @@ void *peer_dispatcher_thread(void *arg)
 		peer[n].bev_send = NULL;
 		peer[n].recvfd_connected = 0;
 		peer[n].sendfd_connected = 0;
+		for(int fd_type = 0; fd_type < 2; fd_type++)
+		{ // XXX Mirrors close_conn, which never runs where takedown_onion closes our sockets directly rather than through libevent (block/unblock, Tor restart). A claim surviving into the next connection makes begin_cascade read the socket as occupied and return without sending, stranding that message at ENUM_MESSAGE_FAIL. Only safe here: send_prep cannot claim again until a connection re-sets bev_* and *_connected, which are cleared above under this same lock.
+			const int socket_utilized = peer[n].socket_utilized[fd_type];
+			if(socket_utilized > INT_MIN)
+			{
+				if(socket_utilized >= peer[n].min_i && socket_utilized <= peer[n].max_i) // Bounds checked, unlike in close_conn where the index is always current, because a stale claim can predate a zero_i rollback of .message
+					peer[n].message[socket_utilized].pos = 0;
+				peer[n].socket_utilized[fd_type] = INT_MIN;
+			}
+		}
+		for(int o = 0; o <= highest_o; o++)
+			if(packet[o].n == n)
+			{ // XXX The other half of what close_conn does and takedown_onion skips. packet_removal picks the OLDEST entry for n+fd_type and BREAKS (not continues) when it does not match socket_utilized, so a single entry left over from the dead connection halts all packet removal for that socket permanently, which in turn means socket_utilized is never released and send_prep refuses every later message. Nothing here can ever be acked, so release rather than account for it, exactly as close_conn's drain does.
+				packet[o].n = -1;
+				#ifndef NO_FILE_TRANSFER
+				packet[o].file_n = -1;
+				#endif // NO_FILE_TRANSFER
+				packet[o].f_i = INT_MIN;
+				packet[o].packet_len = 0;
+				packet[o].p_iter = -1;
+				packet[o].fd_type = -1;
+				packet[o].time = 0;
+				packet[o].nstime = 0;
+			}
 		peer[n].base = NULL;
 		if(pthread_equal(peer[n].thrd,pthread_self()))
 			peer[n].thrd = 0; // only ours to clear; a recycled slot's thread handle belongs to another thread
 	}
 	torx_unlock(n) // 🟩🟩🟩
+	pthread_rwlock_unlock(&mutex_packet); // 🟩
 	if(bev_recv)
 		bufferevent_free(bev_recv);
 	if(bev_send)
