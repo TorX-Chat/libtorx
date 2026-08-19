@@ -546,9 +546,15 @@ int add_onion_call(const int n)
 			baseencode_error_t err = {0}; // for base32
 			getter_array(peeronion_uppercase,sizeof(peeronion_uppercase),n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
 			xstrupr(peeronion_uppercase);
-			unsigned char *p1;
-			memcpy(ed25519_pk,p1=base32_decode(peeronion_uppercase,56,&err),sizeof(ed25519_pk));
+			unsigned char *p1 = base32_decode(peeronion_uppercase,56,&err);
 			sodium_memzero(peeronion_uppercase,sizeof(peeronion_uppercase));
+			if(p1 == NULL || err)
+			{
+				error_simple(0,"Failed to decode peeronion in load_onion. Report this.");
+				torx_free((void*)&p1);
+				return -1;
+			}
+			memcpy(ed25519_pk,p1,sizeof(ed25519_pk));
 			torx_free((void*)&p1);
 			if(crypto_sign_ed25519_pk_to_curve25519(x25519_pk, ed25519_pk) < 0)
 			{

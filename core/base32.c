@@ -235,7 +235,7 @@ unsigned char *base32_decode(const char *user_data_untrimmed, size_t data_len, b
 	if(!is_valid_b32_input(user_data, data_len))
 	{
 		*err = INVALID_B32_DATA;
-		torx_free((void*)&user_data);
+		sodium_memzero(user_data,sizeof(user_data));
 		return NULL;
 	}
 
@@ -252,7 +252,7 @@ unsigned char *base32_decode(const char *user_data_untrimmed, size_t data_len, b
 	if(decoded_data == NULL)
 	{
 		*err = MEMORY_ALLOCATION;
-		torx_free((void*)&user_data);
+		sodium_memzero(user_data,sizeof(user_data));
 		return NULL;
 	}
 

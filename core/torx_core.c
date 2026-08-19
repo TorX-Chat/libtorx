@@ -1944,7 +1944,7 @@ void ed25519_pk_from_onion(unsigned char *ed25519_pk,const char *onion)
 	baseencode_error_t err = {0}; // for base32
 	unsigned char *p = base32_decode(onion_uppercase,56,&err);
 	sodium_memzero(onion_uppercase,sizeof(onion_uppercase));
-	if(err != 0)
+	if(p == NULL || err)
 	{
 		error_simple(0,"Uncaught error in onion_to_ed25519_pk. Report this.");
 		torx_free((void*)&p);
@@ -5023,9 +5023,9 @@ char *torxid_from_onion(const char *onion)
 	char onion_uppercase[56+1]; // zero'd
 	snprintf(onion_uppercase,sizeof(onion_uppercase),"%s",onion);
 	xstrupr(onion_uppercase);
-	unsigned char *onion_decoded = base32_decode(onion_uppercase,56,&err); // 35/35+1 torx_free((void*)&)'d
+	unsigned char *onion_decoded = base32_decode(onion_uppercase,56,&err);
 	sodium_memzero(onion_uppercase,sizeof(onion_uppercase));
-	if(err)
+	if(onion_decoded == NULL || err)
 	{
 		error_printf(0,"Invalid onion detected: %s",onion); // Not abnormal on startup due to reasons explained elsewhere (peer[-1] / n==-1 is uninitialized)
 		return NULL;
@@ -5067,12 +5067,15 @@ char *onion_from_torxid(const char *torxid)
 		ed25519_pk_b32[52-d] = 'Q';
 		d--;
 	}
-	unsigned char *p;
-	memcpy(ed25519_pk,p=base32_decode(ed25519_pk_b32,52,&err),32); // torx_free((void*)&)'d
-	torx_free((void*)&p);
+	unsigned char *p = base32_decode(ed25519_pk_b32,52,&err); // torx_free((void*)&)'d
 	sodium_memzero(ed25519_pk_b32,sizeof(ed25519_pk_b32));
-	if(err)
-		return NULL; // some stuff not being zero'd here, but this shouldn't occur
+	if(p == NULL || err)
+	{ // base32_decode returns NULL on invalid input, which reaches here from pasted TorX-IDs
+		torx_free((void*)&p);
+		return NULL;
+	}
+	memcpy(ed25519_pk,p,32);
+	torx_free((void*)&p);
 	char *onion = onion_from_ed25519_pk(ed25519_pk);
 	sodium_memzero(ed25519_pk,sizeof(ed25519_pk));
 	return onion;
