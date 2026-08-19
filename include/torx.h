@@ -133,6 +133,10 @@ severable if found in contradiction with the License or applicable law.
 	#define IS_ANDROID 0
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define RED		"\x1b[31m" // printf( RED "Hello\n" RESET );
 #define GREEN		"\x1b[32m"
 #define YELLOW		"\x1b[33m"
@@ -1022,5 +1026,9 @@ extern pthread_rwlock_t mutex_expand;
 extern pthread_rwlock_t mutex_expand_group;
 extern uint8_t censored_region;
 extern uint32_t sqlcipher_library_version[3];
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // TORX_PUBLIC_HEADERS
