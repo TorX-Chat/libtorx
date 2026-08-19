@@ -4688,7 +4688,7 @@ void login_start(const char *arg)
 { // Immediately attempts to copy and destroy password from UI // XXX Does not need locks
 	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
 	{
-		error_simple(0,"Login_start called during lockout. UI bug. Report this to UI dev.");
+		error_simple(0,"Login attempt already in progress.");
 		return;
 	}
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
