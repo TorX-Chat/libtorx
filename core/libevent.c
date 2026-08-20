@@ -480,8 +480,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							// TODO give up and hope group_msg and stream rarely go together? lets wait for it to become a real problem. TODO see: sfaoij2309fjfw */
 						}
 					}
-					else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
-					{ // We don't need these messages anymore. They only need to be logged until sent. One day we can perhaps make them stream non-disgardable + !logged?
+					else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
+					{ // We don't need these messages anymore. They only need to be logged until sent. TODO One day we can perhaps make them stream non-disgardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
 						if(logged) // yes, it is
 						{
 							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));

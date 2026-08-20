@@ -2396,7 +2396,7 @@ int invitee_remove(const int g,const int n)
 			group[g].invitees[invitee].time = 0;
 			group[g].invitees[invitee].nstime = 0;
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-			if(time || nstime) // Remove from disk
+			if(time || nstime) // Remove from disk. NOTE: we do not have the n/i on-hand so we do not call zero_i() + shrinkage_cb()
 				sql_delete_message(getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)),time,nstime);
 			return 0;
 		}

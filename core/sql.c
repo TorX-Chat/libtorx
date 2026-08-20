@@ -160,10 +160,17 @@ void message_offload(const int n)
 		}
 }
 
-static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol)
+static inline int log_check(const int n,const uint8_t group_pm,const uint16_t protocol,const uint8_t stat)
 {
-	if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-		return 1; // Entry requests MUST always be logged.
+	if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
+	{
+		if(stat == ENUM_MESSAGE_RECV)
+			return 0; // Do not log inbound on these protocols
+		else if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
+			return 1; // Outbound Entry requests MUST always be logged. It is SAFE for _ENTRY_REQUEST because these are unknown peers we have yet to connect to. TODO One day we can perhaps make them stream non-disgardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
+	//	else // ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST ENUM_PROTOCOL_GROUP_OFFER_ACCEPT ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY
+	//		return 1; // XXX DO NOT DELETE: We are currently NOT force logging _ACCEPT / _ACCEPT_FIRST / _ACCEPT_REPLY because these are between two ctrl. We should not override logging settings between known-peers. This decision may change to allow easier joining of groups when accepting an offer from an offline peer while not logging.
+	}
 	const int8_t log_messages = getter_int8(n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
 	const uint8_t global = threadsafe_read_uint8(&mutex_global_variable,&global_log_messages);
 	if(log_messages == -1 || (global < 1 && log_messages < 1))
@@ -421,7 +428,7 @@ void sql_save_file_status(const int file_n,const int f,const uint8_t status)
 		return;
 	}
 	const uint8_t owner = getter_uint8(file_n,INT_MIN,-1,offsetof(struct peer_list,owner));
-	if(!log_check(file_n,owner == ENUM_OWNER_GROUP_PEER ? 1 : 0,0))
+	if(!log_check(file_n,owner == ENUM_OWNER_GROUP_PEER ? 1 : 0,0,0))
 		return; // Respect logging preferences: do not persist file metadata of peers whose messages are not logged
 	const int peer_index = getter_int(file_n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	if(peer_index < 0)
@@ -1078,7 +1085,8 @@ int sql_insert_message(const int n,const int i)
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols); // 🟩
-	if(logged == 0 || !log_check(n,group_pm,protocol))
+	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
+	if(logged == 0 || !log_check(n,group_pm,protocol,stat))
 		return 0; // do not log these.
 	char *message = getter_string(n,i,-1,offsetof(struct message_list,message));
 	const uint32_t message_len = torx_allocation_len(message);
@@ -1093,7 +1101,6 @@ int sql_insert_message(const int n,const int i)
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
-	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
 	if(group_msg && owner == ENUM_OWNER_GROUP_PEER && stat != ENUM_MESSAGE_RECV)
 	{ // XXX must NOT be triggered for an inbound or private message. It should go to 'else' (private message is more of a standard message)
 		char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
@@ -1129,13 +1136,12 @@ int sql_update_message(const int n,const int i)
 	const uint8_t file_offer = protocols[p_iter].file_offer;
 	const uint8_t group_pm = protocols[p_iter].group_pm;
 	pthread_rwlock_unlock(&mutex_protocols); // 🟩
-	if(logged == 0 || !log_check(n,group_pm,protocol))
+	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
+	if(logged == 0 || !log_check(n,group_pm,protocol,stat))
 		return 0; // do not log these.
 	const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
-	const uint8_t stat = getter_uint8(n,i,-1,offsetof(struct message_list,stat));
-
 	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
 	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET (stat,protocol,message_txt) = (%d,%d,?) WHERE time = %lld AND nstime = %lld AND peer_index = %d;",stat,protocol,(long long)time,(long long)nstime,peer_index);
 	const int val = sql_exec_msg(n,i,command); // Update message
