@@ -2279,8 +2279,7 @@ void zero_g(const int g)
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	memset(group[g].id,'0',GROUP_ID_SIZE);
 	group[g].n = -1;
-	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
-		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
+	torx_free((void**)&group[g].invitees);
 	group[g].hash = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
 	torx_free((void**)&group[g].peerlist); // XXX this is also what zeroes the peercount, which is derived from its length
@@ -2358,38 +2357,47 @@ static inline void sort_n(int sorted_n[],const int size)
 	}
 }
 
-void invitee_add(const int g,const int n)
-{
-	int invitee = 0;
+void invitee_add(const int g,const int n,const time_t time,const time_t nstime)
+{ // Record an outstanding invitation exchange with n. Pass the message time/nstime of the offer, or 0,0 if there is no row to delete upon consumption (ex: disabled logging).
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	for(int first_negative_one = -1; invitee < MAX_INVITEES ; invitee++)
-	{
-		if(group[g].invitees[invitee] == -1 && first_negative_one < 0)
-			first_negative_one = invitee;
-		else if(group[g].invitees[invitee] == n)
-			break; // Already added
-		else if(group[g].invitees[invitee] == -2)
-		{ // Not in list
-			if(first_negative_one > -1) // Fill a gap
-				group[g].invitees[first_negative_one] = n;
-			else
-				group[g].invitees[invitee] = n;
-			break;
-		}
+	const size_t count = torx_allocation_len(group[g].invitees)/sizeof(struct invitee_list);
+	size_t invitee = 0,first_consumed = count;
+	while(invitee < count && group[g].invitees[invitee].n != n)
+	{ // Scan for an existing entry before re-using a consumed slot, or n could be recorded twice and consumed twice
+		if(first_consumed == count && group[g].invitees[invitee].n == -1)
+			first_consumed = invitee;
+		invitee++;
 	}
+	if(invitee == count)
+	{ // Not in the list
+		if(first_consumed < count)
+			invitee = first_consumed; // Re-use a consumed slot
+		else if(group[g].invitees) // Grow
+			group[g].invitees = torx_realloc(group[g].invitees,(count+1)*sizeof(struct invitee_list));
+		else
+			group[g].invitees = torx_insecure_malloc(sizeof(struct invitee_list));
+	}
+	group[g].invitees[invitee].n = n;
+	group[g].invitees[invitee].time = time;
+	group[g].invitees[invitee].nstime = nstime;
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-	if(invitee == MAX_INVITEES)
-		error_simple(0,"Hit MAX_INVITEES in invitee_add. Report this.");
 }
 
 int invitee_remove(const int g,const int n)
-{
+{ // Remove invitation from RAM and disk.
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	for(int invitee = 0; invitee < MAX_INVITEES && group[g].invitees[invitee] != -2 ; invitee++)
-		if(group[g].invitees[invitee] == n)
+	const size_t count = torx_allocation_len(group[g].invitees)/sizeof(struct invitee_list);
+	for(size_t invitee = 0; invitee < count ; invitee++)
+		if(group[g].invitees[invitee].n == n)
 		{
-			group[g].invitees[invitee] = -1;
+			const time_t time = group[g].invitees[invitee].time;
+			const time_t nstime = group[g].invitees[invitee].nstime;
+			group[g].invitees[invitee].n = -1;
+			group[g].invitees[invitee].time = 0;
+			group[g].invitees[invitee].nstime = 0;
 			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+			if(time || nstime) // Remove from disk
+				sql_delete_message(getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index)),time,nstime);
 			return 0;
 		}
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
@@ -3415,8 +3423,7 @@ static void initialize_g(const int g) // XXX do not put locks in here
 { // initalize an iter of the group struc
 	sodium_memzero(group[g].id,GROUP_ID_SIZE);
 	group[g].n = -1;
-	for(int invitee = 0; invitee < MAX_INVITEES; invitee++)
-		group[g].invitees[invitee] = -2; // please don't initialize as 0/-1
+	group[g].invitees = NULL;
 	group[g].hash = 0; // please don't initialize as -1
 	group[g].msg_count = 0; // please don't initialize as -1
 	group[g].peerlist = NULL; // XXX this is also what zeroes the peercount, which is derived from its length

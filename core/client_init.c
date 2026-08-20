@@ -154,7 +154,11 @@ static inline char *message_prep(const int target_n,const int16_t section,const 
 			memcpy(&base_message[GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)],onion_group_n,56);
 			crypto_sign_ed25519_sk_to_pk((unsigned char*)&base_message[GROUP_ID_SIZE+sizeof(uint32_t)+sizeof(uint8_t)+56],sign_sk_group_n);
 		}
-		invitee_add(g,target_n);
+		const int8_t log_messages = getter_int8(target_n,INT_MIN,-1,offsetof(struct peer_list,log_messages));
+		if(log_messages == 1 || (!log_messages && threadsafe_read_uint8(&mutex_global_variable,&global_log_messages)))
+			invitee_add(g,target_n,time,nstime);
+		else
+			invitee_add(g,target_n,0,0);
 	}
 	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
 	{ // TODO should probably have some checks here because ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY is automatically sent from libevent and we don't verify that the group and onions exist. should cancel if no.

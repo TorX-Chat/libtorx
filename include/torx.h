@@ -164,7 +164,6 @@ extern "C" {
 #define SHIFT 10 // this is for vptoi/itovp. it must be greater than any negative value that we might pass to the functions.
 #define PROTOCOL_LIST_SIZE 64
 #define SIZE_PACKET_STRC 1024 // Seems to not limit the size of individual outbound messages. One for every packet in outbound buffer. So far single-file outbound transfers show this never gets above 1-2. The space it takes at 10,000 is only ~2mb
-#define MAX_INVITEES 4096
 #define BROADCAST_QUEUE_SIZE 4096
 #define BROADCAST_HISTORY_SIZE (BROADCAST_QUEUE_SIZE*2) // should be equal to or larger than queue size
 #define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
@@ -384,10 +383,16 @@ struct peer_list { // "Data type: peer_list"  // Most important is to define oni
 };
 extern struct peer_list *peer;
 
+struct invitee_list {
+	int n; // CTRL peer the offer/accept was sent to. -1 once consumed
+	time_t time; // Message key of the offer, for sql_delete_message. Zero means there is no row to delete
+	time_t nstime; // Message key of the offer, for sql_delete_message. Zero means there is no row to delete
+};
+
 struct group_list { // XXX NOTE: individual peers will be in peer struct but peer[n].owner != CTRL so they won't appear in peer list or show online notifications XXX
 	unsigned char id[GROUP_ID_SIZE]; // x25519_sk key, 32 bytes decoded, crypto_scalarmult_base to get _pk. PROBABLY SHOULD NOT CLEAR THIS WHEN DELETING (??? what)
 	int n; // n of our GROUP_CTRL
-	int invitees[MAX_INVITEES];
+	struct invitee_list *invitees;
 	uint32_t hash; // only relevant to groups with 0 peers that we are broadcasting for
 	uint32_t msg_count;
 	int *peerlist; // does NOT include us. Its allocation length is the sole record of the peercount; growing it IS how a peer is counted.

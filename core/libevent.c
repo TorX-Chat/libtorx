@@ -1357,7 +1357,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
 					{ // Format: group_id + accepter's onion + accepter's ed25519_pk (NOTE: These protocols are exclusively between two OWNER_CTRL)
-					 // TODO should ONLY respond IF we verify that we already sent this peer an invitation, otherwise could be issues (ie, a malicious peer could accept multiple times and bring in a bunch of people)
 						if((protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT && buffer_len != GROUP_OFFER_ACCEPT_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && buffer_len != GROUP_OFFER_ACCEPT_FIRST_LEN) || (protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY && buffer_len != GROUP_OFFER_ACCEPT_REPLY_LEN))
 						{
 							error_simple(0,"Group offer accept or accept reply of bad size received.");
@@ -1365,7 +1364,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						const int g = set_g(-1,event_strc->buffer); // reserved, already existing
 						const int group_n = getter_group_int(g,offsetof(struct group_list,n));
-						if(group_n < -1)
+						if(group_n < 0)
 						{
 							error_simple(0,"Sanity check failed on a received Group Offer Accept.");
 							break;
@@ -1386,8 +1385,14 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 							if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST)
 							{
-								if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
-								{ // NOTE: race condition. Once we set the invitation, anyone else who accepts our invite ... umm... lost thought there.
+								if(invitee_remove(g,event_strc->n))
+								{
+									error_simple(0,"Peer requested invitation into a group we have no record of inviting them into, or requested multiple invites. Refusing.");
+									sodium_memzero(invitation,sizeof(invitation));
+									continue;
+								}
+								else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST && is_null(invitation,crypto_sign_BYTES))
+								{
 									unsigned char verification_message[56+crypto_sign_PUBLICKEYBYTES];
 									getter_array(verification_message,56,group_n,INT_MIN,-1,offsetof(struct peer_list,onion));
 									unsigned char sign_sk[crypto_sign_SECRETKEYBYTES];
@@ -1411,12 +1416,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							//	else if(protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT)
 							//		message_send(event_strc->n,ENUM_PROTOCOL_GROUP_PEERLIST,itoa(g)); // send a peerlist because this person doesn't have one
 							//	group_add_peer(g,group_peeronion,peer[event_strc->n].peernick,group_peer_ed25519_pk,invitation); // note: was in message_send, moving up instead
-								if(invitee_remove(g,event_strc->n))
-								{
-									error_simple(0,"Peer requested invitation into a group we have no record of inviting them into, or requested multiple invites. Refusing.");
-									sodium_memzero(invitation,sizeof(invitation));
-									continue;
-								}
 								struct int_char int_char;
 								int_char.i = g;
 								int_char.p = &event_strc->buffer[GROUP_ID_SIZE]; // group_peeronion;
@@ -1428,8 +1427,6 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							{ // If peerlist not NULL, this is a malicious message possibly.
 								if(is_null(invitation,crypto_sign_BYTES))
 								{ // collect their signature of our group ctrl ( will always be passed, but we don't always need to take it if we already have one )
-								// TODO TODO TODO XXX Exploitable??? if this is *always* passed, then malicious actors can switch theirs and change who invited them to the channel??
-								// TODO Prevent by not sending ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY unless we already sent them an offer. So, we need to track offers.
 									error_simple(2,"Receiving a group invitation signature.");
 									memcpy(invitation,&event_strc->buffer[GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES],crypto_sign_BYTES);
 									setter(group_n,INT_MIN,-1,offsetof(struct peer_list,invitation),&invitation,sizeof(invitation));
@@ -1451,8 +1448,8 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								torx_free((void**)&peernick);
 								sodium_memzero(invitor_invitation,sizeof(invitor_invitation));
 							}
-							else
-								breakpoint();
+							else // Either we already have a peerlist, or we have no record of having asked this peer to admit us. Both are ordinary remote conditions, not coding errors.
+								error_simple(0,"Received a group offer accept reply we did not ask for, or asked for more than once. Refusing.");
 							sodium_memzero(invitation,sizeof(invitation));
 						}
 					}

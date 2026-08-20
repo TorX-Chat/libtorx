@@ -826,7 +826,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		if((protocol == ENUM_PROTOCOL_GROUP_OFFER || protocol == ENUM_PROTOCOL_GROUP_OFFER_FIRST) && stat != ENUM_MESSAGE_RECV)
 		{ // Outbound group offer. Must add target peer to invitees.
 			const int g = set_g(-1,tmp_message);
-			invitee_add(g,n);
+			invitee_add(g,n,time,nstime);
 		}
 		#ifndef NO_FILE_TRANSFER
 		else if(file_offer)

@@ -203,7 +203,7 @@ char *onion_from_ed25519_pk(const unsigned char *ed25519_pk)__attribute__((warn_
 void zero_n(const int n); // must be called from within locks
 int zero_i(const int n,const int i); // must be called from within locks
 void zero_g(const int g);
-void invitee_add(const int g,const int n);
+void invitee_add(const int g,const int n,const time_t time,const time_t nstime);
 int invitee_remove(const int g,const int n);
 size_t stripbuffer(char *buffer);
 char *replace_substring(const char *source,const char *search,const char *replace)__attribute__((warn_unused_result));
