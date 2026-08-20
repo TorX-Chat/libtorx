@@ -4343,13 +4343,13 @@ void initial(void)
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,1,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,"UTF8 Text Private","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
 	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST,"Group Broadcast","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_FIRST,"Group Offer First","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER,"Group Offer","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST,"Group Offer Accept First","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT,"Group Offer Accept","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,"Group Offer Accept Reply","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,"Group Public Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
-	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // group_mechanics, must be logged until sent
+	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_FIRST,"Group Offer First","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after acceptance in invitee_remove
+	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER,"Group Offer","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after acceptance in invitee_remove
+	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST,"Group Offer Accept First","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT,"Group Offer Accept","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,"Group Offer Accept Reply","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after sent in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration(ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,"Group Public Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
+	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
 	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
 	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
 	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
