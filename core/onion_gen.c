@@ -346,7 +346,7 @@ static void *onion_gen(void *arg)
 		else if(serv_strc->owner == ENUM_OWNER_MULT && mult_expiration_days > 0)
 			expiration = (60*60*24*mult_expiration_days+time(NULL));
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-		int peer_index = sql_insert_peer(serv_strc->owner,ENUM_STATUS_FRIEND,99,serv_strc->privkey,serv_strc->onion,serv_strc->peernick,(int)expiration);
+		const int peer_index = sql_insert_peer(serv_strc->owner,ENUM_STATUS_FRIEND,99,serv_strc->privkey,serv_strc->onion,serv_strc->peernick,(int)expiration);
 		int n;
 		if(serv_strc->owner == ENUM_OWNER_GROUP_CTRL)
 		{

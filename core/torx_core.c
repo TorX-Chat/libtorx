@@ -204,6 +204,7 @@ pthread_mutex_t mutex_group_peer_add = PTHREAD_MUTEX_INITIALIZER; // is necessar
 pthread_mutex_t mutex_group_join = PTHREAD_MUTEX_INITIALIZER; // is necessary to avoid race condition, do not eliminate
 pthread_mutex_t mutex_onion = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_set_n = PTHREAD_MUTEX_INITIALIZER; // XXX serializes set_n's scan-then-claim. Without it, concurrent peer creation (ex: an inbound friend request on a libevent thread while the UI calls peer_save) hands the same n to both.
+pthread_mutex_t mutex_set_g = PTHREAD_MUTEX_INITIALIZER; // XXX same role as mutex_set_n, for set_g.
 pthread_mutex_t mutex_closing = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t mutex_tor_pipe = PTHREAD_MUTEX_INITIALIZER; // prevents rapid restarts of Tor from causing issues with reading Tor's STDOUT
 pthread_mutex_t mutex_message_loading = PTHREAD_MUTEX_INITIALIZER; // may be necessary in rare cases where Tor for some reason restarts on startup; related to messages_loaded
@@ -3420,7 +3421,7 @@ static void initialize_n(const int n) // XXX do not put locks in here
 }
 
 static void initialize_g(const int g) // XXX do not put locks in here
-{ // initalize an iter of the group struc
+{ // initalize an iter of the group struc. XXX Does NOT call initialize_g_cb; the caller must, after releasing mutex_expand_group. See expand_group_struc_followup. Mirrors initialize_n.
 	sodium_memzero(group[g].id,GROUP_ID_SIZE);
 	group[g].n = -1;
 	group[g].invitees = NULL;
@@ -3432,9 +3433,6 @@ static void initialize_g(const int g) // XXX do not put locks in here
 	group[g].msg_index = NULL;
 	group[g].msg_first = NULL;
 	group[g].msg_last = NULL;
-	pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // XXX DANGER, WE ASSUME LOCKS XXX
-	initialize_g_cb(g);
-	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DANGER, WE ASSUME LOCKS XXX
 	pthread_rwlock_wrlock(&mutex_global_variable); // 🟥
 	max_group++;
 	pthread_rwlock_unlock(&mutex_global_variable); // 🟩
@@ -3564,23 +3562,29 @@ static inline void expand_peer_struc_followup(const int n)
 	}
 }
 
-static inline void expand_group_struc(const int g) // XXX do not put locks in here
-{ /* Expand group struct if our current n is unused && divisible by 10 */
+static inline int expand_group_struc(const int g) // XXX do not put locks in here
+{ /* Expand group struct if our current n is unused && divisible by 10 */ // Returns 1 if it expanded, in which case the caller MUST call expand_group_struc_followup after releasing mutex_expand_group. Same split as expand_peer_struc / expand_peer_struc_followup, and for the same reason: the callbacks reach the UI and must not run under our locks.
 	if(g < 0)
 	{
 		error_simple(0,"expand_group_struc failed sanity check. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	if(g % 10 == 0 && g && g + 10 > threadsafe_read_int(&mutex_global_variable,&max_group) && is_null(group[g].id,GROUP_ID_SIZE))
 	{ // Safe to cast g as size_t because > -1
 		const uint32_t current_allocation_size = torx_allocation_len(group);
 		group = torx_realloc(group,current_allocation_size + sizeof(struct group_list) *10);
-		pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // XXX DANGER, WE ASSUME LOCKS XXX
-		expand_group_struc_cb(g);
-		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 // XXX DANGER, WE ASSUME LOCKS XXX
 		for(int j = g + 10; j > g; j--)
 			initialize_g(j);
+		return 1;
 	}
+	return 0;
+}
+
+static inline void expand_group_struc_followup(const int g)
+{ // must be called after expand_group_struc, after unlock
+	expand_group_struc_cb(g);
+	for(int j = g + 10; j > g; j--)
+		initialize_g_cb(j);
 }
 
 void expand_message_struc_followup(const int n,const int i)
@@ -3775,6 +3779,7 @@ int set_g(const int n,const void *arg)
 	int8_t error = 0;
 	int g = 0;
 	uint8_t owner = 0; // initializing for clang. doesnt need to be.
+	pthread_mutex_lock(&mutex_set_g); // 🟥🟥 XXX Held across scan + expand + claim
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	if(n > -1)
 	{
@@ -3823,7 +3828,7 @@ int set_g(const int n,const void *arg)
 	} */
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	expand_group_struc(g); // Expand struct if necessary
+	const int expanded = expand_group_struc(g); // Expand struct if necessary
 	if(!error && n > -1)
 		if(owner == ENUM_OWNER_GROUP_CTRL) // necessary check, to ensure we're not setting group_n to GROUP_PEER
 			group[g].n = n;
@@ -3844,6 +3849,9 @@ int set_g(const int n,const void *arg)
 	else
 		error_printf(0,"Checkpoint set_g by fresh g==%d",g); */
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	pthread_mutex_unlock(&mutex_set_g); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
+	if(expanded)
+		expand_group_struc_followup(g); // callbacks reach the UI, so they run unlocked
 	return g;
 }
 
@@ -4055,6 +4063,14 @@ int group_add_peer(const int g,const char *group_peeronion,const char *group_pee
 	char fake_privkey[88+1];
 	random_string(fake_privkey,sizeof(fake_privkey));
 	const int peer_index = sql_insert_peer(ENUM_OWNER_GROUP_PEER,ENUM_STATUS_FRIEND,99,fake_privkey,local_group_peeronion,local_group_peernick,0);
+	if(peer_index < 0)
+	{
+		pthread_mutex_unlock(&mutex_group_peer_add); // 🟩🟩
+		error_simple(0,"Failed to insert a group peer. Not adding it to the group.");
+		sodium_memzero(local_group_peeronion,sizeof(local_group_peeronion));
+		sodium_memzero(nick_array,sizeof(nick_array));
+		return -1;
+	}
 	int n;
 	if(g_invite_required)
 		n = load_peer_struc(peer_index,ENUM_OWNER_GROUP_PEER,ENUM_STATUS_FRIEND,fake_privkey,99,local_group_peeronion,local_group_peernick,NULL/*SK*/,group_peer_ed25519_pk,inviter_signature);
@@ -4443,6 +4459,8 @@ void initial(void)
 		for(int j = 0; j < 11; j++)
 			initialize_g(j);
 		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+		for(int j = 0; j < 11; j++)
+			initialize_g_cb(j);
 		/* Initalize the packet struc */
 		for(int o = 0; o < SIZE_PACKET_STRC; o++)
 		{

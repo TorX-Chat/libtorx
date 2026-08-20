@@ -75,6 +75,10 @@ void (*initialize_f_registered)(const int n,const int f) = NULL;
 void (*expand_file_struc_registered)(const int n,const int f) = NULL;
 void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred) = NULL;
 
+pthread_mutex_t mutex_set_f = PTHREAD_MUTEX_INITIALIZER; // XXX same role as mutex_set_n, for set_f.
+pthread_mutex_t mutex_set_o = PTHREAD_MUTEX_INITIALIZER; // XXX same role as mutex_set_n, for set_o.
+pthread_mutex_t mutex_set_r = PTHREAD_MUTEX_INITIALIZER; // XXX same role as mutex_set_n, for set_r.
+
 struct file_strc { // XXX Do not torx_secure_malloc structs unless they contain sensitive arrays XXX
 	int n;
 	char *path;
@@ -174,12 +178,12 @@ void initialize_f(const int n,const int f) // XXX do not put locks in here
 //	note: we have no max counter for file struc.... we rely on checksum to never be zero'd after initialization (until shutdown or deletion of file). This is safe.
 }
 
-static inline void expand_offer_struc(const int n,const int f,const int o)
+static inline int expand_offer_struc(const int n,const int f,const int o)
 { /* Expand offer struct if our current o is unused && divisible by 10 */
 	if(n < 0 || f < 0 || o < 0)
 	{
 		error_simple(0,"expand_offer_struc failed sanity check. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	int offerer_n = -2; // must not initialize as -1
 	torx_read(n) // 🟧🟧🟧
@@ -195,22 +199,24 @@ static inline void expand_offer_struc(const int n,const int f,const int o)
 		for(int j = o + 10; j > o; j--)
 			initialize_offer(n,f,j);
 		torx_unlock(n) // 🟩🟩🟩
+		return 1;
 	}
+	return 0;
 }
 
-static inline void expand_request_struc(const int n,const int f,const int r)
+static inline int expand_request_struc(const int n,const int f,const int r)
 { /* Expand request struct if our current r is unused && divisible by 10 */
 	if(n < 0 || f < 0 || r < 0)
 	{
 		error_simple(0,"expand_request_struc failed sanity check1. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request == NULL)
 	{
 		torx_unlock(n) // 🟩🟩🟩
 		error_simple(0,"expand_request_struc failed sanity check2. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	const int requester_n = peer[n].file[f].request[r].requester_n;
 	torx_unlock(n) // 🟩🟩🟩
@@ -223,15 +229,24 @@ static inline void expand_request_struc(const int n,const int f,const int r)
 		for(int j = r + 10; j > r; j--)
 			initialize_request(n,f,j);
 		torx_unlock(n) // 🟩🟩🟩
+		return 1;
 	}
+	return 0;
 }
 
-static inline void expand_file_struc(const int n,const int f)
+static inline void expand_file_struc_followup(const int n,const int f)
+{ // must be called after expand_file_struc, after unlock
+	expand_file_struc_cb(n,f);
+	for(int j = f + 10; j > f; j--)
+		initialize_f_cb(n,j);
+}
+
+static inline int expand_file_struc(const int n,const int f)
 { /* Expand file struct if our current f is unused && divisible by 10 */
 	if(n < 0 || f < 0)
 	{
 		error_simple(0,"expand_file_struc failed sanity check. Coding error. Report this.");
-		return;
+		return 0;
 	}
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
@@ -243,11 +258,10 @@ static inline void expand_file_struc(const int n,const int f)
 		for(int j = f + 10; j > f; j--)
 			initialize_f(n,j);
 		torx_unlock(n) // 🟩🟩🟩
-		expand_file_struc_cb(n,f);
-		for(int j = f + 10; j > f; j--)
-			initialize_f_cb(n,j);
+		return 1;
 	}
 	sodium_memzero(checksum,sizeof(checksum));
+	return 0;
 }
 
 static inline uint64_t calculate_average(const int n,const int f,const uint64_t bytes_per_second)
@@ -520,15 +534,19 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 	}
 	int f = 0;
 	int checksum_is_null;
+	pthread_mutex_lock(&mutex_set_f); // 🟥🟥 XXX Held across scan + expand + claim
 	torx_read(n) // 🟧🟧🟧
 	while(!(checksum_is_null = is_null(peer[n].file[f].checksum,CHECKSUM_BIN_LEN)) && memcmp(peer[n].file[f].checksum,checksum,checksum_len))
 		f++; // Not null, and not matching.
 	torx_unlock(n) // 🟩🟩🟩
 	if(checksum_len < CHECKSUM_BIN_LEN && checksum_is_null)
 		return -1; // do not put error message, valid reasons why this could occur
-	expand_file_struc(n,f); // Expand struct if necessary
+	const int expanded = expand_file_struc(n,f); // Expand struct if necessary
 	if(checksum_is_null) // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 		setter(n,INT_MIN,f,offsetof(struct file_list,checksum),checksum,checksum_len); // source is pointer
+	pthread_mutex_unlock(&mutex_set_f); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
+	if(expanded)
+		expand_file_struc_followup(n,f);
 	return f;
 }
 
@@ -575,6 +593,7 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 	if(n < 0 || f < 0 || passed_offerer_n < 0)
 		return -1;
 	int o = -1;
+	pthread_mutex_lock(&mutex_set_o); // 🟥🟥 XXX Held across scan + expand + claim
 	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].offer)
 	{ // necessary sanity check to prevent race conditions
@@ -591,6 +610,7 @@ int set_o(const int n,const int f,const int passed_offerer_n)
 			peer[n].file[f].offer[o].offerer_n = passed_offerer_n; // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 		torx_unlock(n) // 🟩🟩🟩
 	}
+	pthread_mutex_unlock(&mutex_set_o); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
 	return o;
 }
 
@@ -599,6 +619,7 @@ int set_r(const int n,const int f,const int passed_requester_n)
 	if(n < 0 || f < 0 || passed_requester_n < 0)
 		return -1;
 	int r = 0;
+	pthread_mutex_lock(&mutex_set_r); // 🟥🟥 XXX Held across scan + expand + claim
 	torx_read(n) // 🟧🟧🟧
 	if(peer[n].file[f].request == NULL)
 	{
@@ -615,6 +636,7 @@ int set_r(const int n,const int f,const int passed_requester_n)
 	if(peer[n].file[f].request) // Necessary sanity check to avoid race conditions
 		peer[n].file[f].request[r].requester_n = passed_requester_n;
 	torx_unlock(n) // 🟩🟩🟩
+	pthread_mutex_unlock(&mutex_set_r); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
 	return r;
 }
 

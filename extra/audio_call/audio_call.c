@@ -67,6 +67,8 @@ void (*expand_call_struc_registered)(const int call_n,const int call_c) = NULL;
 void (*call_update_registered)(const int call_n,const int call_c) = NULL;
 void (*audio_cache_add_registered)(const int participant_n) = NULL;
 
+pthread_mutex_t mutex_set_c = PTHREAD_MUTEX_INITIALIZER; // XXX same role as mutex_set_n, for set_c.
+
 uint8_t default_participant_mic = 1; // default, enabled
 uint8_t default_participant_speaker = 1; // default, enabled
 
@@ -202,6 +204,7 @@ int set_c(const int call_n,const time_t time,const time_t nstime)
 		return -1;
 	}
 	int call_c;
+	pthread_mutex_lock(&mutex_set_c); // 🟥🟥 XXX Held across scan + expand + claim
 	torx_read(call_n) // 🟧🟧🟧
 	for(call_c = 0; (size_t)call_c < torx_allocation_len(peer[call_n].call)/sizeof(struct call_list); call_c++)
 		if(peer[call_n].call[call_c].start_time == time && peer[call_n].call[call_c].start_nstime == nstime)
@@ -227,6 +230,7 @@ int set_c(const int call_n,const time_t time,const time_t nstime)
 	peer[call_n].call[call_c].start_time = time;
 	peer[call_n].call[call_c].start_nstime = nstime;
 	torx_unlock(call_n) // 🟩🟩🟩
+	pthread_mutex_unlock(&mutex_set_c); // 🟩🟩 // XXX The slot is claimed by the setters above; only after that may another scanner run
 	if(expanded) // must be outside locks
 	{
 		expand_call_struc_cb(call_n,call_c);
