@@ -426,6 +426,23 @@ struct protocol_info {
 };
 extern struct protocol_info protocols[PROTOCOL_LIST_SIZE];
 
+struct protocol_definition { // For passing to protocol_registration
+	const uint16_t protocol;
+	const char *name;
+	const char *description;
+	const uint8_t null_terminate;
+	const uint8_t date;
+	const uint8_t sign;
+	const uint8_t logged;
+	const uint8_t notifiable;
+	const uint8_t file_checksum;
+	const uint8_t file_offer;
+	const uint8_t exclusive_type;
+	const uint8_t utf8;
+	const uint8_t socket_swappable;
+	const uint8_t stream;
+};
+
 /* Struct Models */
 union types {
 	uint64_t uint64;
@@ -718,7 +735,7 @@ int threadsafe_read_int(pthread_rwlock_t *mutex,const int *arg)__attribute__((wa
 
 /* torx_core.c */
 int protocol_lookup(const uint16_t protocol)__attribute__((warn_unused_result));
-int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint8_t null_terminate,const uint8_t date,const uint8_t sign,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream);
+int protocol_registration(const struct protocol_definition pd);
 void torx_fn_read(const int n);
 void torx_fn_write(const int n);
 void torx_fn_unlock(const int n);

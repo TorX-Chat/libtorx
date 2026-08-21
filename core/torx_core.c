@@ -78,7 +78,7 @@ TODO FIXME XXX Notes:
 */
 
 /* Globally defined variables follow */ // XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
-const uint16_t torx_library_version[4] = { 2 , 1 , 46 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
+const uint16_t torx_library_version[4] = { 2 , 1 , 47 , 0 }; // https://semver.org [0]++ breaks protocol, [1]++ breaks databases, [2]++ breaks api, [3]++ breaks nothing. SEMANTIC VERSIONING.
 // XXX NOTE: UI versioning should mirror the first 3 and then go wild on the last. XXX BE SURE TO UPDATE CMakeLists.txt VERSION XXX
 
 /* Configurable Options */ // Note: Some don't need rwlock because they are modified only once at startup
@@ -331,44 +331,44 @@ int protocol_lookup(const uint16_t protocol)
 	return -1; // protocol not found. be sure to catch this.
 }
 
-int protocol_registration(const uint16_t protocol,const char *name,const char *description,const uint8_t null_terminate,const uint8_t date,const uint8_t sign,const uint8_t logged,const uint8_t notifiable,const uint8_t file_checksum,const uint8_t file_offer,const uint8_t exclusive_type,const uint8_t utf8,const uint8_t socket_swappable,const uint8_t stream)
+int protocol_registration(const struct protocol_definition pd)
 { // Register a custom protocol // TODO probbaly passing a struct + protocol is more rational than this massive amount of args
-	if(protocol_lookup(protocol) != -1)
+	if(protocol_lookup(pd.protocol) != -1)
 	{ // TODO more sanity checks
-		error_printf(0,"Protocol already exists or sanity check failed. Cannot register: %u %u %s",logged,stream,name);
+		error_printf(0,"Protocol already exists or sanity check failed. Cannot register: %u %u %s",pd.logged,pd.stream,pd.name);
 		return -1; // invalid args or protocol exists already
 	}
 	uint8_t group_pm = 0;
 	uint8_t group_msg = 0;
 	uint8_t group_mechanics = 0;
-	if(exclusive_type == ENUM_EXCLUSIVE_GROUP_PM)
+	if(pd.exclusive_type == ENUM_EXCLUSIVE_GROUP_PM)
 		group_pm = 1;
-	else if(exclusive_type == ENUM_EXCLUSIVE_GROUP_MSG)
+	else if(pd.exclusive_type == ENUM_EXCLUSIVE_GROUP_MSG)
 		group_msg = 1;
-	else if(exclusive_type == ENUM_EXCLUSIVE_GROUP_MECHANICS)
+	else if(pd.exclusive_type == ENUM_EXCLUSIVE_GROUP_MECHANICS)
 		group_mechanics = 1;
 	pthread_rwlock_wrlock(&mutex_protocols); // 🟥
 	for(int p_iter = 0; p_iter < PROTOCOL_LIST_SIZE; p_iter++)
 		if(protocols[p_iter].protocol == 0)
 		{ // set stuff in an unused p_iter
-			protocols[p_iter].protocol = protocol;
-			if(name)
-				snprintf(protocols[p_iter].name,sizeof(protocols[p_iter].name),"%s",name);
-			if(description)
-				snprintf(protocols[p_iter].description,sizeof(protocols[p_iter].description),"%s",description);
-			protocols[p_iter].null_terminated_len = null_terminate;
-			protocols[p_iter].date_len = date ? 2*sizeof(uint32_t) : 0;
-			protocols[p_iter].signature_len = sign ? crypto_sign_BYTES : 0;
-			protocols[p_iter].logged = logged;
-			protocols[p_iter].notifiable = notifiable;
-			protocols[p_iter].file_checksum = file_checksum;
+			protocols[p_iter].protocol = pd.protocol;
+			if(pd.name)
+				snprintf(protocols[p_iter].name,sizeof(protocols[p_iter].name),"%s",pd.name);
+			if(pd.description)
+				snprintf(protocols[p_iter].description,sizeof(protocols[p_iter].description),"%s",pd.description);
+			protocols[p_iter].null_terminated_len = pd.null_terminate;
+			protocols[p_iter].date_len = pd.date ? 2*sizeof(uint32_t) : 0;
+			protocols[p_iter].signature_len = pd.sign ? crypto_sign_BYTES : 0;
+			protocols[p_iter].logged = pd.logged;
+			protocols[p_iter].notifiable = pd.notifiable;
+			protocols[p_iter].file_checksum = pd.file_checksum;
 			protocols[p_iter].group_pm = group_pm;
 			protocols[p_iter].group_msg = group_msg;
-			protocols[p_iter].file_offer = file_offer;
+			protocols[p_iter].file_offer = pd.file_offer;
 			protocols[p_iter].group_mechanics = group_mechanics;
-			protocols[p_iter].utf8 = utf8;
-			protocols[p_iter].socket_swappable = socket_swappable;
-			protocols[p_iter].stream = stream;
+			protocols[p_iter].utf8 = pd.utf8;
+			protocols[p_iter].socket_swappable = pd.socket_swappable;
+			protocols[p_iter].stream = pd.stream;
 			pthread_rwlock_unlock(&mutex_protocols); // 🟩
 			return p_iter;
 		}
@@ -4320,52 +4320,52 @@ void initial(void)
 
 	// protocol, name, description,	null_terminated_len, date_len, signature_len, logged, notifiable, file_checksum, file_offer, exclusive_type, utf8, socket_swappable, stream XXX NOTE: cannot depreciate group mechanics, as stream is not suitable (stream deletes upon fail)
 	#ifndef NO_FILE_TRANSFER
-	file_piece_p_iter = protocol_registration(ENUM_PROTOCOL_FILE_PIECE,"File Piece","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP,"File Offer Group","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,"File Offer Group Date Signed","",0,1,1,1,1,1,1,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PARTIAL,"File Offer Partial","",0,0,0,0,0,1,1,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_FILE_INFO_REQUEST,"File Info Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,"File Partial Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,ENUM_STREAM_NON_DISCARDABLE);
+	file_piece_p_iter = protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_PIECE,.name="File Piece",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=0,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_OFFER_GROUP,.name="File Offer Group",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=1,.file_offer=1,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_OFFER_GROUP_DATE_SIGNED,.name="File Offer Group Date Signed",.description="",.null_terminate=0,.date=1,.sign=1,.logged=1,.notifiable=1,.file_checksum=1,.file_offer=1,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_OFFER_PARTIAL,.name="File Offer Partial",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=1,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_INFO_REQUEST,.name="File Info Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_PARTIAL_REQUEST,.name="File Partial Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_PNG TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
 	// TODO ENUM_PROTOCOL_FILE_PREVIEW_GIF TODO
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER,"File Offer","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_NONE,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_OFFER_PRIVATE,"File Offer Private","",0,0,0,1,1,1,1,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_REQUEST,"File Request","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_FILE_PAUSE,"File Pause","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_FILE_CANCEL,"File Cancel","",0,0,0,0,0,1,0,ENUM_EXCLUSIVE_NONE,0,1,0);
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_OFFER,.name="File Offer",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=1,.file_offer=1,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_OFFER_PRIVATE,.name="File Offer Private",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=1,.file_offer=1,.exclusive_type=ENUM_EXCLUSIVE_GROUP_PM,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_REQUEST,.name="File Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=0,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_PAUSE,.name="File Pause",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_FILE_CANCEL,.name="File Cancel",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=1,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0});
 	#endif // NO_FILE_TRANSFER
-	protocol_registration(ENUM_PROTOCOL_PROPOSE_UPGRADE,"Propose Upgrade","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_KILL_CODE,"Kill Code","",1,1,1,1,0,0,0,ENUM_EXCLUSIVE_NONE,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT,"UTF8 Text","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-//	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_SIGNED,"UTF8 Text Signed","",1,0,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0); // not in use
-	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,"UTF8 Text Date Signed","",1,1,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,"UTF8 Text Private","",1,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,1,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_BROADCAST,"Group Broadcast","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_FIRST,"Group Offer First","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after acceptance in invitee_remove
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER,"Group Offer","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after acceptance in invitee_remove
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST,"Group Offer Accept First","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT,"Group Offer Accept","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
-	protocol_registration(ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,"Group Offer Accept Reply","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0); // XXX deleted after sent in packet_removal, inbound FORCE UNLOGGED in log_check
-	protocol_registration(ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,"Group Public Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
-	protocol_registration(ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,"Group Private Entry Request","",0,0,0,1,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,0,0); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
-	protocol_registration(ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,"Group Request Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
-	protocol_registration(ENUM_PROTOCOL_GROUP_PEERLIST,"Group Peerlist","",0,1,1,0,0,0,0,ENUM_EXCLUSIVE_GROUP_MECHANICS,0,1,0); // group_mechanics
-	protocol_registration(ENUM_PROTOCOL_PIPE_AUTH,"Pipe Authentication","",0,0,1,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,0,ENUM_STREAM_DISCARDABLE);
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_PROPOSE_UPGRADE,.name="Propose Upgrade",.description="",.null_terminate=0,.date=0,.sign=1,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_KILL_CODE,.name="Kill Code",.description="",.null_terminate=1,.date=1,.sign=1,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_UTF8_TEXT,.name="UTF8 Text",.description="",.null_terminate=1,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=1,.socket_swappable=1,.stream=0});
+//	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_UTF8_TEXT_SIGNED,.name="UTF8 Text Signed",.description="",.null_terminate=1,.date=0,.sign=1,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=1,.socket_swappable=1,.stream=0}); // not in use
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_UTF8_TEXT_DATE_SIGNED,.name="UTF8 Text Date Signed",.description="",.null_terminate=1,.date=1,.sign=1,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_UTF8_TEXT_PRIVATE,.name="UTF8 Text Private",.description="",.null_terminate=1,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_PM,.utf8=1,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_BROADCAST,.name="Group Broadcast",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_OFFER_FIRST,.name="Group Offer First",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0}); // XXX deleted after acceptance in invitee_remove
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_OFFER,.name="Group Offer",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0}); // XXX deleted after acceptance in invitee_remove
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST,.name="Group Offer Accept First",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0}); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_OFFER_ACCEPT,.name="Group Offer Accept",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0}); // XXX deleted after send in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY,.name="Group Offer Accept Reply",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0}); // XXX deleted after sent in packet_removal, inbound FORCE UNLOGGED in log_check
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST,.name="Group Public Entry Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MECHANICS,.utf8=0,.socket_swappable=0,.stream=0}); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST,.name="Group Private Entry Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MECHANICS,.utf8=0,.socket_swappable=0,.stream=0}); // XXX deleted after sent in packet_removal XXX Outbound FORCE LOGGED, inbound FORCE UNLOGGED in log_check
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_REQUEST_PEERLIST,.name="Group Request Peerlist",.description="",.null_terminate=0,.date=1,.sign=1,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MECHANICS,.utf8=0,.socket_swappable=1,.stream=0}); // group_mechanics // XXX 2024/06/20 making this swappable reveals a bad race condition caused by multiple cascades, which can only be fixed by having a 4th "_QUEUED" stat that is the equivalent of _FAIL that has been send_prep'd into the packet struct
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_GROUP_PEERLIST,.name="Group Peerlist",.description="",.null_terminate=0,.date=1,.sign=1,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MECHANICS,.utf8=0,.socket_swappable=1,.stream=0}); // group_mechanics
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_PIPE_AUTH,.name="Pipe Authentication",.description="",.null_terminate=0,.date=0,.sign=1,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=0,.stream=ENUM_STREAM_DISCARDABLE});
 	#ifndef NO_AUDIO_CALL
-	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_JOIN, "Audio Stream Join", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_MSG, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE, "Audio Stream Join Private", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_GROUP_PM, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_PEERS, "Audio Stream Peers", "", 0, 0, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_LEAVE, "Audio Stream Leave", "", 0, 0, 0, 0, 1, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_NON_DISCARDABLE);
-	protocol_registration(ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC, "Audio Data Date AAC", "", 0, 1, 0, 0, 0, 0, 0, ENUM_EXCLUSIVE_NONE, 0, 1, ENUM_STREAM_DISCARDABLE);
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_AUDIO_STREAM_JOIN,.name="Audio Stream Join",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_AUDIO_STREAM_JOIN_PRIVATE,.name="Audio Stream Join Private",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_PM,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_AUDIO_STREAM_PEERS,.name="Audio Stream Peers",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_AUDIO_STREAM_LEAVE,.name="Audio Stream Leave",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_AUDIO_STREAM_DATA_DATE_AAC,.name="Audio Data Date AAC",.description="",.null_terminate=0,.date=1,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_DISCARDABLE});
 	#endif // NO_AUDIO_CALL
 	#ifndef NO_STICKERS
-	protocol_registration(ENUM_PROTOCOL_STICKER_HASH,"Sticker","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED,"Sticker Date Signed","",0,1,1,1,1,0,0,ENUM_EXCLUSIVE_GROUP_MSG,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_STICKER_HASH_PRIVATE,"Sticker Private","",0,0,0,1,1,0,0,ENUM_EXCLUSIVE_GROUP_PM,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_STICKER_REQUEST,"Sticker Request","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,0);
-	protocol_registration(ENUM_PROTOCOL_STICKER_DATA_GIF,"Sticker data","",0,0,0,0,0,0,0,ENUM_EXCLUSIVE_NONE,0,1,ENUM_STREAM_NON_DISCARDABLE); // NOTE: if making !stream, need to move related handler
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_STICKER_HASH,.name="Sticker",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_STICKER_HASH_DATE_SIGNED,.name="Sticker Date Signed",.description="",.null_terminate=0,.date=1,.sign=1,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_MSG,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_STICKER_HASH_PRIVATE,.name="Sticker Private",.description="",.null_terminate=0,.date=0,.sign=0,.logged=1,.notifiable=1,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_GROUP_PM,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_STICKER_REQUEST,.name="Sticker Request",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=0});
+	protocol_registration((struct protocol_definition){.protocol=ENUM_PROTOCOL_STICKER_DATA_GIF,.name="Sticker data",.description="",.null_terminate=0,.date=0,.sign=0,.logged=0,.notifiable=0,.file_checksum=0,.file_offer=0,.exclusive_type=ENUM_EXCLUSIVE_NONE,.utf8=0,.socket_swappable=1,.stream=ENUM_STREAM_NON_DISCARDABLE}); // NOTE: if making !stream, need to move related handler
 	#endif // NO_STICKERS
 	size_t len;
 	if(file_db_plaintext == NULL)
