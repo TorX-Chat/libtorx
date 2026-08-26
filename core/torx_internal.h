@@ -82,14 +82,202 @@ severable if found in contradiction with the License or applicable law.
 
 #include <torx.h>
 
-#define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
-#define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common
+#define RED		"\x1b[31m" // printf( RED "Hello\n" RESET );
+#define GREEN		"\x1b[32m"
+#define YELLOW		"\x1b[33m"
+#define BLUE		"\x1b[34m"
+#define MAGENTA		"\x1b[35m"
+#define CYAN		"\x1b[36m"
+#define WHITE		"\x1b[97m"
+#define PINK		"\x1b[38;5;201m" // replace : with ; https://devmemo.io/cheatsheets/terminal_escape_code/
+#define BRIGHT_RED	"\x1b[91m"
+#define BRIGHT_GREEN	"\x1b[92m"
+#define BRIGHT_YELLOW	"\x1b[93m"
+#define BRIGHT_TEAL	"\x1b[96m"
+#define BOLD		"\x1b[1m" // Usage: printf( BOLD BRIGHT_RED BLINKING "hey\n" RESET );
+#define ITALICS		"\x1b[3m"
+#define BLINKING	"\x1b[5m"
+#define UNDERLINE	"\x1b[4m"
+#define HIGHLIGHT	"\x1b[7m"
+#define STRIKETHROUGH	"\x1b[9m"
+#define RESET		"\x1b[0m"
+
+#define MAX_STREAMS_GROUP 500 // Should not need to be >1 except for group chats. If it is too low, it used to break when too many messages come at once.
+#define MAX_STREAMS_PEER 10
+#define SIZE_PACKET_STRC 1024 // Seems to not limit the size of individual outbound messages. One for every packet in outbound buffer. So far single-file outbound transfers show this never gets above 1-2. The space it takes at 10,000 is only ~2mb
+#define BROADCAST_QUEUE_SIZE 4096
+#define BROADCAST_HISTORY_SIZE (BROADCAST_QUEUE_SIZE*2) // should be equal to or larger than queue size
+#define BROADCAST_MAX_PEERS 2048 // this can be set to anything. Should be reasonably high because it will be made up of the first loaded N, and they could be old / inactive peers, if you have hundreds or thousands of dead peers.
+#ifndef NO_FILE_TRANSFER
+#define FILE_OFFER_LEN			(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
+#define FILE_REQUEST_LEN		(CHECKSUM_BIN_LEN+sizeof(uint64_t)*2)
+#define FILE_OFFER_GROUP_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + (uint32_t)CHECKSUM_BIN_LEN *(splits + 1) + sizeof(uint64_t) + sizeof(uint32_t) + filename_len)
+#define FILE_OFFER_PARTIAL_LEN		(uint32_t)(CHECKSUM_BIN_LEN + sizeof(uint8_t) + sizeof(uint64_t) *(splits + 1))
+#endif // NO_FILE_TRANSFER
+#define GROUP_OFFER_ACCEPT_LEN		(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES)
+#define GROUP_OFFER_ACCEPT_REPLY_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES*2)
+#define GROUP_OFFER_ACCEPT_FIRST_LEN	(GROUP_ID_SIZE+56+crypto_sign_PUBLICKEYBYTES+crypto_sign_BYTES)
+#define GROUP_PEERLIST_PUBLIC_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES))
+#define GROUP_PEERLIST_PRIVATE_LEN	(sizeof(int32_t) + (size_t)g_peercount *(size_t)(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES))
+#define GROUP_PRIVATE_ENTRY_REQUEST_LEN	(56 + crypto_sign_PUBLICKEYBYTES + crypto_sign_BYTES)
+#define GROUP_BROADCAST_DECRYPTED_LEN	(crypto_pwhash_SALTBYTES+56+crypto_sign_PUBLICKEYBYTES)
+#define GROUP_BROADCAST_LEN		(crypto_box_SEALBYTES+GROUP_BROADCAST_DECRYPTED_LEN)
+#define PIPE_AUTH_LEN			56
+#define DATE_SIGN_LEN			(sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES) // time + nstime + sig
+/* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. XXX Note: Necessary to NOT wrap _mutex_lock in a torx_read because it WILL result in lock-order-inversion */
+#ifndef NO_FILE_TRANSFER
+#define torx_fd_lock(n,f) \
+do { \
+	torx_read(n) \
+	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
+	torx_unlock(n) \
+	pthread_mutex_lock(mutex); \
+} while(0);
+
+#define torx_fd_unlock(n,f) \
+do { \
+	torx_read(n) \
+	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
+	torx_unlock(n) \
+	pthread_mutex_unlock(mutex); \
+} while(0);
+#endif // NO_FILE_TRANSFER
+
+/* Close sockets */
+#define close_sockets_nolock(fd) \
+do { \
+	if(fd) { fclose(fd); fd = NULL; } \
+} while(0);
+/* XXX This is the CORRECT order, do not modify. torx_fd_lock, THEN torx_read, localize, close, torx_write, globalize, torx_fd_unlock, otherwise races could occur. XXX */
+#ifndef NO_FILE_TRANSFER
+#define close_sockets(n,f) \
+do { \
+	torx_fd_lock(n,f) \
+	torx_read(n) \
+	FILE *fd_active_tmp = peer[n].file[f].fd; \
+	torx_unlock(n) \
+	close_sockets_nolock(fd_active_tmp) \
+	torx_write(n) \
+	peer[n].file[f].fd = fd_active_tmp; \
+	torx_unlock(n) \
+	torx_fd_unlock(n,f) \
+} while(0); // TODO 2025/01/18 There is a possibility that there is a potential for mutex lockup in this function at the torx_write, which can lock up with the torx_read in torx_fd_lock
+#endif // NO_FILE_TRANSFER
+struct offer_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .offer is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
+	int offerer_n; // Do not reset to -1
+	uint64_t *offer_progress; // == their split_progress. Contains section info that the peer says they have. XXX ALWAYS DO NULL CHECK
+};
+struct request_list { // XXX DO NOT ACCESS USING SETTER/GETTER FUNCTIONS and ALWAYS verify that .request is not NULL *WITHIN THE SAME MUTEX* or SEGFAULTS WILL OCCUR XXX
+	int requester_n; // Do not reset to -1
+	uint64_t start[2];
+	uint64_t end[2];
+	uint64_t transferred[2];
+	uint64_t previously_sent; // Do not reset to 0. From exhausted requests. This ONLY updated when a request's transferred is reset to 0 (such as when a new request overtakes it on the same socket)
+};
+struct invitee_list {
+	int n; // CTRL peer the offer/accept was sent to. -1 once consumed
+	time_t time; // Message key of the offer, for sql_delete_message. Zero means there is no row to delete
+	time_t nstime; // Message key of the offer, for sql_delete_message. Zero means there is no row to delete
+};
+/* Struct Models */
+union types {
+	uint64_t uint64;
+	uint32_t uint32;
+	uint16_t uint16;
+	uint8_t uint8;
+	size_t size;
+	time_t time;
+	int integer;
+	int64_t int64;
+	int32_t int32;
+	int16_t int16;
+	int8_t int8;
+};
+/* Callback dispatch. The UI registers via the public *_setter(); these are the library-side pointers and dispatchers. */
+extern void (*initialize_n_registered)(const int n);
+extern void (*initialize_i_registered)(const int n,const int i);
+extern void (*initialize_g_registered)(const int g);
+extern void (*shrinkage_registered)(const int n,const int shrinkage);
+extern void (*expand_message_struc_registered)(const int n,const int i);
+extern void (*expand_peer_struc_registered)(const int n);
+extern void (*expand_group_struc_registered)(const int g);
+extern void (*change_password_registered)(const int value);
+extern void (*incoming_friend_request_registered)(const int n);
+extern void (*onion_deleted_registered)(const uint8_t owner,const int n);
+extern void (*peer_online_registered)(const int n);
+extern void (*peer_offline_registered)(const int n);
+extern void (*peer_new_registered)(const int n);
+extern void (*onion_ready_registered)(const int n);
+extern void (*tor_log_registered)(char *message);
+extern void (*error_registered)(char *error_message);
+extern void (*fatal_registered)(char *error_message);
+extern void (*custom_setting_registered)(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
+extern void (*message_new_registered)(const int n,const int i);
+extern void (*message_modified_registered)(const int n,const int i);
+extern void (*message_deleted_registered)(const int n,const int i);
+extern void (*message_extra_registered)(const int n,const int i,unsigned char *data,const uint32_t data_len);
+extern void (*message_more_registered)(const int loaded,int *loaded_array_n,int *loaded_array_i);
+extern void (*login_registered)(const int value);
+extern void (*peer_loaded_registered)(const int n);
+extern void (*cleanup_registered)(const int sig_num); // callback to UI to inform it that we are closing and it should save settings
+extern void (*stream_registered)(const int n,const int p_iter,char *data,const uint32_t len);
+extern void (*unknown_registered)(const int n,const uint16_t protocol,char *data,const uint32_t len);
+/* WARNING: All callbacks *must* allocate data for pointers and rely on the receiver to free because the callback may not be triggered syncronously (ex: Flutter) */
+void initialize_n_cb(const int n);
+void initialize_i_cb(const int n,const int i);
+void initialize_g_cb(const int g);
+void shrinkage_cb(const int n,const int shrinkage);
+void expand_message_struc_cb(const int n,const int i);
+void expand_peer_struc_cb(const int n);
+void expand_group_struc_cb(const int g);
+void change_password_cb(const int value);
+void incoming_friend_request_cb(const int n);
+void onion_deleted_cb(const uint8_t owner,const int n);
+void peer_online_cb(const int n);
+void peer_offline_cb(const int n);
+void peer_new_cb(const int n);
+void onion_ready_cb(const int n);
+void tor_log_cb(char *message);
+void error_cb(char *error_message);
+void fatal_cb(char *error_message);
+void custom_setting_cb(const int n,char *setting_name,char *setting_value,const size_t setting_value_len,const int plaintext);
+void message_new_cb(const int n,const int i);
+void message_modified_cb(const int n,const int i);
+void message_deleted_cb(const int n,const int i);
+void message_extra_cb(const int n,const int i,unsigned char *data,const uint32_t data_len);
+void message_more_cb(const int loaded,int *loaded_array_n,int *loaded_array_i);
+void login_cb(const int value);
+void peer_loaded_cb(const int n);
+void stream_cb(const int n,const int p_iter,char *data,const uint32_t len);
+void unknown_cb(const int n,const uint16_t protocol,char *data,const uint32_t len);
+#ifdef SECURE_MALLOC	// TODO implement this conditional in library and CMakeLists.txt // https://imtech.imt.fr/en/2019/01/22/stack-canaries-software-protection/
+	#define ENABLE_SECURE_MALLOC 1
+#else
+	#define ENABLE_SECURE_MALLOC 0
+#endif
+extern void (*initialize_f_registered)(const int n,const int f);
+extern void (*expand_file_struc_registered)(const int n,const int f);
+extern void (*transfer_progress_registered)(const int n,const int f,const uint64_t transferred);
+void initialize_f_cb(const int n,const int f);
+void expand_file_struc_cb(const int n,const int f);
+void transfer_progress_cb(const int n,const int f,const uint64_t transferred);
+extern void (*initialize_peer_call_registered)(const int call_n,const int call_c);
+extern void (*expand_call_struc_registered)(const int call_n,const int call_c);
+extern void (*call_update_registered)(const int call_n,const int call_c);
+extern void (*audio_cache_add_registered)(const int participant_n);
+void initialize_peer_call_cb(const int call_n,const int call_c);
+void expand_call_struc_cb(const int call_n,const int call_c);
+void call_update_cb(const int call_n,const int call_c);
+void audio_cache_add_cb(const int participant_n);
+
 // TODO 2024/03/12 SOCKET_SO_SNDBUF perhaps we make 2048 for libevent's/our library, and 40960 for Tor because its slow?
 #define SOCKET_SO_SNDBUF 2048 // By default, use 2048 because 2028*2==4096, which matches libevent's buffer size ; Higher == More speed, Lower == Less delays.
 #define SOCKET_SO_RCVBUF 0 // if 0, default: cat /proc/sys/net/core/wmem_default
 #define ConstrainedSockSize 0 // not sure if defaulting to system defaults TODO constrain if there are issues with file transfers appearing to send immediately
 #define INIT_VPORT 60591 // Tribute to Phil Zimmerman, June 5th 1991, creator of PGP and contributor to ZRTP. https://philzimmermann.com/EN/background/index.html
 #define CTRL_VPORT 61912 // Tribute to Julian Assange, June 19th 2012. NOTE: Ports should be listed in LongLivedPorts in torrc.
+#define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common
+#define ENUM_MALLOC_TYPE_SECURE CTRL_VPORT // number is arbitrary, just don't make it 0/1 as too common
 #define PORT_DEFAULT_SOCKS 9050
 #define PORT_DEFAULT_CONTROL 9051
 #define PACKET_SIZE_MAX 498 // (CELL_PAYLOAD_SIZE-RELAY_HEADER_SIZE) = 498 https://github.com/torproject/tor/blob/main/src/core/or/or.h#L489 Appears to be 498 sometimes, 506 other times, but should verify via https://github.com/spring-epfl/tor-cell-dissector
