@@ -136,6 +136,10 @@ severable if found in contradiction with the License or applicable law.
 extern "C" {
 #endif
 
+#if defined(__GNUC__) && !defined(_WIN32) // XXX Everything declared below is exported; anything not declared here is hidden when CMakeLists.txt sets -fvisibility=hidden. Do not add declarations outside this region that a UI is expected to link against.
+#pragma GCC visibility push(default)
+#endif
+
 #define CHECKSUM_BIN_LEN 32
 #define GROUP_ID_SIZE crypto_box_SECRETKEYBYTES // 32 
 #define SHIFT 10 // this is for vptoi/itovp. it must be greater than any negative value that we might pass to the functions.
@@ -870,6 +874,10 @@ extern pthread_rwlock_t mutex_expand;
 extern pthread_rwlock_t mutex_expand_group;
 extern uint8_t censored_region;
 extern uint32_t sqlcipher_library_version[3];
+
+#if defined(__GNUC__) && !defined(_WIN32)
+#pragma GCC visibility pop
+#endif
 
 #ifdef __cplusplus
 }
