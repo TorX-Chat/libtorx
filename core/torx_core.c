@@ -401,17 +401,19 @@ static inline int torx_close_socket(pthread_rwlock_t *mutex,evutil_socket_t *soc
 { // Only useful for global variables. NOTE: For file descriptors, use close_sockets_nolock and close_sockets macros.
 	if(!socket)
 		return -1; // Sanity check
+	int ret = 0;
 	if(mutex)
 		pthread_rwlock_wrlock(mutex); // 🟥
-	int ret = 0;
-	if(*socket > 0 && (ret = evutil_closesocket(*socket)) < 0)
-	{
-		error_simple(0,"Failed to close socket.");
-		breakpoint();
-	}
+	if(*socket > 0) // not else if
+		ret = evutil_closesocket(*socket);
 	*socket = 0;
 	if(mutex)
 		pthread_rwlock_unlock(mutex); // 🟩
+	if(ret < 0) // not else if
+	{ // Must stay after the unlock: callers pass mutex_global_variable, and a UI error callback that reads a global would deadlock against a write lock this thread still held.
+		error_simple(0,"Failed to close socket.");
+		breakpoint();
+	}
 	return ret; // 0 on success or non-op
 }
 
@@ -3097,11 +3099,12 @@ static inline void *start_tor_threaded(void *arg)
 		if(pthread_create(&thrd_tor_log_reader,&ATTR_DETACHED,&tor_log_reader,itovp(fd_stdout)))
 			error_simple(-1,"Failed to create thread");
 		#endif
-		pthread_rwlock_rdlock(&mutex_global_variable); // 🟧
-		error_printf(1,"Tor PID: %d",tor_pid);
-		error_printf(1,"Tor SOCKS Port: %u",tor_socks_port_local);
-		error_printf(3,"Tor Control Port: %u",tor_ctrl_port_local);
-		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
+		if(torx_debug_level(-1) > 0)
+		{
+			error_printf(1,"Tor PID: %d",threadsafe_read_int(&mutex_global_variable,&tor_pid));
+			error_printf(1,"Tor SOCKS Port: %u",tor_socks_port_local);
+			error_printf(1,"Tor Control Port: %u",tor_ctrl_port_local);
+		}
 		sql_populate_peer();
 	} // not else if
 	if(threadsafe_read_uint8(&mutex_global_variable,&lockout))
