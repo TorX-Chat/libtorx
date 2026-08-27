@@ -480,4 +480,8 @@ target_link_libraries(
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER ${CMAKE_CURRENT_SOURCE_DIR}/include/torx.h)
-install(TARGETS ${PROJECT_NAME} COMPONENT RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}) # COMPONENT RUNTIME installs both the PUBLIC_HEADER and RUNTIME appropriately.
+
+## XXX Install ONLY when built standalone. As a subproject, planting libtorx.a + torx.h in the prefix poisons the NEXT configure of the client, which finds the stale header instead of the pinned TORX_TAG it asked for.
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR OR PROJECT_IS_TOP_LEVEL OR TORX_INSTALL)
+	install(TARGETS ${PROJECT_NAME} COMPONENT RUNTIME DESTINATION ${CMAKE_INSTALL_LIBDIR}) # COMPONENT RUNTIME installs both the PUBLIC_HEADER and RUNTIME appropriately.
+endif()
