@@ -625,7 +625,7 @@ void audio_cache_add(const int participant_n,const time_t time,const time_t nsti
 	if(time < peer[participant_n].audio_last_retrieved_time || (time == peer[participant_n].audio_last_retrieved_time && nstime < peer[participant_n].audio_last_retrieved_nstime))
 	{
 		torx_unlock(participant_n) // 🟩🟩🟩
-		error_simple(0,"Received audio older than last played, or otherwise failed sanity check. Disgarding it. Carry on.");
+		error_simple(0,"Received audio older than last played, or otherwise failed sanity check. Discarding it. Carry on.");
 		return;
 	}
 	const uint32_t current_allocation_size = torx_allocation_len(peer[participant_n].audio_cache);

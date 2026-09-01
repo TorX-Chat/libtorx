@@ -369,8 +369,8 @@ enum exclusive_types {
 
 enum stream_types { // Stream > 0 is not stored in struct longer than necessary. Handed off to UI after sent/recieved and removed from message struct.
 	ENUM_NON_STREAM = 0,
-	ENUM_STREAM_DISCARDABLE = 1, // Disgard if cannot be sent immediately. Message_send returns -1 if failed to send.
-	ENUM_STREAM_NON_DISCARDABLE = 2 // Do not disgard if cannot be sent immediately. No way to check if it ever sent because it is deleted from struct after send.
+	ENUM_STREAM_DISCARDABLE = 1, // Discard if cannot be sent immediately. Message_send returns -1 if failed to send.
+	ENUM_STREAM_NON_DISCARDABLE = 2 // Do not discard if cannot be sent immediately. No way to check if it ever sent because it is deleted from struct after send.
 };
 
 enum protocols { /* TorX Officially Recognized Protocol Identifiers (prefixed upon each message):

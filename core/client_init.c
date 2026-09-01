@@ -488,7 +488,7 @@ static inline int message_distribute(const uint8_t skip_prep,const size_t target
 		}
 		if(send_prep(target_list[cycle],-1,iiii,p_iter,fd_type) == -1 && stream == ENUM_STREAM_DISCARDABLE) // NOT else if
 		{ // delete unsuccessful discardable stream message
-			error_printf(4,"Disgarding stream n=%d i=%d fd_type=%d protocol=%u",target_list[cycle],iiii,fd_type,protocol);
+			error_printf(4,"Discarding stream n=%d i=%d fd_type=%d protocol=%u",target_list[cycle],iiii,fd_type,protocol);
 			torx_write(target_list[cycle]) // 🟥🟥🟥
 			const int shrinkage = zero_i(target_list[cycle],iiii);
 			torx_unlock(target_list[cycle]) // 🟩🟩🟩

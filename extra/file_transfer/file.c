@@ -1258,7 +1258,7 @@ int initialize_split_info(const int n,const int f,const uint8_t splits_hint)
 }
 
 int16_t section_determination(const uint64_t size,const uint8_t splits,const uint64_t packet_start)
-{ // WARNING: Must handle -1 return by disgarding packet. Note: packet_start is 0 offset byte number.
+{ // WARNING: Must handle -1 return by discarding packet. Note: packet_start is 0 offset byte number.
 	if(packet_start >= size)
 		return -1;
 	int16_t section = splits+1;

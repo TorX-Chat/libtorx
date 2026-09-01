@@ -481,7 +481,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						}
 					}
 					else if(protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT || protocol == ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY)
-					{ // We don't need these messages anymore. They only need to be logged until sent. TODO One day we can perhaps make them stream non-disgardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
+					{ // We don't need these messages anymore. They only need to be logged until sent. TODO One day we can perhaps make them stream non-discardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
 						if(logged) // yes, it is
 						{
 							const int peer_index = getter_int(event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
@@ -911,9 +911,9 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					complete = 1;
 				else if(buffer_len && buffer_len + (packet_len - cur) > event_strc->untrusted_message_len) // Note: buffer_len is required because otherwise this is perhaps 2+ packets.
 				{ // XXX Experiemntal XXX 2023/10/24 should disable this, since it generally can't trigger if we have >= above // 2024/06/20 this triggered with all bad info when we were debugging a race condition elsewhere
-					error_printf(0,"Disgarding a oversized message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,buffer_len,packet_len,cur,event_strc->untrusted_message_len);
+					error_printf(0,"Discarding a oversized message of protocol: %u, buffer_len: %u, packet_len: %u, cur: %u, untrusted_message_len: %u. Report this for science.",protocol,buffer_len,packet_len,cur,event_strc->untrusted_message_len);
 					break;
-				} // XXX 2024/12/25 Disgarding a oversized message of protocol: 56237, buffer_len: 490, packet_len: 409, cur: 4, untrusted_message_len: 0. Report this for science.
+				} // XXX 2024/12/25 Discarding a oversized message of protocol: 56237, buffer_len: 490, packet_len: 409, cur: 4, untrusted_message_len: 0. Report this for science.
 				// Allocating only enough space for current packet, not enough for .untrusted_message_len , This is slow but safe... could allocate larger blocks though
 				if(event_strc->buffer)
 					event_strc->buffer = torx_realloc(event_strc->buffer,buffer_len + (packet_len - cur));
@@ -963,7 +963,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						{ // Check signatures of group messages (unknown sender), then handle any actions that should be taken for specific message types
 							group_peer_n = group_check_sig(event_strc->g,event_strc->buffer,buffer_len - signature_len,protocol,(unsigned char *)&event_strc->buffer[buffer_len - crypto_sign_BYTES],NULL);
 							if(group_peer_n < 0)
-							{ // Disgard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
+							{ // Discard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
 								error_simple(0,"Group received an anonymous message. Nothing we can do with it.");
 								error_printf(0,PINK"Checkpoint set_g=%d ?= event_strc->g=%d"RESET,set_g(event_strc->n,NULL),event_strc->g); // TODO if different, the bug is set_g / event_strc->g
 								break; // XXX ERROR that indicates corrupt packet, a packet that will corrupt buffer, or a buggy peer ; Disconnect.
@@ -1462,7 +1462,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						}
 						const int invitor_n = group_check_sig(event_strc->g,event_strc->buffer,56+crypto_sign_PUBLICKEYBYTES,0,(unsigned char *)&event_strc->buffer[56+crypto_sign_PUBLICKEYBYTES],NULL); // 0 is fine for protocol here because protocol is not signed
 						if(invitor_n < 0)// (1) We should verify the signature is from some peer we have
-						{ // Disgard if not signed by someone in group
+						{ // Discard if not signed by someone in group
 							error_simple(0,"Disregarding a GROUP_PRIVATE_ENTRY_REQUEST from someone.");
 							break;
 						}
@@ -1590,7 +1590,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								const time_t nstime = be32toh(align_uint32((void*)&event_strc->buffer[4])); // this is for the CALL, not MESSAGE
 								if(!time && !nstime)
 								{
-									error_simple(0,"Received a AUDIO_STREAM protocol with zero times. Disgarding. Peer is buggy.");
+									error_simple(0,"Received a AUDIO_STREAM protocol with zero times. Discarding. Peer is buggy.");
 									continue;
 								}
 								int call_n = event_strc->n;
@@ -1648,7 +1648,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 											audio_cache_add(event_strc->n,audio_time,audio_nstime,&event_strc->buffer[8],data_len-8);
 										}
 										else
-											error_simple(0,"Checkpoint Disgarding streaming audio because speaker is off");
+											error_simple(5,"Discarding streaming audio because speaker is off");
 									}
 									else if(protocol == ENUM_PROTOCOL_AUDIO_STREAM_LEAVE)
 										call_peer_leaving(call_n, call_c, event_strc->n);
@@ -1671,7 +1671,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								{ // Fresh sticker data. Save it and print it
 									unsigned char checksum[CHECKSUM_BIN_LEN];
 									if(b3sum_bin(checksum,NULL,(unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],0,data_len - CHECKSUM_BIN_LEN) != data_len - CHECKSUM_BIN_LEN || memcmp(checksum,event_strc->buffer,sizeof(checksum)))
-										error_simple(0,"Received bunk sticker data from peer. Checksum failed. Disgarding sticker.");
+										error_simple(0,"Received bunk sticker data from peer. Checksum failed. Discarding sticker.");
 									else
 									{
 										s = sticker_register((unsigned char*)&event_strc->buffer[CHECKSUM_BIN_LEN],data_len - CHECKSUM_BIN_LEN);

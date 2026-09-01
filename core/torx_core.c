@@ -2805,7 +2805,7 @@ static inline void *tor_log_reader(void *arg)
 			else
 			{
 				if(remaining_len) // 2024/12/25 This can occur when restarting Tor
-					error_simple(0,"Disgarding a Tor log message due to failure of utf8_valid check.");
+					error_simple(0,"Discarding a Tor log message due to failure of utf8_valid check.");
 				torx_free((void**)&msg);
 			}
 		}

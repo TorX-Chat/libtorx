@@ -167,7 +167,7 @@ static inline int log_check(const int n,const uint8_t group_pm,const uint16_t pr
 		if(stat == ENUM_MESSAGE_RECV)
 			return 0; // Do not log inbound on these protocols
 		else if(protocol == ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST || protocol == ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST)
-			return 1; // Outbound Entry requests MUST always be logged. It is SAFE for _ENTRY_REQUEST because these are unknown peers we have yet to connect to. TODO One day we can perhaps make them stream non-disgardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
+			return 1; // Outbound Entry requests MUST always be logged. It is SAFE for _ENTRY_REQUEST because these are unknown peers we have yet to connect to. TODO One day we can perhaps make them stream non-discardable + !logged or delete_after_send? Same conditional is in log_check() and packet_removal()
 	//	else // ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_FIRST ENUM_PROTOCOL_GROUP_OFFER_ACCEPT ENUM_PROTOCOL_GROUP_OFFER_ACCEPT_REPLY
 	//		return 1; // XXX DO NOT DELETE: We are currently NOT force logging _ACCEPT / _ACCEPT_FIRST / _ACCEPT_REPLY because these are between two ctrl. We should not override logging settings between known-peers. This decision may change to allow easier joining of groups when accepting an offer from an offline peer while not logging.
 	}
