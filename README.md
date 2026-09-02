@@ -10,10 +10,14 @@ This page is primarily for developers and contributors.
 <br>If you want to try on a LiveCD, <a href="https://get.debian.org/images/weekly-live-builds/amd64/iso-hybrid/">here are some suitable liveCDs</a>
 
 ###### Install build dependencies:
-`sudo apt install git build-essential cmake libsodium-dev libevent-dev libsqlcipher-dev libpng-dev`
+(Ubuntu / Debian / Mobian) `sudo apt install git cmake xxd libsodium-dev libevent-dev libsqlcipher-dev build-essential`
+<br>(Alpine / PostmarketOS) `doas apk add git cmake libsodium-dev libevent-dev sqlcipher-dev build-base`
+<br>(Fedora) `sudo dnf install git cmake xxd libsodium-devel libevent-devel sqlcipher-devel gcc make`
 
 ###### Install runtime dependencies (lyrebird is an optional transport):
-`sudo apt install tor lyrebird`
+(Ubuntu / Debian / Mobian) `sudo apt install tor lyrebird`
+<br>(Alpine / PostmarketOS) `doas apk add tor lyrebird`
+<br>(Fedora) `sudo dnf install tor obfs4`
 
 ###### Clone the repository
 `git clone https://github.com/TorX-Chat/libtorx && cd libtorx`
