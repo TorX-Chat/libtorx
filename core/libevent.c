@@ -861,7 +861,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						error_simple(0,"Incoming file lacks defined path. Coding error. Report this.");
 						continue;
 					}
-					fd_active = fopen(file_path, "a"); // Create file if not existing
+					fd_active = fopen(file_path, "ab"); // Create file if not existing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
@@ -870,7 +870,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 						continue;
 					}
 					close_sockets_nolock(fd_active)
-					fd_active = fopen(file_path, "r+"); // Open file for writing
+					fd_active = fopen(file_path, "r+b"); // Open file for writing
 					if(fd_active == NULL)
 					{ // TODO should probably send ENUM_PROTOCOL_FILE_PAUSE
 						torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩

@@ -835,7 +835,7 @@ unsigned char *read_bytes(const char *path)
 	unsigned char *data = NULL;
 	size_t allocated = 0;
 	FILE *fp;
-	if(path && (fp = fopen(path, "r")))
+	if(path && (fp = fopen(path, "rb")))
 	{
 		fseeko(fp, 0, SEEK_END);
 		const off_t length = ftello(fp);
@@ -5339,7 +5339,7 @@ void destroy_file(const char *file_path)
 		return;
 	}
 	FILE *fp;
-	if((fp = fopen(new_file_path, "r+")) == NULL)
+	if((fp = fopen(new_file_path, "r+b")) == NULL)
 	{
 		error_simple(0,"Error opening file for write in destroy_file");
 		sodium_memzero(new_file_path,sizeof(new_file_path));
@@ -5379,7 +5379,7 @@ char *custom_input_file(const char *hs_ed25519_secret_key_file) // hs_ files hav
 	if(hs_ed25519_secret_key_file == NULL)
 		return NULL;
 	char privkey_decoded[64] = {0};
-	FILE *hs_ed25519_secret_key_file_pointer = fopen(hs_ed25519_secret_key_file,"r");
+	FILE *hs_ed25519_secret_key_file_pointer = fopen(hs_ed25519_secret_key_file,"rb");
 	if(hs_ed25519_secret_key_file_pointer == NULL)
 	{
 		error_simple(0,"Failed to open custom input file.");

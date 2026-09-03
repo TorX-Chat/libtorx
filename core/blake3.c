@@ -66,6 +66,7 @@ severable if found in contradiction with the License or applicable law.
 #define CHUNK_END	(1u << 1)
 #define PARENT		(1u << 2)
 #define ROOT		(1u << 3)
+#define B3SUM_READ_BUF	((size_t)256*1024) // XXX Heap, not stack: b3sum_bin runs on the libevent dispatcher threads, whose default stack is 128kb on musl
 
 static uint32_t iv[] = {
 	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
@@ -330,34 +331,34 @@ uint64_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_pat
 	blake3_init(&ctx);
 	if(file_path)
 	{
-		FILE *fp = fopen(file_path, "r");
+		FILE *fp = fopen(file_path, "rb");
 		if(!fp || fseeko(fp,(off_t)start,SEEK_SET) == -1)
 		{
 			close_sockets_nolock(fp)
 			error_simple(0,"Failed to open file for generating blake checksum.");
 			return 0;
 		}
-		unsigned char buf[4096];
+		unsigned char *buf = torx_secure_malloc(B3SUM_READ_BUF);
 		while(!feof(fp) && (!len || size < len))
 		{
-			size_t to_read = sizeof(buf);
-			if(len && len - size < sizeof(buf))
-				to_read = (size_t)(len - size); // bounded by the sizeof(buf) test above
+			size_t to_read = B3SUM_READ_BUF;
+			if(len && len - size < B3SUM_READ_BUF)
+				to_read = (size_t)(len - size); // bounded by the B3SUM_READ_BUF test above
 			const size_t read = fread(buf, 1, to_read, fp);
 			if(len && read != to_read)
 			{
+				torx_free((void**)&buf);
 				close_sockets_nolock(fp)
 				error_simple(0,"Read less than expected when calculating checksum. Coding or disk error.");
-			//	printf("Checkpoint read: %lu\nCheckpoint to_read: %lu\nCheckpoint size: %lu\n",read,to_read,size);
 				return 0;
 			}
 			blake3_update(&ctx, buf, read);
 			size += read;
 		}
-		sodium_memzero(buf,sizeof(buf));
+		torx_free((void**)&buf);
 		close_sockets_nolock(fp)
 	}
-	else /* if(data) */
+	else // if(data)
 	{
 		blake3_update(&ctx, &data[start], (size_t)len); // in-memory branch; len is bounded by the caller's allocation
 		size = len;

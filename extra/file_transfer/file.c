@@ -832,8 +832,8 @@ static inline void split_update(const int n,const int f,const int16_t section,co
 	if(split_path && section > -1 && splits > 0 && split_progress_exists) // XXX splits > 0 is what prevents creating a .split file for single-section files, which do not utilize one
 	{
 		FILE *fp;
-		if((fp = fopen(split_path,"r+")) == NULL)
-			if((fp=fopen(split_path,"w+")) == NULL)
+		if((fp = fopen(split_path,"r+b")) == NULL)
+			if((fp=fopen(split_path,"w+b")) == NULL)
 			{
 				error_printf(0,"Check permissions. Cannot open split file2: %s",split_path);
 				torx_free((void**)&split_path);
@@ -1154,7 +1154,7 @@ static inline int split_read(const int n,const int f,const uint8_t splits_hint)
 		set_split_path(n,f);
 		split_path = getter_string(n,INT_MIN,f,offsetof(struct file_list,split_path));
 	}
-	FILE *fp = fopen(split_path, "r"); // read file contents, while checking compliance of checksum.
+	FILE *fp = fopen(split_path, "rb"); // read file contents, while checking compliance of checksum.
 	torx_free((void**)&split_path);
 	uint8_t splits = splits_hint;
 	if(fp)
@@ -1240,7 +1240,7 @@ int initialize_split_info(const int n,const int f,const uint8_t splits_hint)
 		if(stat_file && split_path && stat(split_path, &file_stat) && splits > 0) // note: we use stat() for speed because it doesn't need to open the files. If the file isn't readable, it'll error out elsewhere. Do not change.
 		{ // file nor .split exists; write an initialized .split file
 			FILE *fp;
-			if((fp = fopen(split_path,"w+")) == NULL)
+			if((fp = fopen(split_path,"w+b")) == NULL)
 			{ // BAD, permissions issue, cannot create file
 				error_printf(0,"Check permissions. Cannot open split file1: %s",split_path);
 				torx_free((void**)&split_path);

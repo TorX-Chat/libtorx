@@ -225,7 +225,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			if(fd_active == NULL)
 			{
 				char *file_path = getter_string(file_n,INT_MIN,f,offsetof(struct file_list,file_path));
-				if((fd_active = fopen(file_path, "r")) == NULL)
+				if((fd_active = fopen(file_path, "rb")) == NULL)
 				{
 					torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
 					error_printf(0,"Cannot open file path %s for sending. Check permissions.",file_path);
