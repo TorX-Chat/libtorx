@@ -1339,8 +1339,8 @@ void section_update(const int n,const int f,const uint64_t packet_start,const si
 		section_unclaim(n,f,peer_n,fd_type); // must be before file_request_internal
 		if(section_complete && transferred == size)
 		{
-			if(CHECKSUM_ON_COMPLETION && owner != ENUM_OWNER_GROUP_CTRL) // Note: Group file generate section hashes and compare individually. Not necessary to check hash of hashes or size.
-			{ // TODO This blocks, so it should be used for debug purposes only
+			if(torx_debug_level(-1) > 0 && owner != ENUM_OWNER_GROUP_CTRL) // Note: Group file generate section hashes and compare individually. Not necessary to check hash of hashes or size.
+			{ // XXX Blocks for a full re-read of the file, so it is gated behind a raised debug level rather than run for every completed transfer
 				unsigned char checksum_complete[CHECKSUM_BIN_LEN];
 				unsigned char checksum[CHECKSUM_BIN_LEN];
 				getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
@@ -1945,7 +1945,7 @@ static inline void *file_init(void *arg)
 { // Send File Offer
 	struct file_strc *file_strc = (struct file_strc*) arg; // Casting passed struct
 	const int n = file_strc->n;
-	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
+	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // Retained for the per-thread SIGPIPE block. The cancel type is inert here because nothing cancels this thread; see the note in file_send.
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	uint64_t size = 0;
@@ -2002,7 +2002,7 @@ int file_send(const int n,const char *path)
 	const size_t path_len = strlen(path);
 	file_strc->path = torx_secure_malloc(path_len+1);
 	snprintf(file_strc->path,path_len+1,"%s",path);
-	pthread_t thrd_file_init; // TODO 2024/03/25 track this thread somehow and/or put a mutex inside file_init? both are of questionable utility.
+	pthread_t thrd_file_init; // Deliberately untracked. Nothing needs to kill it.
 	if(pthread_create(&thrd_file_init,&ATTR_DETACHED,&file_init,(void*)file_strc))
 		error_simple(-1,"Failed to create thread6");
 	return 0;

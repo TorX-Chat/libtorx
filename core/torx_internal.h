@@ -282,7 +282,6 @@ void audio_cache_add_cb(const int participant_n);
 #define PORT_DEFAULT_SOCKS 9050
 #define PORT_DEFAULT_CONTROL 9051
 #define PACKET_SIZE_MAX 498 // (CELL_PAYLOAD_SIZE-RELAY_HEADER_SIZE) = 498 https://github.com/torproject/tor/blob/main/src/core/or/or.h#L489 Appears to be 498 sometimes, 506 other times, but should verify via https://github.com/spring-epfl/tor-cell-dissector
-#define CHECKSUM_ON_COMPLETION 1 // This blocks, so it should be used for debug purposes only
 #define AUTOMATICALLY_LOAD_CTRL 1 // 1 yes, 0 no. 1 is effectively default for -q mode. This is not a viable solution because adversaries can still monitor your disconnection times. 
 #define TOR_CTRL_IP "127.0.0.1" // Allowing this to be set by UI would be incredibly dangerous because users could set it to remote and expose their keys to unencrypted networks. Note: in *nix, we could use unix sockets.
 #define TOR_SOCKS_IP "127.0.0.1" // See above. If system tor is not using this IP for their socks port, we won't be able to connect because extract_port doesn't account for it.

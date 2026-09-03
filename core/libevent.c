@@ -87,6 +87,9 @@ XXX	To Do		XXX
 
 static void try_connect_cb(evutil_socket_t fd,short event,void *arg);
 static inline void schedule_reconnect(struct event_strc *event_strc);
+#ifndef NO_FILE_TRANSFER
+static pthread_mutex_t mutex_verify = PTHREAD_MUTEX_INITIALIZER; // Serializes the re-verification hash in the FILE_REQUEST handler. Deliberately NOT torx_fd_lock: that mutex also guards the file's read/write path, and for a group file it is shared by every peer's dispatcher thread, so holding it across a whole-file hash stalls every peer transferring that file. Verifications are disk-bound, so serializing them globally is desirable rather than limiting.
+#endif // NO_FILE_TRANSFER
 
 static inline struct bufferevent *disconnect(struct event_strc *event_strc)
 { // Internal Function only. For handling or initializing a disconnection
@@ -1226,15 +1229,19 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 								continue;
 							}
 							else if(file_stat.st_mtime != modified)
-							{ // File cannot be accessed or has an unexpected modification time XXX MUST BE THE SAME AS BELOW torx_fd_lock
-								torx_fd_lock(file_n,f) // 🟥🟥🟥🟥 // XXX MUST BE BETWEEN REDUNDANT CHECKS. XXX To prevent two requests that come in at nearly the same time from causing the file to unnecessarily be checksum'd twice.
-								if(file_stat.st_mtime != modified)
-								{ // Checking again (redundantly) XXX MUST BE THE SAME AS ABOVE torx_fd_lock
+							{ // File has an unexpected modification time, so the content must be re-verified before we serve any of it
+								uint8_t verified_unchanged = 0;
+								pthread_mutex_lock(&mutex_verify); // 🟥🟥
+								modified = getter_time(file_n,INT_MIN,f,offsetof(struct file_list,modified)); // Must re-read under the mutex in case another thread verified it while we waited at the lock.
+								if(file_stat.st_mtime == modified)
+									verified_unchanged = 1; // Another request verified this file while we waited at the lock. Nothing to do.
+								else
+								{
 									unsigned char checksum[CHECKSUM_BIN_LEN];
-									unsigned char checksum_unverified[CHECKSUM_BIN_LEN];
 									getter_array(checksum,sizeof(checksum),file_n,INT_MIN,f,offsetof(struct file_list,checksum));
+									unsigned char checksum_unverified[CHECKSUM_BIN_LEN] = {0}; // Initialized because file_split_hashes leaves it untouched when it bails
 									if(file_n == event_strc->group_n)
-									{ // File exists and is group transfer XXX NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
+									{ // File exists and is group transfer. NOTE: If we hit this commonly without modifying file, make sure we are actually setting the modified time when file completes
 										error_simple(0,"Re-checking group file because modification time has changed. This is undesirable. Report this.");
 										const uint8_t splits = splits_determination(file_n,f); // derived from .split_hashes, which necessarily exists on a group file we hold
 										unsigned char *split_hashes_and_size = file_split_hashes(checksum_unverified,file_path,splits,size);
@@ -1245,20 +1252,22 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										error_simple(0,"Re-checking file because modification time has changed. This is undesirable. Report this.");
 										b3sum_bin(checksum_unverified,file_path,NULL,0,0);
 									}
-									const int cmp = memcmp(checksum,checksum_unverified,CHECKSUM_BIN_LEN);
+									if(!memcmp(checksum,checksum_unverified,CHECKSUM_BIN_LEN))
+									{ // Updating modification time in struct after verifying checksums, and carrying on.
+										verified_unchanged = 1;
+										modified = file_stat.st_mtime;
+										setter(file_n,INT_MIN,f,offsetof(struct file_list,modified),&modified,sizeof(modified));
+									}
 									sodium_memzero(checksum,sizeof(checksum));
 									sodium_memzero(checksum_unverified,sizeof(checksum_unverified));
-									if(cmp)
-									{
-										torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
-										error_simple(0,"Requested file does not match modification time or hash. It has been modified or corrupted since receiving. You may re-offer the modified file.");
-										torx_free((void**)&file_path);
-										continue;
-									}
-									modified = file_stat.st_mtime; // Updating modification time in struct after verifying checksums, and carrying on.
-									setter(file_n,INT_MIN,f,offsetof(struct file_list,modified),&modified,sizeof(modified));
 								}
-								torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
+								pthread_mutex_unlock(&mutex_verify); // 🟩🟩
+								if(!verified_unchanged)
+								{
+									error_simple(0,"Requested file does not match modification time or hash. It has been modified or corrupted since receiving. You may re-offer the modified file.");
+									torx_free((void**)&file_path);
+									continue;
+								}
 							}
 						}
 						// XXX NOTICE: For group transfers, the following are in the GROUP_PEER, which lacks filename and path, which only exists in GROUP_CTRL. 
