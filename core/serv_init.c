@@ -207,7 +207,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			{ // XXX MUST bail rather than clamp: request_end - start + 1 is unsigned, so it wraps and then truncates into data_size, carrying fread past send_buffer
 				torx_unlock(file_n) // 🟩🟩🟩
 				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
-				error_printf(0,"Send_prep has nothing left to send: %lu > %lu. n=%d file_n=%d f=%d fd_type=%d. Report this.",start,request_end,n,file_n,f,fd_type);
+				error_printf(0,"Send_prep has nothing left to send: %"PRIu64" > %"PRIu64". n=%d file_n=%d f=%d fd_type=%d. Report this.",start,request_end,n,file_n,f,fd_type);
 				close_sockets(file_n,f)
 				transfer_progress(file_n,f);
 				goto error;
@@ -219,7 +219,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			if(start + data_size > size)
 			{
 				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
-				error_printf(0,"Send_prep sanity check failure. Peer requested more data than file contains: %lu + %u > %lu. Possible coding error. Report this.",start,data_size,size);
+				error_printf(0,"Send_prep sanity check failure. Peer requested more data than file contains: %"PRIu64" + %u > %"PRIu64". Possible coding error. Report this.",start,data_size,size);
 				goto error;
 			}
 			if(fd_active == NULL)
@@ -239,8 +239,8 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 				error_printf(0,"Send_prep data_size %u exceeds the packet buffer. Coding error. Report this.",data_size);
 				data_size = PACKET_SIZE_MAX-16;
 			}
-			fseek(fd_active,(long int)start,SEEK_SET); // This will be no-op if we only have one section active, which will be rare. Formally, it must trigger: if(peer[n].file[f].request[r].start[fd_type] + peer[n].file[f].request[r].transferred[fd_type] != start)
-			const size_t bytes = fread(&send_buffer[16],1,data_size,fd_active);
+			const uint8_t seek_failed = fseeko(fd_active,(off_t)start,SEEK_SET) == -1 ? 1 : 0; // XXX Must not fread after a failed seek; the position is undefined and we would send the wrong bytes under a correct offset, causing the receiver to blacklist us
+			const size_t bytes = seek_failed ? 0 : fread(&send_buffer[16],1,data_size,fd_active);
 			torx_write(file_n) // 🟥🟥🟥
 			peer[file_n].file[f].fd = fd_active;
 			torx_unlock(file_n) // 🟩🟩🟩
@@ -260,7 +260,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			else // if(!bytes) // No more to read (legacy complete or IO error)
 			{ // File completion is in packet_removal. XXX 2024/12/24 Do not delete this block. It does not necessarily indicate corruption occurred during a transfer.
-				error_printf(0,PINK"Read to end of file prematurely at byte: %lu. IO error or coding error. Report this."RESET,start); // could be falsely triggered by file shrinkage
+				if(seek_failed)
+					error_printf(0,PINK"Failed to seek to byte %"PRIu64" when sending. IO error."RESET,start);
+				else
+					error_printf(0,PINK"Read to end of file prematurely at byte: %"PRIu64". IO error or coding error. Report this."RESET,start); // could be falsely triggered by file shrinkage
 				close_sockets(file_n,f)
 				transfer_progress(file_n,f); // XXX This presumably triggers a stall XXX
 				sodium_memzero(send_buffer,(size_t)packet_len);
@@ -292,7 +295,7 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			}
 			else if(start >= message_len)
 			{ // 2024/12/25 This is a serious error but we're not making it fatal because it currently is only triggering on restarts.
-				error_printf(0,"Start >= message_len: %lu >= %u. n=%d i=%d stat=%u. Coding error. Report this.",start,message_len,n,i,getter_uint8(n,i,-1,offsetof(struct message_list,stat))); // Added check 2024/05/04
+				error_printf(0,"Start >= message_len: %"PRIu64" >= %u. n=%d i=%d stat=%u. Coding error. Report this.",start,message_len,n,i,getter_uint8(n,i,-1,offsetof(struct message_list,stat))); // Added check 2024/05/04
 				goto error;
 			}
 			if(prefix_len + message_len - start < PACKET_SIZE_MAX)
@@ -312,9 +315,9 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_read(n) // 🟧🟧🟧
 			const uint32_t allocated = torx_allocation_len(peer[n].message[i].message);
 			torx_unlock(n) // 🟩🟩🟩
-			const size_t reading = start + (size_t)packet_len - prefix_len;
+			const uint64_t reading = start + (uint64_t)packet_len - prefix_len; // XXX Must not narrow to size_t before the check below; on a 32-bit build a large start would wrap and defeat it
 			if(allocated < reading) // TODO hit on 2024/05/04: 98234 < 98796 (actual message size: 98234)
-				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %u < (%lu + %u - %u)",message_len,allocated,start,packet_len,prefix_len);
+				error_printf(-1,"Critical error will result in illegal read, msg_len=%u: %u < (%"PRIu64" + %u - %u)",message_len,allocated,start,packet_len,prefix_len);
 			/* sanity check end XXX */
 			torx_read(n) // 🟧🟧🟧
 			memcpy(&send_buffer[prefix_len],&peer[n].message[i].message[start],(size_t)packet_len - prefix_len);
@@ -402,10 +405,10 @@ int send_prep(const int n,const int file_n,const int f_i,const int p_iter,int8_t
 			torx_unlock(n) // 🟩🟩🟩
 		}
 		else
-			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%lu %s"RESET,n,fd_type,i,socket_utilized,start,name);
+			error_printf(0,PINK"Send_prep4 n=%d fd_type=%d (i=%d) != (socket_utilized=%d) start=%"PRIu64" %s"RESET,n,fd_type,i,socket_utilized,start,name);
 		if(start)
 		{
-			error_printf(0,PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%zu to pos=0"RESET,n,i,fd_type,start);
+			error_printf(0,PINK BOLD"Checkpoint setting n=%d i=%d fd=%d pos=%"PRIu64" to pos=0"RESET,n,i,fd_type,start);
 			torx_write(n) // 🟥🟥🟥
 			peer[n].message[i].pos = 0;
 			torx_unlock(n) // 🟩🟩🟩
@@ -520,7 +523,7 @@ static inline char *v3auth_ll(const char *privkey,const uint16_t vport,const uin
 			if(len == 56 && string[52] == '=')
 				string[52] = '\0';
 			else if(len != 52) // We now have tests to prevent this from occuring. It occured ocassionally either for natural reasons, a problem with our x2 conversion, or libsodium issue
-				error_printf(0,"Wrong length ClientAuthv3: %lu. This onion will not function.",len);
+				error_printf(0,"Wrong length ClientAuthv3: %zu. This onion will not function.",len);
 			if(auths == 1)
 				snprintf(buffer,512,"ADD_ONION ED25519-V3:%s Flags=MaxStreamsCloseCircuit,V3Auth MaxStreams=%d Port=%u,%u",privkey,maxstreams,vport,tport);
 			strcat(buffer," ClientAuthv3=");

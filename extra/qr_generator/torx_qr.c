@@ -174,8 +174,8 @@ void *return_png(const struct qr_data *qr_data)
 	static const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
 	memcpy(out, sig, 8);
 	const uint8_t ihdr[13] = {
-		(qr_data->width >> 24) & 0xff, (qr_data->width >> 16) & 0xff, (qr_data->width >> 8) & 0xff, qr_data->width & 0xff,
-		(qr_data->height >> 24) & 0xff, (qr_data->height >> 16) & 0xff, (qr_data->height >> 8) & 0xff, qr_data->height & 0xff,
+		(uint8_t)((qr_data->width >> 24) & 0xff), (uint8_t)((qr_data->width >> 16) & 0xff), (uint8_t)((qr_data->width >> 8) & 0xff), (uint8_t)(qr_data->width & 0xff),
+		(uint8_t)((qr_data->height >> 24) & 0xff), (uint8_t)((qr_data->height >> 16) & 0xff), (uint8_t)((qr_data->height >> 8) & 0xff), (uint8_t)(qr_data->height & 0xff),
 		1, /* bit depth */
 		0, /* color type : 0 = grayscale */
 		0, /* compression : 0 = deflate */

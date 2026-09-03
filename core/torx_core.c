@@ -837,10 +837,11 @@ unsigned char *read_bytes(const char *path)
 	FILE *fp;
 	if(path && (fp = fopen(path, "r")))
 	{
-		fseek(fp, 0L, SEEK_END);
-		allocated = (size_t)ftell(fp);
+		fseeko(fp, 0, SEEK_END);
+		const off_t length = ftello(fp);
+		allocated = length > 0 ? (size_t)length : 0;
 		data = torx_insecure_malloc(allocated);
-		fseek(fp, 0L, SEEK_SET);
+		fseeko(fp, 0, SEEK_SET);
 		if(fread(data,1,allocated,fp) != allocated)
 			error_simple(0,"Read less than expected amount of data. Uncaught bug.");
 		close_sockets_nolock(fp)
@@ -1057,7 +1058,7 @@ void *torx_realloc_shift(void *arg,const size_t len_new,const uint8_t shift_data
 			const size_t diff = len_old > len_new ? len_old-len_new : len_new-len_old; // note: always positive
 			if(len_new < len_old)
 			{ // Shrink
-				error_printf(2,"Reducing size in torx_realloc. %lu < %lu",len_new,len_old);
+				error_printf(2,"Reducing size in torx_realloc. %zu < %zu",len_new,len_old);
 				if(shift_data_forwards) // Cause loss of start data, instead of end data.
 					memcpy(allocation,(char*)arg + diff,len_new);
 				else
@@ -1905,7 +1906,7 @@ char *message_sign(const unsigned char *sign_sk,const time_t time,const time_t n
 
 int vptoi(const void* arg)
 {
-	int val = (int)(int64_t)arg;
+	int val = (int)(intptr_t)arg;
 	return val-SHIFT;
 }
 
@@ -3173,7 +3174,7 @@ size_t b64_decode(unsigned char *out,const size_t destination_size,const char *i
 	const size_t outlen = b64_decoded_size(in);
 	if(outlen > destination_size)
 	{ // avoid illegal writes
-		error_printf(0,"b64_decode destination is too small: %lu > %lu",outlen,destination_size);
+		error_printf(0,"b64_decode destination is too small: %zu > %zu",outlen,destination_size);
 		return 0;
 	}
 	size_t len = strlen(in);
@@ -4676,7 +4677,7 @@ static inline void *login_threaded(void *arg)
 		pthread_rwlock_unlock(&mutex_global_variable); // 🟩
 	}
 /*	error_printf(0,"OPSLIMIT: %llu",crypto_pwhash_OPSLIMIT);
-	error_printf(0,"MEMLIMIT: %lu",crypto_pwhash_MEMLIMIT);
+	error_printf(0,"MEMLIMIT: %zu",crypto_pwhash_MEMLIMIT);
 	error_printf(0,"ALG: %d",crypto_pwhash_ALG);
 	error_printf(0,"Salt: %s",b64_encode(salt,sizeof(salt)));
 	error_printf(0,"Arg: %s",(char *)arg);	*/
@@ -5338,28 +5339,28 @@ void destroy_file(const char *file_path)
 		return;
 	}
 	FILE *fp;
-	if((fp = fopen(new_file_path, "a")) == NULL)
-	{
-		error_simple(0,"Error opening file for appending in destroy_file");
-		sodium_memzero(new_file_path,sizeof(new_file_path));
-		return;
-	}
-	const long int size = ftell(fp);
-	close_sockets_nolock(fp)
-	if((fp = fopen(new_file_path, "r+")) == NULL || size == -1)
+	if((fp = fopen(new_file_path, "r+")) == NULL)
 	{
 		error_simple(0,"Error opening file for write in destroy_file");
 		sodium_memzero(new_file_path,sizeof(new_file_path));
 		return;
 	}
-	size_t left = (size_t)size;
+	off_t size;
+	if(fseeko(fp,0,SEEK_END) == -1 || (size = ftello(fp)) == -1 || fseeko(fp,0,SEEK_SET) == -1)
+	{ // XXX Must not fall through to the overwrite loop; the initial position of an append stream is implementation defined, so the size must come from an explicit seek or the file could be removed without being overwritten
+		close_sockets_nolock(fp)
+		error_simple(0,"Error determining file size in destroy_file");
+		sodium_memzero(new_file_path,sizeof(new_file_path));
+		return;
+	}
+	uint64_t left = (uint64_t)size;
 	size_t written_current = 0;
 	unsigned char buf[4096];
 	do
 	{
 		size_t amount;
 		if(left < sizeof(buf))
-			amount = left;
+			amount = (size_t)left;
 		else
 			amount = sizeof(buf);
 		randombytes(buf, (long long unsigned int)amount);

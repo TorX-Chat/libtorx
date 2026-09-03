@@ -318,7 +318,7 @@ blake3_test(void)
 }
 */
 
-size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len)
+uint64_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len)
 { // Generates Blake3 checksum in binary and returns file size in bytes. Pass data OR file_path, not both, for hashing. If no end is passed, it is treated as until EOF for file.
 	if(checksum == NULL || (file_path == NULL && data == NULL) || (file_path != NULL && data != NULL) || (data && len == 0))
 	{
@@ -331,8 +331,9 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 	if(file_path)
 	{
 		FILE *fp = fopen(file_path, "r");
-		if(!fp || fseek(fp,(long int)start,SEEK_SET) == -1) // TODO bad cast
+		if(!fp || fseeko(fp,(off_t)start,SEEK_SET) == -1)
 		{
+			close_sockets_nolock(fp)
 			error_simple(0,"Failed to open file for generating blake checksum.");
 			return 0;
 		}
@@ -341,7 +342,7 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 		{
 			size_t to_read = sizeof(buf);
 			if(len && len - size < sizeof(buf))
-				to_read = len - size;
+				to_read = (size_t)(len - size); // bounded by the sizeof(buf) test above
 			const size_t read = fread(buf, 1, to_read, fp);
 			if(len && read != to_read)
 			{
@@ -358,9 +359,9 @@ size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,
 	}
 	else /* if(data) */
 	{
-		blake3_update(&ctx, &data[start], len);
+		blake3_update(&ctx, &data[start], (size_t)len); // in-memory branch; len is bounded by the caller's allocation
 		size = len;
 	}
 	blake3_out(&ctx, checksum, CHECKSUM_BIN_LEN);
-	return (size_t)size; // XXX will return -1 if cannot open or fully read file
+	return size;
 }

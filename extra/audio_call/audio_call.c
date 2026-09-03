@@ -146,7 +146,7 @@ static inline union types getter_call_union(const int call_n,const int call_c,co
 	union types types = {0}; // Initialize as 0
 	if(call_invalid(call_n,call_c) || (participant_n > -1 && (offset != offsetof(struct call_list,participant_mic) && offset != offsetof(struct call_list,participant_speaker))))
 	{
-		error_printf(0,"getter_call_union sanity check failed: call_n=%d call_c=%d participant_n=%d offset=%lu",call_n,call_c,participant_n,offset);
+		error_printf(0,"getter_call_union sanity check failed: call_n=%d call_c=%d participant_n=%d offset=%zu",call_n,call_c,participant_n,offset);
 		return types;
 	}
 	torx_read(call_n) // 🟧🟧🟧

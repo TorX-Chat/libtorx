@@ -73,7 +73,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 { // Designed to be efficient, primarily for the UI to get things like message_len.
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
-		error_printf(-1,"getter_length sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
+		error_printf(-1,"getter_length sanity check failed: n=%d i=%d f=%d offset=%zu",n,i,f,offset);
 		return 0;
 	}
 	uint32_t len = 0;
@@ -86,7 +86,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 				len = torx_allocation_len(peer[n].message[i].message);
 		}
 		else
-			error_printf(-1,"Invalid offset passed to getter_length1: %lu. Coding error. Report this.",offset);
+			error_printf(-1,"Invalid offset passed to getter_length1: %zu. Coding error. Report this.",offset);
 	}
 	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
@@ -111,7 +111,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 			if(offset == offsetof(struct file_list,checksum))
 				len = sizeof(peer[n].file[f].checksum);
 			else
-				error_printf(-1,"Invalid offset passed to getter_length2: %lu. Coding error. Report this.",offset);
+				error_printf(-1,"Invalid offset passed to getter_length2: %zu. Coding error. Report this.",offset);
 		}
 	}
 	#endif // NO_FILE_TRANSFER
@@ -133,7 +133,7 @@ uint32_t getter_length(const int n,const int i,const int f,const size_t offset)
 			else if(offset == offsetof(struct peer_list,peeronion))
 				len = sizeof(peer[n].peeronion);
 			else
-				error_printf(-1,"Invalid offset passed to getter_length3: %lu. Coding error. Report this.",offset);
+				error_printf(-1,"Invalid offset passed to getter_length3: %zu. Coding error. Report this.",offset);
 		}
 	}
 	torx_unlock(n) // 🟩🟩🟩
@@ -144,7 +144,7 @@ char *getter_string(const int n,const int i,const int f,const size_t offset)
 { // XXX BEWARE: Message return is not guaranteed to be a string. Verify independantly (via null_terminated_len) before utilizing. // XXX Don't make use of this in library. This is primarily for use only in UI because it is inefficient (it copies). Be sure to torx_free((void**)&string);
 	if(n < 0 || (i > INT_MIN && f > -1) || !peer)
 	{
-		error_printf(-1,"getter_string sanity check failed: n=%d i=%d f=%d offset=%lu",n,i,f,offset);
+		error_printf(-1,"getter_string sanity check failed: n=%d i=%d f=%d offset=%zu",n,i,f,offset);
 		return NULL;
 	}
 	uint32_t len = 0;
@@ -158,7 +158,7 @@ char *getter_string(const int n,const int i,const int f,const size_t offset)
 				string = torx_copy(peer[n].message[i].message);
 		}
 		else
-			error_printf(-1,"Invalid offset passed to getter_string1: %lu. Coding error. Report this.",offset);
+			error_printf(-1,"Invalid offset passed to getter_string1: %zu. Coding error. Report this.",offset);
 	}
 	#ifndef NO_FILE_TRANSFER
 	else if(f > -1)
@@ -183,7 +183,7 @@ char *getter_string(const int n,const int i,const int f,const size_t offset)
 			if(offset == offsetof(struct file_list,checksum))
 				len = sizeof(peer[n].file[f].checksum);
 			else
-				error_printf(-1,"Invalid offset passed to getter_string2: %lu. Coding error. Report this.",offset);
+				error_printf(-1,"Invalid offset passed to getter_string2: %zu. Coding error. Report this.",offset);
 			string = torx_secure_malloc(len);
 			memcpy(string,(char*)&peer[n] + offset,len);
 		}
@@ -207,7 +207,7 @@ char *getter_string(const int n,const int i,const int f,const size_t offset)
 			else if(offset == offsetof(struct peer_list,peeronion))
 				len = sizeof(peer[n].peeronion);
 			else
-				error_printf(-1,"Invalid offset passed to getter_string3: %lu. Coding error. Report this.",offset);
+				error_printf(-1,"Invalid offset passed to getter_string3: %zu. Coding error. Report this.",offset);
 			string = torx_secure_malloc(len);
 			memcpy(string,(char*)&peer[n] + offset,len);
 		}
@@ -576,7 +576,7 @@ char getter_byte(const int n,const int i,const int f,const size_t offset)
 	char value;
 	if(n < 0 || (i > INT_MIN && f > -1))
 	{
-		error_printf(-1,"getter byte sanity check failed at offset: %lu",offset);
+		error_printf(-1,"getter byte sanity check failed at offset: %zu",offset);
 		return 0;
 	}
 	else if(!peer)
@@ -601,15 +601,15 @@ do { \
 	while(iter < pages && offset != offsets_struc[iter].offset)\
 		iter++;\
 	if(iter == pages)\
-		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.2",offset);\
+		error_printf(-1,"Illegal offset: %zu. Coding error. Report this.2",offset);\
 	if(offset == offsetof(struct message_list,message))\
 	{\
 		const uint32_t message_len = torx_allocation_len(peer[n].message[i].message);\
 		if(message_len < size)\
-			error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.2 %lu < %lu",offset,offsets_struc[iter].size,size);\
+			error_printf(-1,"Illegal getter return value at offset %zu. Coding error. Report this.2 %zu < %zu",offset,offsets_struc[iter].size,size);\
 	}\
 	else if(offsets_struc[iter].size < size)\
-		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.3 %lu < %lu",offset,offsets_struc[iter].size,size); \
+		error_printf(-1,"Illegal getter return value at offset %zu. Coding error. Report this.3 %zu < %zu",offset,offsets_struc[iter].size,size); \
 } while(0);
 
 void getter_array(void *array,const size_t size,const int n,const int i,const int f,const size_t offset)
@@ -618,7 +618,7 @@ void getter_array(void *array,const size_t size,const int n,const int i,const in
 	{
 		if(array)
 			sodium_memzero(array,size); // zero the target
-		error_printf(-1,"getter_array sanity check failed at offset: %lu",offset);
+		error_printf(-1,"getter_array sanity check failed at offset: %zu",offset);
 		return;
 	}
 	else if(!peer) // can occur during shutdown
@@ -669,7 +669,7 @@ do { \
 	if(iter == pages)\
 		error_printf(-1,"Illegal offset. Coding error. Report this.");\
 	if(offsets_struc[iter].size != anticipated_size)\
-		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this. %lu != %lu",offsets_struc[iter].name,offsets_struc[iter].size,anticipated_size); \
+		error_printf(-1,"Illegal getter return value for member: %s. Coding error. Report this. %zu != %zu",offsets_struc[iter].name,offsets_struc[iter].size,anticipated_size); \
 } while(0);
 
 static inline union types getter_peer_union(const int n,const int i,const int f,const size_t offset,const size_t anticipated_size)
@@ -677,7 +677,7 @@ static inline union types getter_peer_union(const int n,const int i,const int f,
 	union types value = {0}; // Initialize as 0
 	if(n < 0 || (i > INT_MIN && f > -1))
 	{
-		error_printf(-1,"getter sanity check failed at offset: %lu",offset);
+		error_printf(-1,"getter sanity check failed at offset: %zu",offset);
 		return value;
 	}
 	else if(!peer)
@@ -772,7 +772,7 @@ void setter(const int n,const int i,const int f,const size_t offset,const void *
 */
 	if(n < 0 || (i > INT_MIN && f > -1) || size < 1 || value == NULL)
 	{
-		error_printf(-1,"setter sanity check failed at offset: %lu sanity: %d %d %d",offset,n,i,f);
+		error_printf(-1,"setter sanity check failed at offset: %zu sanity: %d %d %d",offset,n,i,f);
 		return;
 	}
 	else if(!peer) // can occur during shutdown
@@ -807,7 +807,7 @@ static inline union types getter_group_union(const int g,const size_t offset,con
 	union types value = {0}; // Initialize as 0
 	if(g < 0)
 	{
-		error_printf(-1,"getter_group sanity check failed at offset: %lu",offset);
+		error_printf(-1,"getter_group sanity check failed at offset: %zu",offset);
 		return value;
 	}
 	else if(!group)
@@ -871,9 +871,9 @@ do { \
 	while(iter < pages && offset != offsets_struc[iter].offset)\
 		iter++;\
 	if(iter == pages)\
-		error_printf(-1,"Illegal offset: %lu. Coding error. Report this.6",offset);\
+		error_printf(-1,"Illegal offset: %zu. Coding error. Report this.6",offset);\
 	if(offsets_struc[iter].size < size)\
-		error_printf(-1,"Illegal getter return value at offset %lu. Coding error. Report this.7 %lu < %lu",offset,offsets_struc[iter].size,size);\
+		error_printf(-1,"Illegal getter return value at offset %zu. Coding error. Report this.7 %zu < %zu",offset,offsets_struc[iter].size,size);\
 } while(0);
 
 void setter_group(const int g,const size_t offset,const void *value,const size_t size)
@@ -884,7 +884,7 @@ void setter_group(const int g,const size_t offset,const void *value,const size_t
 */
 	if(g < 0 || size < 1 || value == NULL)
 	{
-		error_printf(-1,"setter_group sanity check failed at offset: %lu",offset);
+		error_printf(-1,"setter_group sanity check failed at offset: %zu",offset);
 		return;
 	}
 	else if(!group) // can occur during shutdown

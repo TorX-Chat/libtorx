@@ -322,7 +322,7 @@ static void *onion_gen(void *arg)
 			const size_t len = base32_encode((unsigned char*)ed25519_pk_b32,x25519_pk,32);
 			if(len != 56)
 			{ // this was implemented due to v3auth keys occassionally coming up short and being invalid for unknown reasons, possibly bad keys, possibly our base32 encoder XXX
-				error_printf(0,"Generated key cannot be converted to v3Auth (came up short: %lu). Trying again.",len);
+				error_printf(0,"Generated key cannot be converted to v3Auth (came up short: %zu). Trying again.",len);
 				regenerate = 1;
 				continue;
 			}

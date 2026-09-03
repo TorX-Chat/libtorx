@@ -83,7 +83,7 @@ struct file_strc { // XXX Do not torx_secure_malloc structs unless they contain 
 	int n;
 	char *path;
 	time_t modified;
-	size_t size;
+	uint64_t size;
 };
 
 int file_piece_p_iter = -1; // save some CPU cycles by setting this on startup.
@@ -316,22 +316,22 @@ char *file_progress_string(const int n,const int f)
 	else if(time_left > 7200)
 	{
 		const time_t hours = time_left/60/60;
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld hours %lld min left",bytes_per_second/1024,(long long)hours,(long long)time_left/60-hours*60);
+		snprintf(file_size_text,file_size_text_len,"\t%"PRIu64" KBps %lld hours %lld min left",bytes_per_second/1024,(long long)hours,(long long)time_left/60-hours*60);
 	}
 	else if(time_left > 120)
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld min left",bytes_per_second/1024,(long long)time_left/60);
+		snprintf(file_size_text,file_size_text_len,"\t%"PRIu64" KBps %lld min left",bytes_per_second/1024,(long long)time_left/60);
 	else if(time_left > 0)
-		snprintf(file_size_text,file_size_text_len,"\t%zu KBps %lld sec left",bytes_per_second/1024,(long long)time_left);
+		snprintf(file_size_text,file_size_text_len,"\t%"PRIu64" KBps %lld sec left",bytes_per_second/1024,(long long)time_left);
 	else if(size < 2*1024) // < 2 kb
-		snprintf(file_size_text,file_size_text_len,"%zu B",size);
+		snprintf(file_size_text,file_size_text_len,"%"PRIu64" B",size);
 	else if(size < 2*1024*1024) // < 2mb
-		snprintf(file_size_text,file_size_text_len,"%zu KiB",size/1024);
-	else if(size < (size_t) 2*1024*1024*1024) // < 2gb
-		snprintf(file_size_text,file_size_text_len,"%zu MiB",size/1024/1024);
-	else if(size < (size_t) 2*1024*1024*1024*1024) // < 2 tb
-		snprintf(file_size_text,file_size_text_len,"%zu GiB",size/1024/1024/1024);
+		snprintf(file_size_text,file_size_text_len,"%"PRIu64" KiB",size/1024);
+	else if(size < (uint64_t)2*1024*1024*1024) // < 2gb
+		snprintf(file_size_text,file_size_text_len,"%"PRIu64" MiB",size/1024/1024);
+	else if(size < (uint64_t)2*1024*1024*1024*1024) // < 2 tb
+		snprintf(file_size_text,file_size_text_len,"%"PRIu64" GiB",size/1024/1024/1024);
 	else // > 2tb
-		snprintf(file_size_text,file_size_text_len,"%zu TiB",size/1024/1024/1024/1024);
+		snprintf(file_size_text,file_size_text_len,"%"PRIu64" TiB",size/1024/1024/1024/1024);
 	return file_size_text;
 }
 
@@ -392,7 +392,7 @@ void transfer_progress(const int n,const int f)
 		peer[n].file[f].last_transferred = transferred;
 		torx_unlock(n) // 🟩🟩🟩
 		if(last_transferred == transferred)
-			error_printf(0,"Checkpoint transfer_progress STALLED at %zu",transferred);
+			error_printf(0,"Checkpoint transfer_progress STALLED at %"PRIu64"",transferred);
 	//	else
 	//		error_printf(0,"Checkpoint transfer_progress %zu of %lu",transferred,size);
 		transfer_progress_cb(n,f,transferred);
@@ -480,7 +480,7 @@ uint64_t calculate_transferred(const int n,const int f)
 uint64_t calculate_section_start(uint64_t *end_p,const uint64_t size,const uint8_t splits,const int16_t section)
 { // XXX DO NOT MODIFY/REMOVE THE CASTING OR MATH IN HERE WITHOUT EXTENSIVE TESTING XXX
 	if(size < (uint64_t)splits + 1 || section > splits + 1 || section < 0 || !size) // Sanity checks necessary to prevent exploitation that could corrupt a file.
-		error_printf(-1,"Sanity check failure in calculate_section_start: %lu %u %d. Coding error. Report this.",size,splits,section);
+		error_printf(-1,"Sanity check failure in calculate_section_start: %"PRIu64" %u %d. Coding error. Report this.",size,splits,section);
 	if(end_p)
 		*end_p = size*(uint64_t)(section+1)/(splits+1)-1;
 	return size*(uint64_t)section/(splits+1);
@@ -904,7 +904,7 @@ int process_file_offer_outbound(const int n,const unsigned char *checksum,const 
 { // Populates peer[n].file[f].{stuff} for outbound ENUM_PROTOCOL_FILE_OFFER
 	if(n < 0 || !checksum || !file_path || !size)
 	{
-		error_printf(0,"Sanity check failed in process_file_offer_outbound: n=%d size=%lu. Coding error. Report this.",n,size);
+		error_printf(0,"Sanity check failed in process_file_offer_outbound: n=%d size=%"PRIu64". Coding error. Report this.",n,size);
 		breakpoint();
 		return -1;
 	}
@@ -1567,7 +1567,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 						if(relevant_split_status_n != -1 || relevant_progress >= offerer_progress)
 						{
 							if(relevant_split_status_fd > -1)
-								error_printf(5,"select_peer existing: n=%d fd=%d sec=%d %lu of %lu",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
+								error_printf(5,"select_peer existing: n=%d fd=%d sec=%d %"PRIu64" of %"PRIu64"",relevant_split_status_n,relevant_split_status_fd,section,relevant_progress,offerer_progress);
 							continue; // Already requested from another peer, or the progress is less than we have. Go to the next section.
 						}
 						if(offerer_progress >= target_progress)
@@ -1611,7 +1611,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 				error_simple(0,"calculate_file_request_start_end failed with a group_ctrl. Coding error. Report this."); // possible race if this occurs?
 				return -1;
 			}
-			error_printf(4,"select_peer n=%d f=%d target_o=%d splits=%u section=%d start=%lu end=%lu",n,f,target_o,splits,file_request_strc.section,file_request_strc.start,file_request_strc.end);
+			error_printf(4,"select_peer n=%d f=%d target_o=%d splits=%u section=%d start=%"PRIu64" end=%"PRIu64"",n,f,target_o,splits,file_request_strc.section,file_request_strc.start,file_request_strc.end);
 		}
 	}
 	else
@@ -1668,7 +1668,7 @@ static inline int select_peer(const int n,const int f,const int8_t fd_type)
 	{
 		if(file_request_strc.end >= file_size)
 		{
-			error_printf(0,"Sanity check failure in select_peer: end=%lu >= size=%lu",file_request_strc.end,file_size);
+			error_printf(0,"Sanity check failure in select_peer: end=%"PRIu64" >= size=%"PRIu64"",file_request_strc.end,file_size);
 			return -1;
 		}
 		torx_write(n) // 🟥🟥🟥
@@ -1915,7 +1915,7 @@ unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_
 		return NULL;
 	const size_t split_hashes_len = (size_t)CHECKSUM_BIN_LEN*(splits + 1);
 	unsigned char *split_hashes_and_size = torx_secure_malloc(split_hashes_len+sizeof(uint64_t));
-	size_t size_total = 0; // sum of sections
+	uint64_t size_total = 0; // sum of sections
 	for(int16_t section = 0; section <= splits; section++)
 	{ // populate split_hashes
 		uint64_t end = 0;
@@ -1926,7 +1926,7 @@ unsigned char *file_split_hashes(unsigned char *hash_of_hashes,const char *file_
 	}
 	if(size != size_total)
 	{
-		error_printf(0,"Coding or IO error. File size %zu != %zu sum of sections. Splits=%u",size,size_total,splits);
+		error_printf(0,"Coding or IO error. File size %"PRIu64" != %"PRIu64" sum of sections. Splits=%u",size,size_total,splits);
 		torx_free((void**)&split_hashes_and_size);
 		return NULL;
 	}
@@ -1944,7 +1944,7 @@ static inline void *file_init(void *arg)
 	setcanceltype(TORX_PHTREAD_CANCEL_TYPE,NULL); // TODO not utilized. Need to track then pthread_cleanup_push + pop + thread_kill
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
 	unsigned char checksum[CHECKSUM_BIN_LEN];
-	size_t size = 0;
+	uint64_t size = 0;
 	uint8_t splits = 0;
 	unsigned char *split_hashes_and_size = NULL;
 //	error_printf(0,"Checkpoint file_init owner==%u path==%s",owner,file_strc->path);
@@ -1993,7 +1993,7 @@ int file_send(const int n,const char *path)
 	}
 	struct file_strc *file_strc = torx_insecure_malloc(sizeof(struct file_strc));
 	file_strc->modified = file_stat.st_mtime;
-	file_strc->size = (size_t)file_stat.st_size;
+	file_strc->size = (uint64_t)file_stat.st_size;
 	file_strc->n = n;
 	const size_t path_len = strlen(path);
 	file_strc->path = torx_secure_malloc(path_len+1);

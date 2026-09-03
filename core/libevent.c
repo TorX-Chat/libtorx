@@ -365,7 +365,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				else
 					other_socket_utilized = peer[event_strc->n].socket_utilized[1];
 				torx_unlock(event_strc->n) // 🟩🟩🟩
-				error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%ld nstime=%ld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,packet[o].time,packet[o].nstime);
+				error_printf(0,"Packet removal wrong socket_utilized n=%d fd_type=%d (socket_utilized=%d) != (i=%d). Other socket_utilized=%d. Packet time=%lld nstime=%lld",event_strc->n,event_strc->fd_type,socket_utilized,packet_f_i,other_socket_utilized,(long long)packet[o].time,(long long)packet[o].nstime);
 				break;
 			#ifndef NO_FILE_TRANSFER
 			}
@@ -419,7 +419,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 						{ // Completed section. Must be >=, not ==, or an overshoot would stream past the end of the request forever.
 							if(current_pos > current_end)
 							{ // XXX Bytes were counted against this request that do not belong to it. MUST NOT pass silently: the excess is exactly how far send_prep would then read past the end of the request, which overflows its stack buffer.
-								error_printf(0,"Outbound packet accounting overshot by %lu: file_n=%d f=%d n=%d fd_type=%d start=%lu transferred=%lu end=%lu. Coding error. Report this.",current_pos - current_end,packet_file_n,f,event_strc->n,event_strc->fd_type,current_start,current_transferred,current_end-1);
+								error_printf(0,"Outbound packet accounting overshot by %"PRIu64": file_n=%d f=%d n=%d fd_type=%d start=%"PRIu64" transferred=%"PRIu64" end=%"PRIu64". Coding error. Report this.",current_pos - current_end,packet_file_n,f,event_strc->n,event_strc->fd_type,current_start,current_transferred,current_end-1);
 								breakpoint();
 							}
 							error_printf(0,"Outbound Section Completed file_n=%d f=%d event_strc->n=%d fd_type=%d",packet_file_n,f,event_strc->n,event_strc->fd_type);
@@ -537,7 +537,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 				else if(pos > message_len)
 				{ // If this triggers, enable FSojoasfoSO lines for debugging. In the past, it was due to send_prep being called twice on the same n,i pair.
 					const uint8_t stat = getter_uint8(event_strc->n,i,-1,offsetof(struct message_list,stat));
-					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%ld nstime=%ld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,packet_time,packet_nstime,name);
+					error_printf(0,PINK"packet_removal reported message pos > message_len: %u > %u. n=%d fd_type=%d i=%d stat=%u packet_len=%u time=%lld nstime=%lld protocol: %s. Likely will corrupt message. Coding error. Report this. Printing of packet struct will follow: "RESET,pos,message_len,event_strc->n,event_strc->fd_type,i,stat,packet_len,(long long)packet_time,(long long)packet_nstime,name);
 					pthread_rwlock_rdlock(&mutex_packet); // 🟧
 					for(int ooo = 0 ; ooo <= threadsafe_read_int(&mutex_global_variable,&highest_ever_o) ; ooo++)
 						if(packet[ooo].p_iter > -1 && packet[ooo].n == event_strc->n && packet[ooo].fd_type == event_strc->fd_type)
@@ -554,8 +554,8 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 							error_printf(0,"Checkpoint packet[%d].f_i:		%d",ooo,packet[ooo].f_i);
 							error_printf(0,"Checkpoint packet[%d].packet_len:	%u",ooo,packet[ooo].packet_len);
 							error_printf(0,"Checkpoint packet[%d].fd_type:		%d",ooo,packet[ooo].fd_type);
-							error_printf(0,"Checkpoint packet[%d].time:		%ld",ooo,(long)packet[ooo].time);
-							error_printf(0,"Checkpoint packet[%d].nstime:		%ld",ooo,(long)packet[ooo].nstime);
+							error_printf(0,"Checkpoint packet[%d].time:		%lld",ooo,(long long)packet[ooo].time);
+							error_printf(0,"Checkpoint packet[%d].nstime:		%lld",ooo,(long long)packet[ooo].nstime);
 							error_simple(0,"-----------If not _FILE_PIECE, bug!-----------");
 							#ifndef NO_FILE_TRANSFER
 							if(packet[ooo].p_iter != file_piece_p_iter) // Severe coding error
@@ -585,7 +585,7 @@ static inline size_t packet_removal(struct event_strc *event_strc,const size_t d
 	if(!drained)
 		error_simple(0,"Remove packet failed to remove anything. Coding error. Report this.");
 	else if(drain_len && drained != drain_len)
-		error_printf(0,"Remove packet drained less than expected: %lu != %lu. Coding error. Report this.",drained,drain_len);
+		error_printf(0,"Remove packet drained less than expected: %zu != %zu. Coding error. Report this.",drained,drain_len);
 	return drained;
 }
 
@@ -807,7 +807,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				const int16_t section = section_determination(size,splits_nn,packet_start);
 				if(section < 0)
 				{ // Very necessary to check
-					error_printf(0,"Peer asked us to write beyond file size: %lu. Buggy peer. Bailing.",packet_start);
+					error_printf(0,"Peer asked us to write beyond file size: %"PRIu64". Buggy peer. Bailing.",packet_start);
 					continue;
 				}
 				uint64_t section_end = 0;
@@ -825,18 +825,18 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 				torx_unlock(file_n) // 🟩🟩🟩
 				if(packet_start + packet_len - cur > section_end + 1)
 				{
-					error_printf(0,"Peer asked us to write beyond section end: %lu + %u - %u > %lu + 1. Buggy peer. Bailing.",packet_start,packet_len,cur,section_end);
+					error_printf(0,"Peer asked us to write beyond section end: %"PRIu64" + %u - %u > %"PRIu64" + 1. Buggy peer. Bailing.",packet_start,packet_len,cur,section_end);
 					continue;
 				}
 				else if(packet_start != section_start + section_info_current)
 				{
-					error_printf(5,"Peer asked us to write non-sequentially: %lu != %lu + %lu. Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
+					error_printf(5,"Peer asked us to write non-sequentially: %"PRIu64" != %"PRIu64" + %"PRIu64". Could be caused by lost packets or pausing/unpausing rapidly before old stream stopped. Bailing.",packet_start,section_start,section_info_current);
 					continue;
 				}
 				else if(relevant_split_status != event_strc->n || relevant_split_status_fd != event_strc->fd_type)
 				{ // TODO TODO TODO 2024/02/27 this can result in _FILE_PAUSE reply spam. sending a pause (or thousands) isn't a perfect solution.
 					error_simple(0,"Peer asked us to write to an improper section or to a complete file. This can happen if connections break or when a pause is issued."); // No harm if not excessive. Just discard.
-					error_printf(0,"Checkpoint improper: n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %lu",event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
+					error_printf(0,"Checkpoint improper: n=%d f=%d, section = %d, %d != %d , %d != %d, start position: %"PRIu64"",event_strc->n,f,section,relevant_split_status,event_strc->n,relevant_split_status_fd,event_strc->fd_type,packet_start);
 				//	breakpoint();
 				/*	if(!sent_pause++)
 					{
@@ -880,13 +880,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					}
 					torx_free((void**)&file_path);
 				}
-				fseek(fd_active,(long int)packet_start,SEEK_SET); // TODO bad to cast here  // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
-				const size_t wrote = fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
+				const uint8_t seek_failed = fseeko(fd_active,(off_t)packet_start,SEEK_SET) == -1 ? 1 : 0; // XXX Must not fwrite after a failed seek; it would overwrite a region of the file that is already correct // TODO 2024/12/20 + 2024/12/28 segfaulted here during group file transfer, on 'local' being null. 2025/01/02 SIGABRT on group file transfer.
+				const size_t wrote = seek_failed ? 0 : fwrite(&read_buffer[cur],1,packet_len-cur,fd_active); // TODO 2024/12/17 segfaulted here during group file transfer
 				torx_write(file_n) // 🟥🟥🟥
 				peer[file_n].file[f].fd = fd_active;
 				torx_unlock(file_n) // 🟩🟩🟩
 				torx_fd_unlock(file_n,f) // 🟩🟩🟩🟩
-				if(wrote == 0)
+				if(seek_failed)
+					error_printf(0,"Failed to seek to byte %"PRIu64" when writing a file packet. IO error.",packet_start);
+				else if(wrote == 0)
 					error_simple(0,"Failed to write a file packet. Check disk space (this message will repeat for every packet).");
 				else if(wrote != (size_t) packet_len-cur) // Should inform user that they are out of disk space, or IO error.
 					error_simple(-1,"Failed to write a file packet. Check disk space (this message will NOT repeat).");
@@ -1219,7 +1221,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 							if(stat_ret)
 							{ // File does not exist
 								error_simple(0,"Requested file cannot be accessed. Try re-offering it.");
-								error_printf(0,"Checkpoint path: %s %ld ?= %ld",file_path,(long)file_stat.st_mtime,(long)modified);
+								error_printf(0,"Checkpoint path: %s %lld ?= %lld",file_path,(long long)file_stat.st_mtime,(long long)modified);
 								torx_free((void**)&file_path);
 								continue;
 							}
@@ -1656,7 +1658,7 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 										call_peer_joining(call_n, call_c, event_strc->n);
 								}
 								else
-									error_printf(0, "Received a audio stream related message for an unknown call: %ld %ld",time,nstime); // If DATA, consider sending _LEAVE once. Otherwise it is _LEAVE, so ignore.
+									error_printf(0, "Received a audio stream related message for an unknown call: %lld %lld",(long long)time,(long long)nstime); // If DATA, consider sending _LEAVE once. Otherwise it is _LEAVE, so ignore.
 							}
 							else
 							#endif // NO_AUDIO_CALL

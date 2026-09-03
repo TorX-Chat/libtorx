@@ -766,7 +766,7 @@ static inline int load_messages_struc(const int offset,const int n,const time_t 
 		if(message)
 			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d has message",n,p_iter);
 		else // TODO currently triggers on all non-PM GROUP_PEER messages
-			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %ld, nstime: %ld, base_message_len: %u, signature_length: %lu, protocol: %s",n,p_iter,time,nstime,base_message_len,signature_length,name);
+			error_printf(0,"Load_messages_struc failed sanity check: n=%d p_iter=%d, null message, time: %lld, nstime: %lld, base_message_len: %u, signature_length: %zu, protocol: %s",n,p_iter,(long long)time,(long long)nstime,base_message_len,signature_length,name);
 		return INT_MIN;
 	}
 	const uint8_t owner = getter_uint8(n,INT_MIN,-1,offsetof(struct peer_list,owner));
@@ -1022,7 +1022,7 @@ static int sql_exec_msg(const int n,const int i,const char *passed_command)
 		val = sql_exec(&db_messages,passed_command,NULL);
 		const int peer_index = getter_int(n,INT_MIN,-1,offsetof(struct peer_list,peer_index));
 		char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET message_bin = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET message_bin = (?) WHERE peer_index = %d AND time = %lld AND nstime = %lld;", peer_index, (long long)time, (long long)nstime);
 		sql_exec(&db_messages,command,message,message_len - (null_terminated_len + date_len + signature_len),NULL);
 		sodium_memzero(command,sizeof(command));
 	}
@@ -1039,7 +1039,7 @@ static inline void sql_message_tail_section(const int peer_index,const int n,con
 	if(signature_len) // Update signature (only)
 	{
 		char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET signature = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+		snprintf(command,sizeof(command),"UPDATE OR ABORT message SET signature = (?) WHERE peer_index = %d AND time = %lld AND nstime = %lld;", peer_index, (long long)time, (long long)nstime);
 		sql_exec(&db_messages,command,&message[message_len-crypto_sign_BYTES],crypto_sign_BYTES,NULL);
 		sodium_memzero(command,sizeof(command));
 	}
@@ -1330,7 +1330,7 @@ void message_extra(const int n,const int i,const void *data,const uint32_t data_
 	const time_t time = getter_time(n,i,-1,offsetof(struct message_list,time));
 	const time_t nstime = getter_time(n,i,-1,offsetof(struct message_list,nstime));
 	char command[256]; // size is somewhat arbitrary, content not sensitive, consider not calling memzero
-	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET extraneous = (?) WHERE peer_index = %d AND time = %ld AND nstime = %ld;", peer_index, time, nstime);
+	snprintf(command,sizeof(command),"UPDATE OR ABORT message SET extraneous = (?) WHERE peer_index = %d AND time = %lld AND nstime = %lld;", peer_index, (long long)time, (long long)nstime);
 	sql_exec(&db_messages,command,data,data_len,NULL);
 	sodium_memzero(command,sizeof(command));
 }
@@ -1638,7 +1638,7 @@ void sql_populate_setting(const int force_plaintext)
 				else if(!strncmp(setting_name,"crypto_pwhash_MEMLIMIT",22))
 				{
 					if(!library_settings_loaded_plaintext)
-						crypto_pwhash_MEMLIMIT = strtoull(setting_value, NULL, 10);
+						crypto_pwhash_MEMLIMIT = strtoul(setting_value, NULL, 10);
 				}
 				else if(!strncmp(setting_name,"crypto_pwhash_ALG",17))
 				{

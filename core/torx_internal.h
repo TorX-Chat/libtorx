@@ -64,6 +64,7 @@ severable if found in contradiction with the License or applicable law.
 #define TORX_PRIVATE_HEADERS 1
 
 #define _FILE_OFFSET_BITS 64 // keep this before headers
+#define _TIME_BITS 64 // XXX keep this before headers, and after _FILE_OFFSET_BITS, which glibc requires alongside it. Without it a 32-bit time_t truncates the uint32 dates we read off the wire, which are good to 2106.
 
 #include <stdio.h>
 #include <stdlib.h> 	// may be redundant. Included in main.h for running external tor binary.
@@ -462,7 +463,7 @@ void sha3_hash(uint8_t digest[DIGEST], const uint64_t len, const uint8_t data[le
 void blake3_init(struct blake3 *);
 void blake3_update(struct blake3 *, const void *, size_t);
 void blake3_out(struct blake3 *, unsigned char *restrict, size_t);
-size_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
+uint64_t b3sum_bin(unsigned char checksum[CHECKSUM_BIN_LEN],const char *file_path,const unsigned char *data,const uint64_t start,const uint64_t len);
 
 /* base32.c */
 typedef enum _baseencode_errno {
