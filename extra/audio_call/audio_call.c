@@ -210,6 +210,7 @@ int set_c(const int call_n,const time_t time,const time_t nstime)
 		if(peer[call_n].call[call_c].start_time == time && peer[call_n].call[call_c].start_nstime == nstime)
 		{
 			torx_unlock(call_n) // 🟩🟩🟩
+			pthread_mutex_unlock(&mutex_set_c); // 🟩🟩
 			return call_c; // found existing match
 		}
 	for(call_c = 0; (size_t)call_c < torx_allocation_len(peer[call_n].call)/sizeof(struct call_list); call_c++)

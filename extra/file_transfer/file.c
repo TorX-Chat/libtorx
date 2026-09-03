@@ -540,7 +540,10 @@ int set_f(const int n,const unsigned char *checksum,const size_t checksum_len)
 		f++; // Not null, and not matching.
 	torx_unlock(n) // 🟩🟩🟩
 	if(checksum_len < CHECKSUM_BIN_LEN && checksum_is_null)
+	{
+		pthread_mutex_unlock(&mutex_set_f); // 🟩🟩
 		return -1; // do not put error message, valid reasons why this could occur
+	}
 	const int expanded = expand_file_struc(n,f); // Expand struct if necessary
 	if(checksum_is_null) // DO NOT RESERVE BEFORE EXPAND_ or it will be lost
 		setter(n,INT_MIN,f,offsetof(struct file_list,checksum),checksum,checksum_len); // source is pointer
@@ -624,6 +627,7 @@ int set_r(const int n,const int f,const int passed_requester_n)
 	if(peer[n].file[f].request == NULL)
 	{
 		torx_unlock(n) // 🟩🟩🟩
+		pthread_mutex_unlock(&mutex_set_r); // 🟩🟩
 		error_simple(0,"Sanity check failure in set_r. Coding error. Report this.");
 		return -1;
 	}
