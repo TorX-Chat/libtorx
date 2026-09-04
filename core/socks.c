@@ -192,7 +192,7 @@ static inline const char *socks5_strerror(int e)
 } */
 
 void DisableNagle(const evutil_socket_t sendfd)
-{ // Might slightly reduce latency. As far as we can see, it is having no effect at all, because the OS or something is still implementing Nagle.
+{ // Called on the listening socket before bind (serv_init.c) and on the connected outbound socket (libevent.c). TCP_NODELAY has never appeared to reduce latency much here.
 	const int on = 1;
 	if(setsockopt(SOCKET_CAST_OUT sendfd, IPPROTO_TCP, TCP_NODELAY, OPTVAL_CAST &on, sizeof(on)) == -1)
 	{
@@ -203,7 +203,7 @@ void DisableNagle(const evutil_socket_t sendfd)
 	const int recvbuf_size = SOCKET_SO_RCVBUF;
 	if(sndbuf_size)
 		if(setsockopt(SOCKET_CAST_OUT sendfd, SOL_SOCKET, SO_SNDBUF, OPTVAL_CAST &sndbuf_size, sizeof(sndbuf_size)) == -1)
-		{ // set socket recv buff size (operating system)
+		{ // set socket send buff size (operating system)
 			error_simple(0,"Error in DisableNagle setting SO_SNDBUF. Report this.");
 			perror("getsockopt");
 		}

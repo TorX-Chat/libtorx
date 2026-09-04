@@ -271,10 +271,9 @@ void expand_call_struc_cb(const int call_n,const int call_c);
 void call_update_cb(const int call_n,const int call_c);
 void audio_cache_add_cb(const int participant_n);
 
-// TODO 2024/03/12 SOCKET_SO_SNDBUF perhaps we make 2048 for libevent's/our library, and 40960 for Tor because its slow?
-#define SOCKET_SO_SNDBUF 2048 // By default, use 2048 because 2028*2==4096, which matches libevent's buffer size ; Higher == More speed, Lower == Less delays.
-#define SOCKET_SO_RCVBUF 0 // if 0, default: cat /proc/sys/net/core/wmem_default
-#define ConstrainedSockSize 0 // not sure if defaulting to system defaults TODO constrain if there are issues with file transfers appearing to send immediately
+#define SOCKET_SO_SNDBUF 2048 // Kernel doubles this number and stores it where getsockopt can retrieve it. Minimum 4608 (after doubling) in Linux. Setting this at all disabling the kernel's autotuning, which can get into the MB range (way too high). The higher it is set, the higher maximum bandwidth speeds, but more latency between message SEND and SENT during transfers, higher fake "bursts" during initial file transfers, and the higher degree of unaccountable packet loss during disconnections. Higher values have been tested but without high throughput circuits show no benefit. Another supplementary option, if high throughput is available, is to batch or increase frame sizes of file transfers from 1 packet to larger.
+#define SOCKET_SO_RCVBUF 0 // if 0, default: cat /proc/sys/net/ipv4/tcp_rmem (middle value). NOT the net.core defaults, which TCP does not use.
+#define ConstrainedSockSize 0 // 0 is default. DO NOT SET. Tests show no benefit from setting.
 #define INIT_VPORT 60591 // Tribute to Phil Zimmerman, June 5th 1991, creator of PGP and contributor to ZRTP. https://philzimmermann.com/EN/background/index.html
 #define CTRL_VPORT 61912 // Tribute to Julian Assange, June 19th 2012. NOTE: Ports should be listed in LongLivedPorts in torrc.
 #define ENUM_MALLOC_TYPE_INSECURE INIT_VPORT // number is arbitrary, just don't make it 0/1 as too common

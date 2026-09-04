@@ -2064,7 +2064,7 @@ void torrc_save(const char *torrc_content_local)
 		else
 		{
 			pthread_rwlock_unlock(&mutex_global_variable); // 🟩
-			len = strlen(torrc_content_default); // 22 is for ConstrainedSockSize + newline
+			len = strlen(torrc_content_default);
 			torrc_content_final = torx_secure_malloc(len + 1);
 			snprintf(torrc_content_final,len + 1,"%s",torrc_content_default);
 		}
