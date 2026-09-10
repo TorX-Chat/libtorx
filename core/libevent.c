@@ -966,7 +966,15 @@ static void read_conn(struct bufferevent *bev, void *ctx)
 					{ // XXX Signed and Signed Date messages only
 						if(event_strc->owner == ENUM_OWNER_GROUP_CTRL || event_strc->owner == ENUM_OWNER_GROUP_PEER) // XXX adding GROUP_PEER without testing for full duplex
 						{ // Check signatures of group messages (unknown sender), then handle any actions that should be taken for specific message types
-							group_peer_n = group_check_sig(event_strc->g,event_strc->buffer,buffer_len - signature_len,protocol,(unsigned char *)&event_strc->buffer[buffer_len - crypto_sign_BYTES],NULL);
+							if(event_strc->owner == ENUM_OWNER_GROUP_PEER)
+							{ // Authenticated pipe
+								char peeronion_hint[56+1]; // Hint only. A group member may relay another member's signed message, so the author still has to be searched for if this misses.
+								getter_array(&peeronion_hint,sizeof(peeronion_hint),event_strc->n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+								group_peer_n = group_check_sig(event_strc->g,event_strc->buffer,buffer_len - signature_len,protocol,(unsigned char *)&event_strc->buffer[buffer_len - crypto_sign_BYTES],peeronion_hint);
+								sodium_memzero(peeronion_hint,sizeof(peeronion_hint));
+							}
+							else // GROUP_CTRL streams are pre-PIPE_AUTH and have no known sender, so they hint nothing.
+								group_peer_n = group_check_sig(event_strc->g,event_strc->buffer,buffer_len - signature_len,protocol,(unsigned char *)&event_strc->buffer[buffer_len - crypto_sign_BYTES],NULL);
 							if(group_peer_n < 0)
 							{ // Discard if not signed by someone in group TODO notify user? print anonymous message? (no, encourages spam)
 								error_simple(0,"Group received an anonymous message. Nothing we can do with it.");

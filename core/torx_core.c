@@ -3925,7 +3925,7 @@ int group_online(const int g)
 int group_check_sig(const int g,const char *message,const uint32_t message_len,const uint16_t untrusted_protocol,const unsigned char *sig,const char *peeronion_prefix)
 { // This function checks signatures of messages sent to a GROUP_CTRL and returns who sent them.
 // Any length of prefix can be passed, NULL / 0-56. If there are multiple matches (ex: short prefix), each will be tried.
-//TODO This could be a burden on file transfers and it might be worthwhile in the future to assign peers to a specific port or otherwise authenticate sockets/streams instead.
+// Prefix is a PRIORITY HINT, not a filter: matching peers are tried first, then everyone else, then self-sign. It never narrows who may be accepted, because a group member can legitimately relay another member's signed message to us, making the sender of a message a poor guide to its author. Pass the authenticated peer of the stream where one is known.
 	const int group_n = getter_group_int(g,offsetof(struct group_list,n));
 	const uint32_t g_peercount = group_peercount(g);
 	size_t peeronion_len = 0;
@@ -3955,29 +3955,30 @@ int group_check_sig(const int g,const char *message,const uint32_t message_len,c
 		prefix_length = 2+4;
 	}
 	if(peerlist) // NOTE: peerlist is null when adding first peer, so we skip and check for self-sign
-		for(int peer_n,nn = 0; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
-		{
-			char peeronion[56+1];
-			getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
-			unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
-			getter_array(&peer_sign_pk,sizeof(peer_sign_pk),peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
-			if((peeronion_len == 0 || !memcmp(peeronion,peeronion_prefix,peeronion_len)) && crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, peer_sign_pk) == 0)
+		for(uint8_t pass = 0; pass < 2; pass++)
+		{ // Pass 0 tries the hinted peers, pass 1 everyone else.
+			if(pass == 0 && peeronion_len == 0)
+				continue; // No prefix, skip to second pass.
+			for(int peer_n,nn = 0; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
 			{
+				char peeronion[56+1];
+				getter_array(&peeronion,sizeof(peeronion),peer_n,INT_MIN,-1,offsetof(struct peer_list,peeronion));
+				unsigned char peer_sign_pk[crypto_sign_PUBLICKEYBYTES];
+				getter_array(&peer_sign_pk,sizeof(peer_sign_pk),peer_n,INT_MIN,-1,offsetof(struct peer_list,peer_sign_pk));
+				const uint8_t hinted = (peeronion_len && !memcmp(peeronion,peeronion_prefix,peeronion_len));
+				const uint8_t try_now = (pass == 0) ? hinted : !hinted; // XXX Each peer is verified in exactly one of the two passes, never both.
+				if(try_now && crypto_sign_verify_detached(sig,(const unsigned char *)(untrusted_protocol ? prefixed_message : message), prefix_length + message_len, peer_sign_pk) == 0)
+				{
+					sodium_memzero(peeronion,sizeof(peeronion));
+					sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
+					error_simple(4,"Success of group_check_sig: Signed by a peer.");
+					torx_free((void**)&prefixed_message);
+					return peer_n;
+				}
 				sodium_memzero(peeronion,sizeof(peeronion));
 				sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
-				error_simple(4,"Success of group_check_sig: Signed by a peer.");
-				torx_free((void**)&prefixed_message);
-				return peer_n;
 			}
-			sodium_memzero(peeronion,sizeof(peeronion));
-			sodium_memzero(peer_sign_pk,sizeof(peer_sign_pk));
 		}
-	if(peeronion_len)
-	{ // do not continue if prefix was passed and no more peers
-		error_simple(4,"Failure of group_check_sig. Prefix doesn't match any peeronions in group.");
-		torx_free((void**)&prefixed_message);
-		return -1;
-	}
 	unsigned char ed25519_pk[crypto_sign_PUBLICKEYBYTES];
 	unsigned char sign_sk[crypto_sign_SECRETKEYBYTES]; // TODO could just store this in group_ctrl's peer_sign_pk, since it isn't being used
 	getter_array(&sign_sk,sizeof(sign_sk),group_n,INT_MIN,-1,offsetof(struct peer_list,sign_sk));
