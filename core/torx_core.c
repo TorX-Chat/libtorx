@@ -218,6 +218,9 @@ pthread_rwlock_t mutex_expand = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_expand_group = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_packet = PTHREAD_RWLOCK_INITIALIZER;
 pthread_rwlock_t mutex_broadcast = PTHREAD_RWLOCK_INITIALIZER;
+#ifndef NO_FILE_TRANSFER
+pthread_rwlock_t mutex_file_expand = PTHREAD_RWLOCK_INITIALIZER; // XXX Outermost lock: guards the ADDRESS of peer[n].file[f].mutex_file against expand_file_struc's realloc, for the whole span between torx_fd_lock and torx_fd_unlock. Held shared, so concurrent file IO is unaffected; only expansion waits.
+#endif // NO_FILE_TRANSFER
 
 uint32_t sqlcipher_library_version[3] = {0}; // do not rename as sqlcipher_version because it will conflict with a function name in SQLCipher, if the devs ever expose it in sqlite3.h
 sqlite3 *db_plaintext = {0};
@@ -1140,25 +1143,31 @@ uint32_t group_peercount(const int g)
 	return peercount;
 }
 
+static inline int group_peerlist_get_nolock(const int g,const int index)
+{ // XXX Caller MUST already hold mutex_expand_group (rd or wr). Use group_peerlist_get where it is not already held.
+	if(g < 0 || index < 0 || !group) // !group can occur during shutdown
+		return -1;
+	return (uint32_t)index < group_peercount_nolock(g) ? group[g].peerlist[index] : -1;
+}
+
 int group_peerlist_get(const int g,const int index)
 { // Returns the peer_n held at .peerlist[index], or -1 where index is at/past the end of the list
 	if(g < 0 || index < 0 || !group) // !group can occur during shutdown
 		return -1;
 	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
-	const int peer_n = (uint32_t)index < group_peercount_nolock(g) ? group[g].peerlist[index] : -1;
+	const int peer_n = group_peerlist_get_nolock(g,index);
 	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return peer_n;
 }
 
-int message_insert(const int g,const int n,const int i)
-{ // Insert a message between two messages in our linked list
+static inline int message_insert_nolock(const int g,const int n,const int i)
+{ // XXX Caller MUST already hold mutex_expand_group (wr). Use message_insert where it is not already held. Returns -1 without inserting where a message of the same time/nstime already exists; the caller reports that, because error_simple reaches error_cb and must not run under the lock.
 	if(g < 0 || n < 0)
 	{
-		error_simple(0,"Message_insert sanity check failed.");
 		breakpoint();
 		return -1;
 	}
-	torx_read(n) // 🟧🟧🟧
+	torx_read(n) // 🟧🟧🟧 // XXX Nesting a peer lock inside mutex_expand_group is the established order; set_g does the same. Never the reverse.
 	const time_t time = peer[n].message[i].time;
 	const time_t nstime = peer[n].message[i].nstime;
 	torx_unlock(n) // 🟩🟩🟩
@@ -1169,9 +1178,7 @@ int message_insert(const int g,const int n,const int i)
 	page->i = i;
 	page->time = time;
 	page->nstime = nstime;
-	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
 	struct msg_list *current_page = group[g].msg_first;
-	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	if(current_page)
 	{ // Not first message
 		while(current_page->time < time || (current_page->time == time && current_page->nstime < nstime))
@@ -1182,7 +1189,6 @@ int message_insert(const int g,const int n,const int i)
 		} // Breaks if we hit the end of the messages or if our message finds a newer message than ours
 		if(current_page->time == time && current_page->nstime == nstime)
 		{ // CAUSES: Chance, someone re-sent our date-signed message (private group), or malicious (someone wants to prevent others from receiving a message)
-			error_simple(0,"Time and nstime are the same as existing message.");
 			torx_free((void**)&page);
 			return -1; // We could utilize this return to update the message (scroll = 3), but we'd have to update sql too. This would facilitate recalls/changes... but only group messages, its dumb. don't pursue.
 		}
@@ -1190,9 +1196,7 @@ int message_insert(const int g,const int n,const int i)
 		{ // End of messages, ours is newest, insert infront
 			page->message_prior = current_page;
 			page->message_next = NULL;
-			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 			group[g].msg_last = current_page->message_next = page;
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 		}
 		else
 		{ // Current_page is newer than ours, insert behind
@@ -1201,11 +1205,7 @@ int message_insert(const int g,const int n,const int i)
 			if(current_page->message_prior) // if current page isn't the very first message, ie there are others before it
 				current_page->message_prior->message_next = page;
 			else
-			{
-				pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 				group[g].msg_first = page;
-				pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-			}
 			current_page->message_prior = page; // do last
 		}
 	}
@@ -1213,55 +1213,58 @@ int message_insert(const int g,const int n,const int i)
 	{ // First message
 		page->message_prior = NULL;
 		page->message_next = NULL;
-		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		group[g].msg_last = group[g].msg_first = page;
-		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	}
-	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 	group[g].msg_count++;
-	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	return 0;
+}
+
+int message_insert(const int g,const int n,const int i)
+{ // Insert a message between two messages in our linked list
+	if(g < 0 || n < 0)
+	{
+		error_simple(0,"Message_insert sanity check failed.");
+		breakpoint();
+		return -1;
+	}
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 XXX Held across the ENTIRE traversal and splice. Taking it only for the head pointer leaves the walk and the pointer surgery unsynchronised against the readers in thread_safety.c, which do hold it, and against another dispatcher thread inserting into the same group.
+	const int ret = message_insert_nolock(g,n,i);
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	if(ret)
+		error_simple(0,"Time and nstime are the same as existing message."); // After unlocking: error_simple reaches error_cb
+	return ret;
 }
 
 void message_remove(const int g,const int n,const int i)
 { // Remove message between two messages in our linked list
 	if(g < 0 || n < 0)
 		error_simple(-1,"Message_remove sanity check failed.");
-	pthread_rwlock_rdlock(&mutex_expand_group); // 🟧
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 XXX See message_insert: the walk and the unlink must be atomic against the readers in thread_safety.c and against zero_g.
 	struct msg_list *current_page = group[g].msg_first;
-	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	while(current_page && (n != current_page->n || i != current_page->i))
 		current_page = current_page->message_next;
-	if(current_page && n == current_page->n && i == current_page->i)
+	if(current_page) // The loop above only exits on NULL or on a match, so no re-test of n/i is needed
 	{
 		if(current_page->message_prior) // not removing first
 			current_page->message_prior->message_next = current_page->message_next; // might be NULL, is fine
-		else
-		{ // removing first
-			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
+		else // removing first
 			group[g].msg_first = current_page->message_next; // might be NULL, is fine
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-		}
 		if(current_page->message_next) // removing non-latest
 			current_page->message_next->message_prior = current_page->message_prior; // might be NULL, is fine
-		else
-		{ // removing latest
-			pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
+		else // removing latest
 			group[g].msg_last = current_page->message_prior; // might be NULL, is fine
-			pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-		}
-		pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 		if(current_page == group[g].msg_index)
 		{ // MUST NULL msg_index if it is message_remove'd, to prevent undefined behaviour
 			group[g].msg_index = NULL;
 			group[g].msg_index_iter = 0;
 		}
 		group[g].msg_count--;
-		pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // Before the free: nothing can reach the node now that it is unlinked
 		torx_free((void**)&current_page);
 	}
 	else
 	{ // TODO 2024/02/24 unable to discern why some fail and some don't. (ie why some are in struct and others aren't -- review message_insert, message_sort)
+		pthread_rwlock_unlock(&mutex_expand_group); // 🟩 // Must be before the getter and error_printf below
 		const int p_iter = getter_int(n,i,-1,offsetof(struct message_list,p_iter));
 		if(p_iter < 0)
 			error_printf(0,"Sanity message_remove called on non-existant message. Coding error. Report this.");
@@ -1292,14 +1295,17 @@ void message_sort(const int g)
 	//	breakpoint();
 		return;
 	}
-	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
-	group[g].msg_count = 0;
-	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 	struct msg_list *message_prior = NULL; // NOTE: this will change
 	const int group_n_max_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,max_i));
 	time_t time_last = 0;
 	time_t nstime_last = 0;
 	const int group_n_min_i = getter_int(group_n,INT_MIN,-1,offsetof(struct peer_list,min_i));
+	uint32_t bad_p_iter = 0; // Diagnostics are counted here and reported after the lock is released, because error_* reaches error_cb
+	uint32_t bad_stat = 0;
+	uint8_t first_bad_stat = 0;
+	uint16_t first_bad_protocol = 0;
+	pthread_rwlock_wrlock(&mutex_expand_group); // 🟥 XXX Held across the ENTIRE build. Publishing msg_first/msg_last/msg_count piecemeal, with the chain walked unlocked between them, races the readers in thread_safety.c and any dispatcher thread calling message_insert on this same group: sql_populate_peer starts dispatcher threads via load_onion BEFORE sql_populate_message runs this.
+	group[g].msg_count = 0;
 	for(int i = group_n_min_i; i < group_n_max_i + 1; i++)
 	{ // Do outbound messages on group_n. NOTE: For speed of insertion, we assume they are sequential. If that assumption is wrong, *MUST USE* message_insert instead.
 		torx_read(group_n) // 🟧🟧🟧
@@ -1319,7 +1325,10 @@ void message_sort(const int g)
 				{ // Indeed sequential
 					struct msg_list *page = torx_insecure_malloc(sizeof(struct msg_list));
 					if(!page)
+					{
+						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 						return;
+					}
 					page->message_prior = message_prior;
 					page->n = group_n;
 					page->i = i;
@@ -1328,39 +1337,32 @@ void message_sort(const int g)
 					page->message_next = NULL;
 					if(message_prior) // Not first message
 						message_prior->message_next = page;
-					else
-					{ // First message
-						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
+					else // First message
 						group[g].msg_first = page;
-						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-					}
-					if(i == group_n_max_i)
-					{ // Potentiallly last (can be overruled by message_insert later)
-						pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
+					if(i == group_n_max_i) // Potentiallly last (can be overruled by message_insert later)
 						group[g].msg_last = page;
-						pthread_rwlock_unlock(&mutex_expand_group); // 🟩
-					}
 					else
 						message_prior = page; // for the next one
 					time_last = time;
 					nstime_last = nstime;
-					pthread_rwlock_wrlock(&mutex_expand_group); // 🟥
 					group[g].msg_count++;
-					pthread_rwlock_unlock(&mutex_expand_group); // 🟩
 				}
 				else // If that assumption is wrong, *MUST USE* message_insert instead.
-					message_insert(g,group_n,i);
+					message_insert_nolock(g,group_n,i);
 			}
 			else if(protocol != ENUM_PROTOCOL_GROUP_PRIVATE_ENTRY_REQUEST && protocol != ENUM_PROTOCOL_GROUP_PUBLIC_ENTRY_REQUEST)
 			{
-				error_printf(0,"Checkpoint message_sort unexpected stat: %d %u",stat,protocol);
-				breakpoint(); // shouldn't happen, just checking. If this doesn't trigger, can potentially remove stat check
+				if(!bad_stat++)
+				{
+					first_bad_stat = stat;
+					first_bad_protocol = protocol;
+				}
 			}
 		}
 		else // TODO eliminate error message if this causes no issues
-			error_simple(0,"Message_sort called on a message with p_iter < 0. Carry on.");
+			bad_p_iter++;
 	}
-	for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get(g,nn)) > -1 ; nn++)
+	for(int peer_n,nn = 0 ; (peer_n = group_peerlist_get_nolock(g,nn)) > -1 ; nn++)
 	{ // Warning: use peer_n not nn // Note: an empty or absent .peerlist simply terminates this immediately
 		torx_read(peer_n) // 🟧🟧🟧
 		const uint8_t status = peer[peer_n].status;
@@ -1381,10 +1383,18 @@ void message_sort(const int g)
 				const uint8_t group_pm = protocols[p_iter].group_pm;
 				pthread_rwlock_unlock(&mutex_protocols); // 🟩
 				if(stat == ENUM_MESSAGE_RECV || group_pm)
-					message_insert(g,peer_n,i);
+					message_insert_nolock(g,peer_n,i);
 			}
 		}
 	}
+	pthread_rwlock_unlock(&mutex_expand_group); // 🟩
+	if(bad_stat)
+	{
+		error_printf(0,"Checkpoint message_sort unexpected stat: %d %u (%u occurrences)",first_bad_stat,first_bad_protocol,bad_stat);
+		breakpoint(); // shouldn't happen, just checking. If this doesn't trigger, can potentially remove stat check
+	}
+	if(bad_p_iter)
+		error_printf(0,"Message_sort called on %u messages with p_iter < 0. Carry on.",bad_p_iter);
 }
 
 time_t message_find_since(const int n)
@@ -4761,6 +4771,48 @@ void cleanup_lib(const int sig_num)
 			}
 		}
 	}
+	{ // Bring every peer dispatcher's event loop down BEFORE any of the terminal locks below are taken. Taking those first is what makes a dispatcher unkillable: it blocks in pthread_rwlock_rdlock(&mutex_expand), which is not a cancellation point, so pthread_cancel does nothing and pthread_join never returns.
+		for(int n = 0 ; ; n++)
+		{ // Signal all loops to exit. Neither call waits; see the note in load_onion for why holding the read lock across them is both safe and necessary for lifetime.
+			torx_read(n) // 🟧🟧🟧
+			const uint8_t occupied = (peer[n].onion[0] != '\0' || peer[n].peer_index > -1);
+			struct event_base *base = occupied ? peer[n].base : NULL;
+			if(base)
+			{ // BOTH are required, loopbreak is what skips the drain of already-queued events that loopexit would otherwise run to completion
+				event_base_loopexit(base,NULL);
+				event_base_loopbreak(base);
+			}
+			torx_unlock(n) // 🟩🟩🟩
+			if(!occupied)
+				break;
+		}
+		const struct timespec one_ms = { .tv_sec = 0, .tv_nsec = 1*1000*1000 };
+		int remaining = 0;
+		for(int cycles = 0; cycles < 200; cycles++)
+		{ // Wait up to ~200ms in total (not per peer) for the dispatchers to null peer[n].base
+			remaining = 0;
+			for(int n = 0 ; ; n++)
+			{
+				torx_read(n) // 🟧🟧🟧
+				const uint8_t occupied = (peer[n].onion[0] != '\0' || peer[n].peer_index > -1);
+				if(occupied && peer[n].base)
+					remaining++;
+				torx_unlock(n) // 🟩🟩🟩
+				if(!occupied)
+					break;
+			}
+			if(!remaining)
+				break;
+			nanosleep(&one_ms,NULL);
+		}
+		if(remaining)
+			error_printf(0,"Cleanup: %d peer event loops did not exit in time. Proceeding without them.",remaining);
+	}
+	{ // Claim every database before any terminal lock is taken, and never release. A dispatcher can be inside sqlite3_step here (read_conn -> sql_insert_message -> sql_exec, which holds these across the whole statement)
+		pthread_mutex_lock(&mutex_sql_plaintext); // 🟥🟥
+		pthread_mutex_lock(&mutex_sql_encrypted); // 🟥🟥
+		pthread_mutex_lock(&mutex_sql_messages); // 🟥🟥
+	}
 	pthread_rwlock_wrlock(&mutex_packet); // 🟥 // XXX NOTICE: if it locks up here, its because of mutex_packet wrapping evbuffer_add in send_prep
 	pthread_rwlock_wrlock(&mutex_broadcast); // 🟥
 	pthread_mutex_lock(&mutex_tor_pipe); // 🟥🟥
@@ -4792,8 +4844,7 @@ void cleanup_lib(const int sig_num)
 	torx_free((void**)&group);
 	pthread_rwlock_wrlock(&mutex_expand); // 🟥 // XXX DO NOT EVER UNLOCK XXX can lead to segfaults if unlocked
 	for(int n = 0 ; peer[n].onion[0] != 0 || peer[n].peer_index > -1 ;  n++)
-	{ // DO NOT USE getter_ functions
-		thread_kill(peer[n].thrd); // must go before zero_n
+	{ // DO NOT USE getter_ functions // XXX Do NOT thread_kill here. fdatasync IS a cancellation point, so a pthread_cancel lands cleanly inside a dispatcher's sqlite3_step and kills it holding SQLCipher's per-connection mutex, after which sqlite3_close below waits on a dead owner forever. Their loops were brought down above instead.
 		zero_n(n); // XXX INCLUDES LOCKS in zero_i on protocol struct (mutex_protocols)
 		const int pointer_location = find_message_struc_pointer(peer[n].min_i); // Note: returns negative
 		torx_free((void*)(peer[n].message+pointer_location)); // moved this from zero_n because its issues when run at times other than shutdown. however this change could result in memory leaks?

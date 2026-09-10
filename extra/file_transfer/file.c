@@ -242,26 +242,35 @@ static inline void expand_file_struc_followup(const int n,const int f)
 }
 
 static inline int expand_file_struc(const int n,const int f)
-{ /* Expand file struct if our current f is unused && divisible by 10 */
+{ // Expand file struct if our current f is unused && divisible by 10
 	if(n < 0 || f < 0)
 	{
 		error_simple(0,"expand_file_struc failed sanity check. Coding error. Report this.");
 		return 0;
 	}
+	if(!f || f % 10) // Cheap advisory pre-check, so the ordinary call never touches the global lock below
+		return 0;
+	int expanded = 0;
 	unsigned char checksum[CHECKSUM_BIN_LEN];
 	getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum));
-	if(f && f % 10 == 0 && is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f + 10 > max_file because we never clear checksum so it is currently a reliable check
+	if(is_null(checksum,CHECKSUM_BIN_LEN)) // XXX not using && f + 10 > max_file because we never clear checksum so it is currently a reliable check
 	{
-		torx_write(n) // 🟥🟥🟥
-		const uint32_t current_allocation_size = torx_allocation_len(peer[n].file);
-		peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
-		for(int j = f + 10; j > f; j--)
-			initialize_f(n,j);
-		torx_unlock(n) // 🟩🟩🟩
-		return 1;
+		pthread_rwlock_wrlock(&mutex_file_expand); // 🟥 XXX Taken BEFORE torx_write: this is the outermost lock, and torx_fd_lock holds it shared before taking any peer lock. Inverting would deadlock against every in-flight file IO.
+		getter_array(&checksum,sizeof(checksum),n,INT_MIN,f,offsetof(struct file_list,checksum)); // Re-check: the test above was advisory, taken without this lock
+		if(is_null(checksum,CHECKSUM_BIN_LEN))
+		{
+			torx_write(n) // 🟥🟥🟥
+			const uint32_t current_allocation_size = torx_allocation_len(peer[n].file);
+			peer[n].file = torx_realloc(peer[n].file,current_allocation_size + sizeof(struct file_list) *10);
+			for(int j = f + 10; j > f; j--)
+				initialize_f(n,j);
+			torx_unlock(n) // 🟩🟩🟩
+			expanded = 1;
+		}
+		pthread_rwlock_unlock(&mutex_file_expand); // 🟩
 	}
 	sodium_memzero(checksum,sizeof(checksum));
-	return 0;
+	return expanded;
 }
 
 static inline uint64_t calculate_average(const int n,const int f,const uint64_t bytes_per_second)

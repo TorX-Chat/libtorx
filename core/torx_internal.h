@@ -127,8 +127,10 @@ severable if found in contradiction with the License or applicable law.
 #define DATE_SIGN_LEN			(sizeof(uint32_t) + sizeof(uint32_t) + crypto_sign_BYTES) // time + nstime + sig
 /* Note: NOT holding page locks. This is ONLY for disk IO. DO NOT HOLD PAGE LOCKS. XXX Note: Necessary to NOT wrap _mutex_lock in a torx_read because it WILL result in lock-order-inversion */
 #ifndef NO_FILE_TRANSFER
+/* XXX mutex_file_expand is held (shared) across the WHOLE span from torx_fd_lock to torx_fd_unlock. Without it, expand_file_struc's realloc moves every mutex_file to a new address and frees the old one, so a thread blocked here parks on a futex word in freed memory, and a thread that already holds the lock unlocks a DIFFERENT object than it locked. It is a read lock, so concurrent file IO is unaffected; only expansion waits. */
 #define torx_fd_lock(n,f) \
 do { \
+	pthread_rwlock_rdlock(&mutex_file_expand); \
 	torx_read(n) \
 	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
@@ -141,6 +143,7 @@ do { \
 	pthread_mutex_t *mutex = &peer[n].file[f].mutex_file; \
 	torx_unlock(n) \
 	pthread_mutex_unlock(mutex); \
+	pthread_rwlock_unlock(&mutex_file_expand); \
 } while(0);
 #endif // NO_FILE_TRANSFER
 
@@ -541,6 +544,9 @@ extern unsigned char decryption_key[crypto_box_SEEDBYTES];
 extern uint32_t broadcast_history[BROADCAST_HISTORY_SIZE];
 extern pthread_rwlock_t mutex_packet;
 extern pthread_rwlock_t mutex_broadcast;
+#ifndef NO_FILE_TRANSFER
+extern pthread_rwlock_t mutex_file_expand;
+#endif // NO_FILE_TRANSFER
 #ifndef NO_STICKERS
 extern pthread_rwlock_t mutex_sticker;
 #endif // NO_STICKERS
