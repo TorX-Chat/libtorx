@@ -862,6 +862,7 @@ void zero_pthread(void *thrd)
 
 static inline void thread_kill(pthread_t pthread)
 { /* man pthread_cleanup_push / pthread_cleanup_pop / Disabled because calling _join on an inactive thread causes bad times. TODO need to track "active" https://stackoverflow.com/questions/2156353/how-do-you-query-a-pthread-to-see-if-it-is-still-running */
+	// XXX Currently a no-op for every caller: pusher() places pthread_cleanup_push and pthread_cleanup_pop adjacent, so zero_pthread runs at thread START rather than at exit and the tracked handle is already 0 by the time we are called, and the join half could not report completion anyway because every thread is created ATTR_DETACHED (pthread_join returns EINVAL without waiting).
 	#ifndef __ANDROID__
 	{
 		if(pthread)
@@ -2222,7 +2223,7 @@ int zero_i(const int n,const int i) // XXX do not put locks in here (except mute
 	return shrinkage;
 }
 
-void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of the mutex
+void zero_n(const int n) // XXX do not put locks in here (libevent's own base lock, taken by the loopexit below, is the one exception). XXX DO NOT dispose of the mutex
 { // DO NOT SET THESE TO \0 as then the strlen will be different. We presume these are already properly null terminated.
 	for(int i = 0 ; i <= peer[n].max_i ; i++) // must go before .owner = 0, for variations in zero_i
 		zero_i(n,i);  // same as 2j0fj3r202k20f
@@ -2260,8 +2261,13 @@ void zero_n(const int n) // XXX do not put locks in here. XXX DO NOT dispose of 
 	sodium_memzero(peer[n].sign_sk,crypto_sign_SECRETKEYBYTES);
 	sodium_memzero(peer[n].peer_sign_pk,crypto_sign_PUBLICKEYBYTES);
 	sodium_memzero(peer[n].invitation,crypto_sign_BYTES);
-	peer[n].thrd = 0; // thread_kill(peer[n].thrd); // NO. will result in deadlocks.
+	if(peer[n].base)
+	{ // BOTH are required, loopbreak is what skips the drain of already-queued events that loopexit would otherwise run to completion
+		event_base_loopexit(peer[n].base,NULL);
+		event_base_loopbreak(peer[n].base);
+	}
 	peer[n].base = NULL;
+	peer[n].thrd = 0; // thread_kill(peer[n].thrd); // NO. will result in deadlocks.
 	peer[n].broadcasts_inbound = 0;
 	#ifndef NO_AUDIO_CALL
 	for (size_t c = 0; c < torx_allocation_len(peer[n].call)/sizeof(struct call_list); c++)
